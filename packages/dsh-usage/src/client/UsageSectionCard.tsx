@@ -21,6 +21,7 @@ import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-
 import type { UsageStoreInstance } from './usage-store.ts'
 import { t } from './locales.ts'
 import styles from './usage.module.css'
+import { PeakBadge } from './PeakBadge.tsx'
 import { isDeepSeekProviderRoute } from '../core/adapters.ts'
 import { deepseekPeriodAt } from '../core/pricing.ts'
 import { localDateKey } from '../core/ledger.ts'
@@ -103,14 +104,6 @@ function trim(value: number): string {
 function formatTime(ms: number): string {
   try {
     return new Date(ms).toLocaleTimeString()
-  } catch {
-    return ''
-  }
-}
-
-function formatClock(ms: number): string {
-  try {
-    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   } catch {
     return ''
   }
@@ -873,9 +866,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
               )}
             </div>
             {deepseekVisible && (
-              <span className={styles.muted} data-dsh-part="peak-status">
-                {t(deepseekPeriod.peak ? 'usage.peak.on' : 'usage.peak.off', { time: formatClock(deepseekPeriod.boundaryMs) })}
-              </span>
+              <PeakBadge peak={deepseekPeriod.peak} boundaryMs={deepseekPeriod.boundaryMs} variant="full" />
             )}
             {activeDays.error !== undefined && <span className={styles.errorLine}>{t('usage.range.error', { error: activeDays.error })}</span>}
             {rangeKey === 'custom' && !customPicked

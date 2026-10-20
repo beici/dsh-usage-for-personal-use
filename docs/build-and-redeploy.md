@@ -45,14 +45,19 @@ halves:
   with the CSS module compiled by lightningcss (class prefix `cvtkAW_`) and
   inlined as a `<style data-plugin-css>` string.
 
-Expected output (0.4.7 + local changes): `lib/index.js` **107,900 B** = md5
-`21dd77686afce84548c6a6f8ffe643cc`, `lib/client.js` **448,096 B** = md5
-`731e52a538cbc32b14c2c1cac5fb075d`, `lib/client.js.map` **550,349 B** = md5
-`234f3c04cf11b7559b8d28567bd8ffdb`. The build is deterministic — these hashes
+Expected output (upstream 0.4.8 + local changes): `lib/index.js` **108,672 B** =
+md5 `1d68e04b3c5781bb9738f389f9577720`, `lib/client.js` **450,874 B** = md5
+`5b4af24ec632d3637590dd340eda4e21`, `lib/client.js.map` **554,260 B** = md5
+`94628b6db1b419b8d74446cd43ea5242`. The build is deterministic — these hashes
 reproduce byte-for-byte here. Benign warnings: `@deepseek-ai/dsh-credentials`
 and `@deepseek-ai/dsh-brand` unresolved imports (host peers, resolved at
 runtime), deprecated `external`/`noExternal` option names, the `deps.onlyBundle`
 hint, and the CJS format recommendation.
+
+The sourcemap embeds `sourcesContent` verbatim, so **it is only reproducible from
+LF sources**: a worktree whose `src/` files carry CRLF produces the same
+`client.js` but a larger map with a different hash. Check with
+`git ls-files --eol | grep w/crlf` and normalise before hashing a build.
 
 Both halves build from `src/`. The host bundle **includes** the session-log
 backfill and the device-ledger code now, so there is no post-build patch step:
@@ -181,8 +186,9 @@ printing five markers plus the count of files still hardlinked into the store
 (only files this workspace never modifies — `package.json`, `LICENSE`, the
 READMEs, `cordis.patch.yml`, `icon.svg`).
 
-The script warns when the live package is no longer 0.4.7, since these bundles
-are built against that baseline.
+The script reports the deployed hashes, so you can compare them against the
+build table above. It works against any baseline version; the hashes change
+whenever the source does, not only when upstream releases.
 
 ## An installed package is not a loaded plugin
 
@@ -226,11 +232,10 @@ reverts with a full app restart — its ESM module graph is cached.
 ### 1. `pnpm install` in the profile wipes the patches
 
 The live package is a plain registry dependency
-(`$DSH_HOME/profiles/desktop/package.json` line 8:
-`"@linxin666/dsh-usage": "0.4.7"`), so **any** install in that profile —
-installing, updating, or uninstalling *any other plugin* — reinstalls this
-package from npm and restores all four stock files. Observed 2026-10-20
-04:17:33: uninstalling `dsh-infinite-gen-5` triggered
+(`$DSH_HOME/profiles/desktop/package.json` line 8 pins the registry version), so
+**any** install in that profile — installing, updating, or uninstalling *any
+other plugin* — reinstalls this package from npm and restores all four stock
+files. Observed 2026-10-20 04:17:33: uninstalling `dsh-infinite-gen-5` triggered
 `.plugin-manager/logs/operation-V0N1KU/pnpm.log` ("reused 288, added 289"),
 which reset `lib/client.js` to 417,595 B / `16ffb1fa…` and `lib/index.js` to
 83,496 B / `fc126892…` — the whole redesign and backfill were gone.
@@ -240,7 +245,7 @@ Detect it:
 ```bash
 L="${DSH_HOME:-$HOME/.dsh}/profiles/desktop/node_modules/@linxin666/dsh-usage"
 md5sum "$L/lib/client.js" "$L/lib/index.js"
-# patched: 731e52a538cbc32b14c2c1cac5fb075d / 21dd77686afce84548c6a6f8ffe643cc
+# patched: 5b4af24ec632d3637590dd340eda4e21 / 1d68e04b3c5781bb9738f389f9577720
 grep -c 'usage.range.customPick' "$L/lib/client.js"   # must be 3, stock is 0
 grep -c 'device-card' "$L/lib/client.js"              # must be >= 1, stock is 0
 grep -c 'backfillSessionLogs\|collectSessionLogUsage' "$L/lib/index.js"   # must be > 0, stock is 0
@@ -292,8 +297,9 @@ done
 
 To repair a polluted entry: copy the pristine file back over the store path
 (the filename tells you which release file it was), then `rm -f` the live copy
-and write the patched content fresh. `npm pack @linxin666/dsh-usage@0.4.7`
-gives you a known-good source tree for any file under `lib/` or `src/`.
+and write the patched content fresh.
+`npm pack @linxin666/dsh-usage@<the-version-in-your-lockfile>` gives you a
+known-good source tree for any file under `lib/` or `src/`.
 
 ## Gotchas collected while doing this
 

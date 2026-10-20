@@ -18,9 +18,13 @@ plus the sources, harnesses and notes behind the local modifications:
    device can export its own ledger and import a peer's. Importing replaces
    that peer's file, never merges into it, so importing the same file twice
    cannot double-count. See [`docs/multi-device.md`](docs/multi-device.md).
+4. **Upstream 0.4.8 merge** — the DeepSeek peak/off-peak badge, and a
+   proxy-aware loopback guard (`isProxiedRequest()`): requests carrying
+   `x-forwarded-for` or `cf-connecting-ip` no longer count as loopback, which
+   closes an auth bypass when the GUI is exposed through a reverse proxy.
 
-Baseline is the published npm release **0.4.7**; this workspace is not a fork
-of the upstream repo, it only carries the changes above.
+Baseline is the published npm release **0.4.8**, merged locally; this workspace
+is not a fork of the upstream repo, it only carries the changes above.
 
 ## Layout
 
@@ -36,7 +40,7 @@ of the upstream repo, it only carries the changes above.
 | `fixtures/` | Live `/api/dsh-usage` responses captured 2026-10-20 (overview + 4 recorded days). |
 | `patches/` | The legacy backfill patch, its appliers, and the pre-change bundles for rollback. |
 | `preview/` | Signed-off screenshots of the redesign. |
-| `reference/upstream-0.4.7/` | Pristine published 0.4.7 `src/` + `package.json`, for upgrade diffs. |
+| `reference/upstream-0.4.8/` | Pristine published 0.4.8 `src/` + `package.json`, for upgrade diffs. |
 | `docs/` | This documentation. |
 
 ## Quick start
@@ -55,12 +59,12 @@ the build reproduces the committed artifacts byte-for-byte.
 
 ## Install on another machine
 
-The profile normally pins `@linxin666/dsh-usage` to the registry version
-`0.4.7`. That is a problem for this workspace: any other plugin install,
-update or removal in the profile re-resolves the pin and **overwrites the
-patched copy** (this already happened once, on 2026-10-20 04:17). Pointing the
-profile at a git dependency instead makes the copy stable — pnpm pins the
-commit, and unrelated packages no longer touch it.
+The profile normally pins `@linxin666/dsh-usage` to a registry version. That is
+a problem for this workspace: any other plugin install, update or removal in
+the profile re-resolves the pin and **overwrites the copy** (this already
+happened once, on 2026-10-20 04:17). Pointing the profile at a git dependency
+instead makes the copy stable — pnpm pins the commit, and unrelated packages no
+longer touch it.
 
 **Installing the package is not enough — the profile must also list it in
 `dsh.profile.bundles`, or the host never loads it.** The host builds its patch
@@ -129,13 +133,19 @@ Upstream baseline and patch inventory: [`docs/upstream-and-local-patches.md`](do
 
 ## Current artifact hashes
 
-Live profile == this workspace build (verified 2026-10-20):
+This workspace build, after merging upstream 0.4.8 (verified 2026-10-20):
 
 | File | Size | MD5 |
 | --- | --- | --- |
-| `lib/client.js` | 448,096 B | `731e52a538cbc32b14c2c1cac5fb075d` |
-| `lib/client.js.map` | 550,349 B | `234f3c04cf11b7559b8d28567bd8ffdb` |
-| `lib/index.js` | 107,900 B | `21dd77686afce84548c6a6f8ffe643cc` |
+| `lib/client.js` | 450,874 B | `5b4af24ec632d3637590dd340eda4e21` |
+| `lib/client.js.map` | 554,260 B | `94628b6db1b419b8d74446cd43ea5242` |
+| `lib/index.js` | 108,672 B | `1d68e04b3c5781bb9738f389f9577720` |
+
+`lib/client.js.map` embeds the sources verbatim, so it is only reproducible when
+the source files use LF endings (`.gitattributes` enforces `eol=lf` in the
+checkout). A worktree left with CRLF sources produces a larger, differently
+hashed map while `client.js` itself stays identical. Keep `src/` LF.
+
 
 Both halves now build from `src/`, so `lib/index.js` and the installed copy are
 the same artifact — no post-build patching step. Deploying is a plain copy, but

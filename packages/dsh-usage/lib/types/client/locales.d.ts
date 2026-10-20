@@ -29,6 +29,10 @@ export declare const zh: {
     'usage.day.error': string;
     'usage.peak.on': string;
     'usage.peak.off': string;
+    'usage.peak.tag.on': string;
+    'usage.peak.tag.off': string;
+    'usage.peak.ends': string;
+    'usage.peak.starts': string;
     'usage.calls': string;
     'usage.tokens.total': string;
     'usage.tokens.input': string;

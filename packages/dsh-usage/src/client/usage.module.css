@@ -737,7 +737,7 @@
 
 .footStripProvider {
   flex: none;
-  max-width: 45%;
+  max-width: 38%;
   overflow: hidden;
   text-overflow: ellipsis;
   font-weight: 500;
@@ -758,4 +758,62 @@
 :global([data-dsh-frame][data-sidebar-collapsed]) .footCard,
 :global([data-sidebar-collapsed]) .footCard {
   display: none;
+}
+
+/* ---------------------------------------------------------------------------
+   DeepSeek pricing clock: red while the peak window bills double, green while
+   off-peak bills half. The period word rides with the dot, so colour is never
+   the only signal, and the priced sentence lives in the title attribute.
+   --------------------------------------------------------------------------- */
+
+.peakBadge,
+.peakLine {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.peakBadge {
+  flex: none;
+}
+
+.peakLine {
+  gap: 6px;
+}
+
+.peakBadge[data-peak='on'],
+.peakLine[data-peak='on'] {
+  color: var(--dsw-alias-state-error-primary, #b42318);
+}
+
+.peakBadge[data-peak='off'],
+.peakLine[data-peak='off'] {
+  color: var(--dsw-alias-state-success-primary, #067647);
+}
+
+.peakDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* Expanded foot card: its own line at full opacity (the meta line below is
+   dimmed) so the red/green reads on every skin. */
+.footPeak {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.footPeakClock {
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
 }

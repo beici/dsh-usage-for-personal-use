@@ -12,9 +12,10 @@
 #   1. `cp <new> <live>` writes THROUGH the hardlink and corrupts the shared
 #      store entry. Always `rm -f` the live file first so the write lands on a
 #      fresh inode and the store keeps its pristine bytes.
-#   2. Any `pnpm install` in that profile reinstalls @linxin666/dsh-usage@0.4.7
-#      from the registry and silently reverts every file below. Re-run this
-#      script after every plugin install/update.
+#   2. Any `pnpm install` in that profile reinstalls the package from the
+#      registry and silently reverts every file below. Re-run this script
+#      after every plugin install/update (or pin the profile to the git
+#      dependency, see README.md).
 #
 # Usage:
 #   bash patches/install-patches.sh [dsh-usage-package-dir]
@@ -45,8 +46,9 @@ fi
 ver="unknown"
 if [ -f "$pkg/package.json" ]; then
   ver=$(node -e "console.log(require(process.argv[1]).version)" "$pkg/package.json")
-  if [ "$ver" != "0.4.7" ]; then
-    echo "WARNING: live version $ver != 0.4.7; the stored bundles may not match." >&2
+  want=$(node -e "console.log(require(process.argv[1]).version)" "$built/package.json")
+  if [ "$ver" != "$want" ]; then
+    echo "NOTE: live version $ver, this build is $want; the files are replaced anyway." >&2
   fi
 fi
 
