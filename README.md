@@ -42,7 +42,7 @@ of the upstream repo, it only carries the changes above.
 ## Quick start
 
 ```bash
-pnpm install --prefer-offline                      # toolchain from pnpm-lock.yaml
+pnpm install --frozen-lockfile                     # toolchain from pnpm-lock.yaml
 cd packages/dsh-usage && ../../node_modules/.bin/tsc -b tsconfig.build.json \
   && ../../node_modules/.bin/tsdown                # build (~100 ms, exit 0)
 cd ../.. && node harness/build-test-bundle.cjs && node harness/render-test.mjs
@@ -50,6 +50,8 @@ node --experimental-strip-types harness/host-test.mjs
 ```
 
 Expected: `=== 29/29 checks passed ===` and `=== 48/48 checks passed ===`.
+`node_modules/` is git-ignored, so a fresh clone must run the install first;
+the build reproduces the committed artifacts byte-for-byte.
 
 ## Install on another machine
 

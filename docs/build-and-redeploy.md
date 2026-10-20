@@ -4,6 +4,29 @@ Everything runs from the project root (the directory containing this `docs/`
 folder) in Git Bash. The toolchain comes from `pnpm-lock.yaml`; `node_modules/`
 is a normal pnpm store-linked tree, so rebuilds need no network.
 
+## First checkout on a new machine
+
+`node_modules/` is git-ignored, so a fresh clone has no toolchain and every
+`../../node_modules/.bin/*` path below is missing. Install once:
+
+```bash
+node --version                        # must satisfy engines: ^22.19 || >=24
+pnpm install --frozen-lockfile
+```
+
+`--frozen-lockfile` is deliberate: the committed lockfile is what reproduces the
+artifact hashes below, and a floating install can pull a newer `tsdown` or
+`lightningcss` and change the CSS class prefix or minifier output.
+
+A first install that dies part-way leaves `node_modules/.pnpm/` populated but no
+top-level links and no `node_modules/.modules.yaml` — the next command then
+fails with `No such file or directory: ../../node_modules/.bin/tsc`. Re-running
+`pnpm install` finishes it; that is a pnpm hiccup, not a repo problem.
+
+Builds are verified reproducible: two independent clones of this repo, installed
+and built from scratch, produced `lib/index.js`, `lib/client.js` and
+`lib/client.js.map` byte-identical to the committed artifacts.
+
 ## Build
 
 ```bash
