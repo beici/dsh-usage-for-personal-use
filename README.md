@@ -62,11 +62,44 @@ patched copy** (this already happened once, on 2026-10-20 04:17). Pointing the
 profile at a git dependency instead makes the copy stable — pnpm pins the
 commit, and unrelated packages no longer touch it.
 
+**Installing the package is not enough — the profile must also list it in
+`dsh.profile.bundles`, or the host never loads it.** The host builds its patch
+layers from that list, not from `node_modules`:
+
+```js
+// loadProfileDirectory() in the DSH host
+const bundles = readProfileManifest(binName, dir).dsh?.profile?.bundles ?? [];
+for (const packageName of bundles) { /* resolve, read dsh.bundle.patch, load */ }
+```
+
+A package that is installed but absent from `bundles` is simply never visited:
+no `cordis.patch.yml` layer, no routes, no panel. The plugin manager and the
+market do both halves for you (their install flow appends the bundle); a bare
+`pnpm add` does only the first. So either install through the plugin manager /
+market, or do both steps by hand:
+
 ```bash
 cd "${DSH_HOME:-$HOME/.dsh}/profiles/desktop"
 pnpm remove @linxin666/dsh-usage
 pnpm add "git+https://github.com/<you>/dsh-usage.git#path:/packages/dsh-usage"
+node -e '
+  const fs = require("fs");
+  const p = "package.json";
+  const m = JSON.parse(fs.readFileSync(p, "utf8"));
+  m.dsh ??= {}; m.dsh.profile ??= {};
+  const b = m.dsh.profile.bundles ??= [];
+  if (!b.includes("@linxin666/dsh-usage")) {
+    b.push("@linxin666/dsh-usage");
+    fs.writeFileSync(p, JSON.stringify(m, null, 2) + "\n");
+    console.log("added to dsh.profile.bundles");
+  } else console.log("already in dsh.profile.bundles");
+'
 ```
+
+The append order matters only against bundles that declare `before`/`after`
+rules; this one declares none. Then **restart DSH**: the host bundle is loaded
+into the ESM graph once at boot, so a new host route needs a restart (a client
+half alone would reload on page refresh).
 
 `#path:/packages/dsh-usage` is required: the plugin lives in a subdirectory of
 the repository, not at its root. On a machine without network access to the

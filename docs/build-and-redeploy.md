@@ -184,6 +184,32 @@ READMEs, `cordis.patch.yml`, `icon.svg`).
 The script warns when the live package is no longer 0.4.7, since these bundles
 are built against that baseline.
 
+## An installed package is not a loaded plugin
+
+Deploying files only puts them on disk. The host decides what to load from
+`dsh.profile.bundles`, never from `node_modules`:
+
+```js
+const bundles = readProfileManifest(binName, dir).dsh?.profile?.bundles ?? [];
+for (const packageName of bundles) { /* resolve bundle, read dsh.bundle.patch */ }
+```
+
+A package missing from that list contributes no patch layer, so none of its
+routes or UI rows exist — silently, with no error anywhere. Verify membership
+before debugging anything else:
+
+```bash
+PROFILE="${DSH_HOME:-$HOME/.dsh}/profiles/desktop"
+node -e 'const m=require(process.argv[1]);console.log(m.dsh.profile.bundles.includes("@linxin666/dsh-usage"))' \
+  "$PROFILE/package.json"
+```
+
+The plugin manager, the market and `dsh plugin add` all do both halves; a bare
+`pnpm add` does only the dependency. `dsh plugin add` reconciles the bundle list
+only when pnpm exits 0 — it silently skips that step on `ERR_PNPM_IGNORED_BUILDS`
+(the constant noise on this profile), leaving the package installed and unloaded.
+`README.md` has the two-line repair.
+
 ## Rollback
 
 | To undo | Do |
