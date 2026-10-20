@@ -1,0 +1,199 @@
+/**
+ * Recover billed model calls from the session transcripts.
+ *
+ * `session/event` only delivers records appended while a usage-service instance
+ * is mounted, so every call made before the first mount — and every call made
+ * during a remount window — never reaches the live fold. The transcripts under
+ * `<dshHome>/sessions/<workspace>/<session>/session.v4.jsonl.zstd` keep the
+ * complete record instead: one `assistant/message` event per billed model call,
+ * each carrying its own `usage` and `message.source` route. Replaying them
+ * yields a day/provider/model document that is merged back into the ledger.
+ *
+ * A transcript is a concatenation of independent zstd frames (one per append
+ * batch) and `zstdDecompressSync` decodes only the leading frame, so the frame
+ * walk below is required, not defensive.
+ * @module @linxin666/dsh-usage/host/session-log-backfill
+ */
+
+import { readFile, readdir, stat } from 'node:fs/promises'
+import { join } from 'node:path'
+import { zstdDecompressSync } from 'node:zlib'
+import { createLedgerDocument, foldUsage } from '../core/ledger.ts'
+import type { UsageLedgerDocument, UsageTokenTotals } from '../core/types.ts'
+
+/** zstd frame magic number, little-endian. */
+const ZSTD_MAGIC_BYTES = Buffer.from([40, 181, 47, 253])
+/** Frame-content-size field width in bytes, indexed by its 2-bit flag. */
+const ZSTD_FCS_BYTES = [0, 2, 4, 8]
+/** Dictionary-id field width in bytes, indexed by its 2-bit flag. */
+const ZSTD_DICT_ID_BYTES = [0, 1, 2, 4]
+/** Transcript file name; the version segment is accepted forward-compatibly. */
+const SESSION_LOG_PATTERN = /^session\.[^/\\]+\.jsonl\.zstd$/
+/** A transcript larger than this is skipped: a runaway log must not stall startup. */
+const SESSION_LOG_MAX_BYTES = 256 * 1024 * 1024
+/** The backfill replays at most this many transcripts per start. */
+const SESSION_LOG_MAX_FILES = 2048
+
+/**
+ * Offset just past the zstd frame that starts at `start`, or -1 when the frame
+ * header or any of its blocks runs past the end of `buf`.
+ */
+export function zstdFrameEnd(buf: Buffer, start: number): number {
+  let pos = start + 4
+  if (pos >= buf.length) return -1
+  const descriptor = buf[pos]!
+  pos += 1
+  const fcsFlag = descriptor >> 6
+  const singleSegment = (descriptor >> 5) & 1
+  const checksum = (descriptor >> 2) & 1
+  const dictIdFlag = descriptor & 3
+  if (singleSegment === 0) pos += 1
+  pos += ZSTD_DICT_ID_BYTES[dictIdFlag]!
+  pos += fcsFlag === 0 ? (singleSegment === 1 ? 1 : 0) : ZSTD_FCS_BYTES[fcsFlag]!
+  while (pos + 3 <= buf.length) {
+    const header = buf[pos]! | (buf[pos + 1]! << 8) | (buf[pos + 2]! << 16)
+    const last = header & 1
+    const type = (header >> 1) & 3
+    pos += 3
+    // An RLE block stores one byte no matter how large its decoded size is.
+    pos += type === 1 ? 1 : header >>> 3
+    if (pos > buf.length) return -1
+    if (last === 1) {
+      if (checksum === 1) pos += 4
+      return pos > buf.length ? -1 : pos
+    }
+  }
+  return -1
+}
+
+/**
+ * Decode every zstd frame in `buf` into one UTF-8 string. A truncated tail costs
+ * only the newest records, which the live fold owns anyway, so failed frames are
+ * skipped rather than failing the transcript.
+ */
+export function zstdDecodeAll(buf: Buffer): string {
+  const chunks: Buffer[] = []
+  let pos = 0
+  while (pos + 4 <= buf.length) {
+    if (buf.indexOf(ZSTD_MAGIC_BYTES, pos) !== pos) {
+      const next = buf.indexOf(ZSTD_MAGIC_BYTES, pos + 1)
+      if (next === -1) break
+      pos = next
+    }
+    const end = zstdFrameEnd(buf, pos)
+    if (end === -1) break
+    try {
+      chunks.push(zstdDecompressSync(buf.subarray(pos, end)))
+    } catch {
+      // A corrupt frame costs its own records only.
+    }
+    pos = end
+  }
+  return chunks.length === 0 ? '' : Buffer.concat(chunks).toString('utf8')
+}
+
+/** Normalize an untrusted transcript `usage` object into ledger totals for one call. */
+function transcriptTotals(usage: Record<string, unknown>): UsageTokenTotals {
+  const read = (key: string): number => {
+    const value = usage[key]
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
+  }
+  return {
+    inputTokens: read('inputTokens'),
+    outputTokens: read('outputTokens'),
+    cacheReadTokens: read('cacheReadTokens'),
+    cacheWriteTokens: read('cacheWriteTokens'),
+    reasoningTokens: read('reasoningTokens'),
+    calls: 1,
+    cost: 0,
+  }
+}
+
+/**
+ * Fold every billed model call in one decoded transcript into `doc`. Records
+ * without a provider route are skipped: the live fold cannot attribute them
+ * either, and inventing a bucket would only distort the totals.
+ */
+export function foldTranscript(text: string, doc: UsageLedgerDocument): void {
+  for (const line of text.split('\n')) {
+    if (line === '' || line[0] !== '{') continue
+    let record: unknown
+    try {
+      record = JSON.parse(line)
+    } catch {
+      continue
+    }
+    const rec = record as { type?: unknown; time?: unknown; data?: { usage?: unknown; message?: { source?: { provider?: unknown; model?: unknown } } } }
+    if (rec?.type !== 'assistant/message') continue
+    const usage = rec.data?.usage
+    if (typeof usage !== 'object' || usage === null) continue
+    const source = rec.data?.message?.source
+    if (typeof source?.provider !== 'string' || source.provider === '') continue
+    const model = typeof source.model === 'string' && source.model !== '' ? source.model : 'unknown'
+    const atMs = typeof rec.time === 'number' && Number.isFinite(rec.time) ? rec.time : Date.now()
+    foldUsage(doc, atMs, source.provider, model, transcriptTotals(usage as Record<string, unknown>))
+  }
+}
+
+/** Every transcript path under `<dshHome>/sessions`, two directory levels deep. */
+export async function listSessionLogs(root: string): Promise<string[]> {
+  const files: string[] = []
+  let workspaces
+  try {
+    workspaces = await readdir(root, { withFileTypes: true })
+  } catch {
+    return files
+  }
+  for (const workspace of workspaces) {
+    if (files.length >= SESSION_LOG_MAX_FILES) break
+    if (workspace.isDirectory() !== true) continue
+    let sessions
+    try {
+      sessions = await readdir(join(root, workspace.name), { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const session of sessions) {
+      if (files.length >= SESSION_LOG_MAX_FILES) break
+      if (session.isDirectory() !== true) continue
+      const dir = join(root, workspace.name, session.name)
+      let entries
+      try {
+        entries = await readdir(dir, { withFileTypes: true })
+      } catch {
+        continue
+      }
+      for (const entry of entries) {
+        if (entry.isFile() === true && SESSION_LOG_PATTERN.test(entry.name)) files.push(join(dir, entry.name))
+      }
+    }
+  }
+  return files
+}
+
+/**
+ * Replay the session transcripts into a fresh ledger-shaped document and hand it
+ * to `merge`. Returns how many transcripts actually contributed.
+ */
+export async function collectSessionLogUsage(
+  root: string,
+  merge: (doc: UsageLedgerDocument) => void,
+): Promise<{ files: number; replayed: number }> {
+  const files = await listSessionLogs(root)
+  const doc = createLedgerDocument()
+  let replayed = 0
+  for (const file of files) {
+    try {
+      const info = await stat(file)
+      if (!info.isFile() || info.size <= 0 || info.size > SESSION_LOG_MAX_BYTES) continue
+      const text = zstdDecodeAll(await readFile(file))
+      if (text === '') continue
+      foldTranscript(text, doc)
+      replayed += 1
+    } catch {
+      // Unreadable transcript: its records are lost, the rest of the run is not.
+    }
+  }
+  merge(doc)
+  return { files: files.length, replayed }
+}

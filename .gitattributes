@@ -1,0 +1,11 @@
+# Normalize all text to LF in the repository; check out with the platform's
+# line ending so Windows editors stay happy.
+* text=auto eol=lf
+
+# Shell scripts must keep LF regardless of platform settings.
+*.sh text eol=lf
+
+# Binary artifacts
+*.png binary
+*.zstd binary
+*.tgz binary
