@@ -115,6 +115,22 @@ pnpm add "git+file:///E:/path/to/dsh-usage/.git#path:/packages/dsh-usage"
 pnpm add "file:E:/path/to/dsh-usage/packages/dsh-usage"
 ```
 
+`github:<owner>/<repo>` is shorthand for the same thing and is what this
+machine's profile uses:
+
+```
+"@linxin666/dsh-usage": "github:beici/dsh-usage-for-personal-use#path:/packages/dsh-usage"
+```
+
+pnpm writes that spec into `package.json` and resolves it to a codeload tarball
+pinned to the commit (`…/tar.gz/<sha>#path:/packages/dsh-usage` in
+`pnpm-lock.yaml`), so the installed tree is a plain copy, not a link. Two
+consequences: another plugin's install can no longer overwrite it, and **new
+commits do not arrive by themselves** — re-run the `pnpm add` once you have
+pushed (or `pnpm update @linxin666/dsh-usage` to move to the branch head), then
+`patches/install-patches.sh` is no longer needed because the tree already came
+from this repo. Verify with `patches/audit-store.sh` plus the hash table above.
+
 `file:` on POSIX-style paths fails (`ERR_PNPM_LINKED_PKG_DIR_NOT_FOUND`) —
 pass a Windows path (`cygpath -w`) on Windows. Under pnpm's `hoisted` linker
 both forms install a real copy, not a symlink, so **editing `src/` does not
