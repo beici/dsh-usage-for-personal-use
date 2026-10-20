@@ -203,6 +203,11 @@ hot-reloads. An unpatched stock `lib/index.js` is 83,496 B / md5
 `fc12689238e1f4088e7fb852bd35f8da` — seeing that hash means the package was
 reinstalled from the registry.
 
+A faster fix that stops the recurrence: switch the profile dependency from the
+registry pin to a git dependency, so pnpm pins a commit instead of a version and
+unrelated plugin installs no longer re-resolve it (see "Install on another
+machine" in the [README](../README.md)).
+
 ### 2. `cp` into the profile corrupts the pnpm store
 
 The profile uses `nodeLinker: hoisted`, so every installed file is a

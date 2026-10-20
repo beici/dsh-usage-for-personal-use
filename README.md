@@ -51,6 +51,42 @@ node --experimental-strip-types harness/host-test.mjs
 
 Expected: `=== 29/29 checks passed ===` and `=== 48/48 checks passed ===`.
 
+## Install on another machine
+
+The profile normally pins `@linxin666/dsh-usage` to the registry version
+`0.4.7`. That is a problem for this workspace: any other plugin install,
+update or removal in the profile re-resolves the pin and **overwrites the
+patched copy** (this already happened once, on 2026-10-20 04:17). Pointing the
+profile at a git dependency instead makes the copy stable — pnpm pins the
+commit, and unrelated packages no longer touch it.
+
+```bash
+cd "${DSH_HOME:-$HOME/.dsh}/profiles/desktop"
+pnpm remove @linxin666/dsh-usage
+pnpm add "git+https://github.com/<you>/dsh-usage.git#path:/packages/dsh-usage"
+```
+
+`#path:/packages/dsh-usage` is required: the plugin lives in a subdirectory of
+the repository, not at its root. On a machine without network access to the
+remote, a local clone works the same way:
+
+```bash
+pnpm add "git+file:///E:/path/to/dsh-usage/.git#path:/packages/dsh-usage"
+# or, for a plain directory that is not a git checkout:
+pnpm add "file:E:/path/to/dsh-usage/packages/dsh-usage"
+```
+
+`file:` on POSIX-style paths fails (`ERR_PNPM_LINKED_PKG_DIR_NOT_FOUND`) —
+pass a Windows path (`cygpath -w`) on Windows. Under pnpm's `hoisted` linker
+both forms install a real copy, not a symlink, so **editing `src/` does not
+update an installed machine** — rebuild, commit and re-run `pnpm add` (or
+`pnpm update @linxin666/dsh-usage`).
+
+pnpm ends these commands with `ERR_PNPM_IGNORED_BUILDS` (koffi, node-pty,
+protobufjs, ...). That is pre-existing profile noise, not a failure: the
+plugin is already in place, and the build is verified by hashing
+`node_modules/@linxin666/dsh-usage/lib/client.js` against the table below.
+
 Deployment, reload behaviour and rollback: [`docs/build-and-redeploy.md`](docs/build-and-redeploy.md).
 Design of the new panel: [`docs/usage-panel-redesign.md`](docs/usage-panel-redesign.md).
 Device files, export/import and merging: [`docs/multi-device.md`](docs/multi-device.md).
