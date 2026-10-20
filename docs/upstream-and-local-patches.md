@@ -76,6 +76,22 @@ loopback. Without it, a reverse proxy (Cloudflare tunnel / frp / nginx) makes th
 loopback fence pass for requests originating on the public internet. Merged in
 commit `a54e7a0`.
 
+That guard lives in the **host** half, so it is only live once the host process
+has restarted after the deploy. Check it against the running host rather than the
+files on disk:
+
+```bash
+# both must stop returning 200 once the new host bundle is loaded
+curl -s -o /dev/null -w '%{http_code}\n' -H 'x-forwarded-for: 203.0.113.7' \
+  http://127.0.0.1:<port>/api/dsh-usage/export
+curl -s -o /dev/null -w '%{http_code}\n' -H 'cf-connecting-ip: 203.0.113.7' \
+  http://127.0.0.1:<port>/api/dsh-usage/export
+```
+
+While the host is still running the pre-0.4.8 bundle both answer `200`; after the
+restart they answer `401` (the fence rejects before routing), and the plain
+loopback request still answers `200`.
+
 ## Upgrading past 0.4.8
 
 1. Diff `reference/upstream-0.4.8/` against the new release's `src/`
