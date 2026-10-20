@@ -298,6 +298,68 @@ await act(async () => { tabs[1].dispatchEvent(new window.MouseEvent('click', { b
 await act(async () => { await new Promise((r) => setTimeout(r, 40)) })
 console.log('   plans tab text:', text(container).slice(0, 200))
 
+// ---- DeepSeek peak badge (merged from upstream 0.4.8) --------------------
+// The saved fixture records buddy/workbuddy routes, so the badge is correctly
+// absent from every assertion above. Mount again with the current route
+// switched to deepseek-official to reach it. The expected peak/off-peak state
+// depends on the wall clock, so the assertions compare the badge against
+// itself (attribute vs copy) instead of pinning "peak" or "off-peak".
+{
+  const deepseekSnapshot = {
+    ...overview,
+    current: { ...overview.current, provider: 'deepseek-official' },
+  }
+  const mountWith = async (snapshotValue) => {
+    const host = window.document.createElement('div')
+    window.document.body.appendChild(host)
+    const state = { snapshot: snapshotValue, status: 'ready', error: null }
+    const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+    const localRoot = ReactDOMClient.createRoot(host)
+    await act(async () => {
+      localRoot.render(React.createElement(UsageSectionCard, {
+        store: localStore,
+        poll: () => {},
+        refresh: () => {},
+        loadDay,
+        settings,
+        deviceSync,
+        close: () => {},
+      }))
+    })
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)) })
+    return { host, localRoot }
+  }
+
+  const deepseek = await mountWith(deepseekSnapshot)
+  const badge = deepseek.host.querySelector('[data-dsh-part="peak-status"]')
+  check('peak badge renders for a DeepSeek route', badge !== null)
+  if (badge !== null) {
+    const peakState = badge.getAttribute('data-peak')
+    check('peak badge states on/off', peakState === 'on' || peakState === 'off', String(peakState))
+    const expected = peakState === 'on' ? '高峰' : '空闲'
+    check('peak badge word matches its state', text(badge).includes(expected), text(badge))
+    // The full variant carries the priced sentence (and its clock) in the title.
+    check('peak badge title states the boundary clock', /\d{1,2}:\d{2}/.test(badge.getAttribute('title') ?? ''), badge.getAttribute('title'))
+  }
+
+  // The line describes the *current* window, so a past range must drop it.
+  const deepseekTiles = [...deepseek.host.querySelectorAll('[data-dsh-part="range-tiles"] button')]
+  await act(async () => { deepseekTiles[3].dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)) })
+  check('peak badge dropped outside the today window',
+    deepseek.host.querySelector('[data-dsh-part="peak-status"]') === null)
+
+  // ...and a non-DeepSeek route never shows it, even for today.
+  const buddy = await mountWith(overview)
+  check('peak badge absent for a non-DeepSeek route',
+    buddy.host.querySelector('[data-dsh-part="peak-status"]') === null)
+
+  await act(async () => { deepseek.localRoot.unmount() })
+  await act(async () => { buddy.localRoot.unmount() })
+  deepseek.host.remove()
+  buddy.host.remove()
+}
+
 const failed = report.filter((row) => !row.ok)
 console.log('\n=== ' + (report.length - failed.length) + '/' + report.length + ' checks passed ===')
 if (failed.length > 0) process.exitCode = 1

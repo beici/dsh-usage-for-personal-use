@@ -74,18 +74,19 @@ cd packages/dsh-usage && ../../node_modules/.bin/tsc --noEmit -p tsconfig.json
 ```bash
 cd "$(git rev-parse --show-toplevel)"
 node harness/build-test-bundle.cjs    # derives harness/client.test.cjs from lib/client.js
-node harness/render-test.mjs          # must end: === 29/29 checks passed ===
-node --experimental-strip-types harness/host-test.mjs   # 48/48 checks passed
+node harness/render-test.mjs          # must end: === 35/35 checks passed ===
+node --experimental-strip-types harness/host-test.mjs   # 74/74 checks passed
 ```
 
 `render-test.mjs` takes 1–2 minutes (jsdom + the full bundle); give it a
 timeout rather than assuming it hung.
 
-Regression rule: **any change to the window logic, its copy, or the device card
-must keep all 29 render checks green**, and a new behaviour needs a new
-`check(...)` line. `host-test.mjs` is the guard on everything a render test
-cannot reach: device id validation, export/import, ledger summing, legacy
-migration, transcript backfill. It runs the TypeScript sources directly via
+Regression rule: **any change to the window logic, its copy, the peak badge, or
+the device card must keep all 35 render checks green**, and a new behaviour
+needs a new `check(...)` line. `host-test.mjs` is the guard on everything a
+render test cannot reach: device id validation, export/import, ledger summing,
+legacy migration, transcript backfill, the loopback fence and the peak clock.
+It runs the TypeScript sources directly via
 Node's type stripping, against a throwaway `DSH_HOME`, so it needs no build.
 
 Visual check without a browser (headless Edge):

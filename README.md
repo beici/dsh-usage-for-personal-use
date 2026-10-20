@@ -33,8 +33,8 @@ is not a fork of the upstream repo, it only carries the changes above.
 | `packages/dsh-usage/` | The plugin package: `src/` (authoritative TS source), `lib/` (build output), `package.json`, `tsconfig*.json`, `tsdown.config.ts`, packaging assets (`cordis.patch.yml`, `icon.svg`, READMEs, `LICENSE`). |
 | `shared/tsdown.client.ts` | The client-bundle preset (`clientBundle()` / `clientConfig()` from the upstream monorepo) — required by `packages/dsh-usage/tsdown.config.ts`. |
 | `shared/web-platform.ts` | `PLATFORM_MODULES`: the externals the browser bundle may require from the shell. |
-| `harness/render-test.mjs` | jsdom render test: mounts the built bundle with saved live fixtures and asserts 29 facts about the five windows and the device-sync card. |
-| `harness/host-test.mjs` | Host-side tests, run straight off `src/` with Node type stripping: device ids, export/import, ledger summing, legacy migration, transcript backfill. |
+| `harness/render-test.mjs` | jsdom render test: mounts the built bundle with saved live fixtures and asserts 35 facts about the five windows, the device-sync card and the DeepSeek peak badge. |
+| `harness/host-test.mjs` | Host-side tests, run straight off `src/` with Node type stripping: device ids, export/import, ledger summing, legacy migration, transcript backfill, the loopback fence and the peak clock. |
 | `harness/build-test-bundle.cjs` | Derives `harness/client.test.cjs` from the built `lib/client.js` by adding one export line the test needs. |
 | `harness/make-panel-html.cjs` | Builds `harness/panel.html`, a self-contained page for headless screenshots. |
 | `fixtures/` | Live `/api/dsh-usage` responses captured 2026-10-20 (overview + 4 recorded days). |
@@ -53,7 +53,7 @@ cd ../.. && node harness/build-test-bundle.cjs && node harness/render-test.mjs
 node --experimental-strip-types harness/host-test.mjs
 ```
 
-Expected: `=== 29/29 checks passed ===` and `=== 48/48 checks passed ===`.
+Expected: `=== 35/35 checks passed ===` and `=== 74/74 checks passed ===`.
 `node_modules/` is git-ignored, so a fresh clone must run the install first;
 the build reproduces the committed artifacts byte-for-byte.
 

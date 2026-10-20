@@ -240,6 +240,67 @@ async function writeTranscript(home, lines) {
   check('backfill is idempotent across restarts', again?.totals.calls === 1, String(again?.totals.calls))
 }
 
+// ---- the loopback fence (upstream 0.4.8 security fix) -------------------
+{
+  const { isProxiedRequest, isLoopbackRequest, isLoopbackAddress, isLoopbackHostname } = await load('host/loopback.ts')
+
+  /** Minimal IncomingMessage: only the fields the fence reads. */
+  const req = ({ address = '127.0.0.1', headers = {} } = {}) => ({ socket: { remoteAddress: address }, headers })
+
+  check('loopback address ::1 accepted', isLoopbackAddress('::1') === true)
+  check('loopback address 127.0.0.5 accepted', isLoopbackAddress('127.0.0.5') === true)
+  check('loopback address ::ffff:127.0.0.1 accepted', isLoopbackAddress('::ffff:127.0.0.1') === true)
+  check('public address rejected', isLoopbackAddress('203.0.113.7') === false)
+  check('absent address rejected', isLoopbackAddress(undefined) === false)
+  check('localhost hostname accepted', isLoopbackHostname('localhost') === true)
+  check('public hostname rejected', isLoopbackHostname('example.com') === false)
+
+  check('plain loopback request trusted', isLoopbackRequest(req({ headers: { host: '127.0.0.1:9367' } })) === true)
+  check('no x-forwarded-for means not proxied', isProxiedRequest(req()) === false)
+
+  // The fix: a forwarding header is proof that a hop stood in between, so the
+  // request is never local even though socket and Host both say loopback.
+  check('x-forwarded-for marks proxied', isProxiedRequest(req({ headers: { 'x-forwarded-for': '1.2.3.4' } })) === true)
+  check('cf-connecting-ip marks proxied', isProxiedRequest(req({ headers: { 'cf-connecting-ip': '1.2.3.4' } })) === true)
+  check('proxied request refused despite loopback socket',
+    isLoopbackRequest(req({ headers: { host: '127.0.0.1:9367', 'x-forwarded-for': '1.2.3.4' } })) === false)
+  check('proxied request refused via cf-connecting-ip',
+    isLoopbackRequest(req({ headers: { host: 'localhost:9367', 'cf-connecting-ip': '1.2.3.4' } })) === false)
+
+  check('non-loopback socket refused', isLoopbackRequest(req({ address: '203.0.113.7', headers: { host: '127.0.0.1:9367' } })) === false)
+  check('public host header refused', isLoopbackRequest(req({ headers: { host: 'example.com' } })) === false)
+  check('missing host header refused', isLoopbackRequest(req()) === false)
+  check('cross-site fetch refused',
+    isLoopbackRequest(req({ headers: { host: '127.0.0.1:9367', 'sec-fetch-site': 'cross-site' } })) === false)
+  check('same-origin marker accepted',
+    isLoopbackRequest(req({ headers: { host: '127.0.0.1:9367', origin: 'http://127.0.0.1:9367' } })) === true)
+  check('foreign origin refused',
+    isLoopbackRequest(req({ headers: { host: '127.0.0.1:9367', origin: 'http://evil.example' } })) === false)
+}
+
+// ---- DeepSeek peak/off-peak periods (upstream 0.4.8 UI feed) ------------
+{
+  const { deepseekPeriodAt } = await load('core/pricing.ts')
+  const BEIJING = (iso) => Date.parse(iso + '+08:00')
+  // 2026-10-20 is a Tuesday; 2026-10-24 a Saturday.
+  const insideMorning = deepseekPeriodAt(BEIJING('2026-10-20T10:00:00'))
+  check('10:00 Beijing on a weekday is peak', insideMorning.peak === true)
+  check('peak boundary is the window close (12:00)',
+    new Date(insideMorning.boundaryMs + 8 * 3_600_000).toISOString().slice(11, 16) === '12:00',
+    new Date(insideMorning.boundaryMs + 8 * 3_600_000).toISOString())
+  const beforeWindow = deepseekPeriodAt(BEIJING('2026-10-20T08:00:00'))
+  check('08:00 Beijing is off-peak', beforeWindow.peak === false)
+  check('off-peak boundary is the window open (09:00)',
+    new Date(beforeWindow.boundaryMs + 8 * 3_600_000).toISOString().slice(11, 16) === '09:00',
+    new Date(beforeWindow.boundaryMs + 8 * 3_600_000).toISOString())
+  const lunch = deepseekPeriodAt(BEIJING('2026-10-20T13:00:00'))
+  check('13:00 Beijing (lunch gap) is off-peak', lunch.peak === false)
+  const afternoon = deepseekPeriodAt(BEIJING('2026-10-20T15:00:00'))
+  check('15:00 Beijing is peak', afternoon.peak === true)
+  const saturday = deepseekPeriodAt(BEIJING('2026-10-24T10:00:00'))
+  check('Saturday midday is never peak', saturday.peak === false)
+}
+
 const failed = report.filter((row) => !row.ok)
 console.log('\n=== ' + (report.length - failed.length) + '/' + report.length + ' checks passed ===')
 if (failed.length > 0) process.exitCode = 1

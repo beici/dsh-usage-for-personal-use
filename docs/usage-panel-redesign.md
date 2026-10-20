@@ -119,7 +119,7 @@ colours — so the panel adapts to light/dark without new tokens.
 ## Verification
 
 - `node harness/render-test.mjs` — jsdom, real bundle, saved live fixtures,
-  **29/29 checks** (21 window facts + 8 device-card facts): five tiles with correct labels/values/`aria-pressed`, six
+  **35/35 checks** (21 window facts + 8 device-card facts + 6 peak-badge facts): five tiles with correct labels/values/`aria-pressed`, six
   stat cells, no chart for single-day windows, 30 calendar bars + span for
   近 30 天, exactly 3 day fetches for that window, 昨日 totals derived from the
   fixture, custom prompt before picking, 30 bars after picking
