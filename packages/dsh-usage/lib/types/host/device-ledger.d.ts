@@ -76,6 +76,18 @@ export declare function ensureMachineId(dir: string): Promise<string>;
  * summed as a second device — the difference is a permanently doubled total.
  */
 export declare function readMachineAliases(dir: string): Promise<string[]>;
+/**
+ * Record `id` as an id this profile has written under before.
+ *
+ * `readMachineAliases` can only know what the pin file says, and a fresh mint
+ * writes `previous: []` — so the durable list was always empty in practice and the
+ * only working alias source was the local ledger's own `machine` stamp, which the
+ * first flush overwrites with the new pin. Losing the pin while an older file under
+ * the previous id still exists would then turn that file into a phantom peer whose
+ * days are summed on top of the replay. This is where the outgoing id is carried
+ * over, before the flush can replace it.
+ */
+export declare function rememberMachineAlias(dir: string, id: string): Promise<void>;
 /** File name a device's ledger lives under. */
 export declare function ledgerFileName(deviceId: string): string;
 /**

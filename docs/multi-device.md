@@ -26,19 +26,45 @@ All in `$DSH_HOME/dsh-usage/`:
 
 | File | Meaning |
 | --- | --- |
-| `usage-ledger.<deviceId>.json` | One machine's own ledger. Each machine writes exactly one of these. |
+| `usage-ledger.<deviceId>.json` | One machine's own ledger. Each machine writes exactly one of these. It also carries the `machine` id it was written under, the `repairedAt` stamp of the last ledger repair, and the `retentionDays` window it was pruned to. |
+| `usage-ledger.<deviceId>.json.lock` | Present only while a flush is reading, merging and writing that file. A lock older than the stale timeout is broken by the next writer, so a crashed process cannot block the ledger. |
+| `machine-id.json` | This machine's pinned id, minted once. Deleting it only loses the name: the next launch mints another and adopts the file's own id again. |
 | `usage-ledger.json.migrated` | The pre-split single-file ledger, renamed after its history was adopted. Only a marker; safe to delete. |
 | `provider-snapshots.json` | Provider balance/plan snapshots. Unchanged, not part of the device split. |
 
-The device id is derived from host name, platform and user name
-(`sha256(host\0platform\0user)`, first 6 hex chars appended to a host-name
-slug), so it is stable across restarts and fresh installs — a random id would
-start a new ledger file on every launch. This machine resolves to
-`p15-22893b`.
+The machine id is minted once and pinned in `machine-id.json`, so a host rename, a
+user rename or a plugin reinstall keeps the same ledger — those are exactly the
+events that change a derived identity. Two other ids also count as this machine:
+any id this profile wrote under before (a lost pin is re-minted while the files on
+disk keep the old stamp) and the derived id `sha256(host\0platform\0user)` with the
+first 6 hex chars appended to a host-name slug, which builds before the pin stamped
+into their files. That derived id is only the fallback for a profile that cannot
+pin one, and accepting it always means two machines whose host name, user and
+platform are identical share one history — an undercount, which is the lesser evil
+next to a permanently doubled one. This machine resolves to `p15-22893b`.
 
 Peer files must be named `usage-ledger.<id>.json`. The file name wins over any
 `deviceId` inside the document, so renaming a file is enough to correct a
 mis-imported ledger.
+
+A file written before this build stamped a machine id carries no proof of which
+machine wrote it, and a copy of *this* machine's own export has exactly the same
+shape. Summing such a file whole counts our own history twice — that is how one
+export put 2,766 calls / 330 M tokens on one day a second time — so it contributes
+only the days this machine has never recorded, and the panel says so by name
+(`unverified:…`, with the number of days it did add). A peer that this build wrote
+carries the `machine` digest and is summed in full.
+
+Two DSH processes on one machine (two windows, or the CLI beside the desktop app)
+share that one file. Each flush reads the file, adds only the calls it folded
+since its own last write, and writes the merged document; the read-merge-write
+runs under the lock file, so neither window's calls are lost. Buckets merge field
+by field — never "the larger total wins", because the total ignores fields like
+`reasoningTokens` and `cost`. A file whose stamp predates a repair this process
+loaded is never re-adopted whole: those buckets are the ones the repair removed.
+The flush writes its own document instead, takes only days it does not hold at
+all, and says so in the panel — losing a handful of calls that window is
+recoverable by the next replay, while a resurrected copy is permanent.
 
 ## Export and import
 

@@ -25,6 +25,9 @@ export const zh = {
   // Anything else (an abort, a mangled body) is not something the user can read
   // raw: the raw text stays in the tooltip.
   'usage.error.unknown': '请求失败，请稍后再试',
+  // A read of a local file is not a request: the ledger and the device files
+  // need their own sentence when the host reports no recognisable cause.
+  'usage.error.readFailed': '读取失败',
   'usage.disabled': '插件已停用：勾选下方「启用插件」即可恢复统计。',
   'usage.current': '当前',
   'usage.today': '今日用量',
@@ -43,6 +46,9 @@ export const zh = {
   'usage.peak.ends': '{time} 结束',
   'usage.peak.starts': '{time} 进入高峰',
   'usage.calls': '{n} 次调用',
+  // The stat cell already prints the count as its value; the label names the
+  // unit only, so the same number is not stated twice.
+  'usage.callsLabel': '次调用',
   'usage.tokens.total': '总 tokens',
   'usage.tokens.input': '输入',
   'usage.tokens.output': '输出',
@@ -131,6 +137,10 @@ export const zh = {
   // as a typo between two CJK characters.
   'usage.stale': '上次刷新失败（{error}），下面是 {time} 的数据',
   'usage.device.export': '导出本机用量',
+  // A notice states what happened, so it cannot reuse the button label: the
+  // past tense is what tells a finished action from an offered one.
+  'usage.device.exported': '已导出本机用量',
+  'usage.device.exportFailed': '导出失败：{error}',
   'usage.device.import': '导入其他设备',
   'usage.device.importing': '导入中…',
   'usage.device.imported': '已导入 {deviceId} 的用量',
@@ -138,6 +148,8 @@ export const zh = {
   'usage.device.importFailed': '导入失败：{error}',
   'usage.device.dropHint': '也可以把导出的 .json 文件直接放进 ~/.dsh/dsh-usage/ 后点「重新扫描」。',
   'usage.device.rescan': '重新扫描',
+  'usage.device.rescanned': '已重新扫描',
+  'usage.device.rescanFailed': '重新扫描失败：{error}',
 }
 
 /** English mirror; every zh key present. */
@@ -154,6 +166,7 @@ export const en: Record<UsageKey, string> = {
   'usage.error.network': 'Network request failed. Check the connection to DSH.',
   'usage.error.status': 'Request failed (HTTP {status}). Try again in a moment.',
   'usage.error.unknown': 'The request failed. Try again in a moment.',
+  'usage.error.readFailed': 'Read failed',
   'usage.disabled': 'Plugin disabled. Tick "Enable plugin" below to resume statistics.',
   'usage.current': 'Current',
   'usage.today': 'Today',
@@ -172,6 +185,7 @@ export const en: Record<UsageKey, string> = {
   'usage.peak.ends': 'ends {time}',
   'usage.peak.starts': 'peak at {time}',
   'usage.calls': '{n} calls',
+  'usage.callsLabel': 'calls',
   'usage.tokens.total': 'Total tokens',
   'usage.tokens.input': 'Input',
   'usage.tokens.output': 'Output',
@@ -255,6 +269,8 @@ export const en: Record<UsageKey, string> = {
   'usage.ledger.note': 'Note: {note}',
   'usage.stale': 'Last refresh failed ({error}); the numbers below are from {time}',
   'usage.device.export': 'Export this device',
+  'usage.device.exported': 'Exported this device',
+  'usage.device.exportFailed': 'Export failed: {error}',
   'usage.device.import': 'Import another device',
   'usage.device.importing': 'Importing…',
   'usage.device.imported': 'Imported usage from {deviceId}',
@@ -262,6 +278,8 @@ export const en: Record<UsageKey, string> = {
   'usage.device.importFailed': 'Import failed: {error}',
   'usage.device.dropHint': 'You can also drop an exported .json into ~/.dsh/dsh-usage/ and press Rescan.',
   'usage.device.rescan': 'Rescan',
+  'usage.device.rescanned': 'Rescanned',
+  'usage.device.rescanFailed': 'Rescan failed: {error}',
 }
 
 export type UsageKey = keyof typeof zh

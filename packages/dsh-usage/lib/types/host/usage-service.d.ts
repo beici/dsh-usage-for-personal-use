@@ -454,6 +454,7 @@ export declare class UsageService {
      * correction that happened rather than one that was intended.
      */
     private persistRepair;
+    private persistRepairLocked;
     /**
      * Prune days past retention. Runs at most once per local day and whenever
      * `retainDays` shrinks — not only at startup, so long-lived processes and

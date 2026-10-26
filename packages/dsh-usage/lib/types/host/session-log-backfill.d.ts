@@ -17,6 +17,8 @@
  * @module @linxin666/dsh-usage/host/session-log-backfill
  */
 import type { UsageLedgerDocument, UsageTokenTotals } from '../core/types.ts';
+/** The backfill replays at most this many transcripts per start. */
+export declare const SESSION_LOG_MAX_FILES = 2048;
 /**
  * Offset just past the zstd frame that starts at `start`, or -1 when the frame
  * header or any of its blocks runs past the end of `buf`.

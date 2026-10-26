@@ -19,8 +19,9 @@
  * A slot is only sixteen hues wide, so two names do collide in it — and the
  * slot used to be the whole color, which painted the second model of a channel
  * exactly like the first. Each slot now carries a ladder of five shades, and a
- * name's rung is its order inside the slot, so two colliding names land two
- * rungs apart instead of on the same color.
+ * name's rung comes from the same hash, so a collision still lands on two
+ * different shades and no model's color moves when the window's model set
+ * changes.
  *
  * The shades are cut here, in TypeScript, from the hue bytes: a bar has to be
  * legible on the light AND the dark skin, and only a measured luminance can
@@ -48,8 +49,11 @@ export declare function normalizeModelName(model: string): string;
  * promise of this table (the trend bars, the channel bars and the model rows
  * share it, and the user learns the colors), so a collision between two of the
  * sixteen hues is resolved on the shade ladder instead of by shifting someone
- * else's hue. The rung is the name's order inside its slot, stepped by two, so
- * consecutive names of one slot are as far apart on the ladder as it goes.
+ * else's hue. The rung is the next slice of the same hash — never an arrival
+ * counter: counting how many names of a slot had already been seen made a
+ * model's shade depend on the rest of the window, so the same model sat on one
+ * rung in 近 7 天 and on another in 近 30 天. Two names of one slot therefore
+ * only collide again when their hashes agree on the rung bits too.
  */
 export declare function assignModelColors(models: Iterable<string>): Map<string, string>;
 /**

@@ -19,8 +19,9 @@
  * A slot is only sixteen hues wide, so two names do collide in it — and the
  * slot used to be the whole color, which painted the second model of a channel
  * exactly like the first. Each slot now carries a ladder of five shades, and a
- * name's rung is its order inside the slot, so two colliding names land two
- * rungs apart instead of on the same color.
+ * name's rung comes from the same hash, so a collision still lands on two
+ * different shades and no model's color moves when the window's model set
+ * changes.
  *
  * The shades are cut here, in TypeScript, from the hue bytes: a bar has to be
  * legible on the light AND the dark skin, and only a measured luminance can
@@ -64,7 +65,7 @@ const MIN_CONTRAST = 3
 const LUMINANCE_FLOOR = MIN_CONTRAST * (luminance(SURFACE_DARK) + 0.05) - 0.05 + 0.004
 const LUMINANCE_CEILING = (luminance(SURFACE_LIGHT) + 0.05) / MIN_CONTRAST - 0.05 - 0.015
 
-/** Rungs on a slot's ladder: five shades, so a slot's second name sits two below. */
+/** Rungs on a slot's ladder: five shades, so one slot can hold five names. */
 const SHADE_COUNT = 5
 
 /** The color identity of a model: `prefix/`-stripped, trimmed, lower-cased. */
@@ -164,17 +165,21 @@ const SLOT_SHADES: readonly (readonly string[])[] = PALETTE_HUES.map(shadeLadder
  * promise of this table (the trend bars, the channel bars and the model rows
  * share it, and the user learns the colors), so a collision between two of the
  * sixteen hues is resolved on the shade ladder instead of by shifting someone
- * else's hue. The rung is the name's order inside its slot, stepped by two, so
- * consecutive names of one slot are as far apart on the ladder as it goes.
+ * else's hue. The rung is the next slice of the same hash — never an arrival
+ * counter: counting how many names of a slot had already been seen made a
+ * model's shade depend on the rest of the window, so the same model sat on one
+ * rung in 近 7 天 and on another in 近 30 天. Two names of one slot therefore
+ * only collide again when their hashes agree on the rung bits too.
  */
 export function assignModelColors(models: Iterable<string>): Map<string, string> {
   const colors = new Map<string, string>()
-  const taken = new Array<number>(MODEL_PALETTE_SIZE).fill(0)
   for (const name of new Set(models)) {
-    const slot = hashOf(name) % MODEL_PALETTE_SIZE
+    const hash = hashOf(name)
+    const slot = hash % MODEL_PALETTE_SIZE
     const ladder = SLOT_SHADES[slot] ?? []
-    const rung = (taken[slot] ?? 0) * 2 % Math.max(ladder.length, 1)
-    taken[slot] = (taken[slot] ?? 0) + 1
+    // The slot consumed the low four bits, so the rung reads bits the slot did
+    // not: the two decisions stay independent of each other and of the window.
+    const rung = (hash >>> 5) % Math.max(ladder.length, 1)
     colors.set(name, ladder[rung] ?? MODEL_COLOR_OTHER)
   }
   return colors

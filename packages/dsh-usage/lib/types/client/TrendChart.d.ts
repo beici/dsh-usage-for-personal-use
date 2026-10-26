@@ -32,10 +32,11 @@ export interface TrendRow {
 /**
  * The trend chart. `rows` is one row per calendar day of the window, ascending
  * and gap-filled (missing days carry zeroed totals); fewer than two rows is
- * nothing to chart and renders nothing. `rows` model keys and `colors` keys
- * are normalized names (see model-colors); `labels` optionally maps them back
- * to a raw display spelling. A model outside the color table draws in the
- * neutral slate.
+ * nothing to chart and renders nothing — unless the window failed whole, which
+ * is a fact a one-day window owes the reader just as much as a long one.
+ * `rows` model keys and `colors` keys are normalized names (see model-colors);
+ * `labels` optionally maps them back to a raw display spelling. A model outside
+ * the color table draws in the neutral slate.
  */
 export declare function TrendChart(props: {
     rows: ReadonlyArray<TrendRow>;

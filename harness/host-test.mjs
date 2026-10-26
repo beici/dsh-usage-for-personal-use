@@ -1086,12 +1086,13 @@ async function writeTranscript(home, lines, session = 'sess1') {
   check('a field-wise merge keeps the larger value of every field', totalTokens(merged) === 3000, String(totalTokens(merged)))
 }
 
-// ---- an unverifiable peer is summed, but flagged ------------------------
+// ---- an unverifiable peer adds only what we never recorded --------------
 // A peer file exported before this build stamped machine ids names a device that
 // is not us and is not a bare document, so it is real history — but nothing in it
-// proves which machine wrote it. Refusing it would shrink the user's totals by
-// whatever that device contributed (on the real profile: 6.9 % of all calls), so
-// it is summed and reported as unverified instead.
+// proves which machine wrote it, and a copy of this machine's own export has
+// exactly that shape. Summing it whole is how 2,766 calls of our own history got
+// counted twice; dropping it would lose a peer's days. So it contributes only the
+// days this machine has never recorded, and says which way it went.
 {
   const home = await freshHome()
   const dir = join(home, 'dsh-usage')
@@ -1099,12 +1100,18 @@ async function writeTranscript(home, lines, session = 'sess1') {
   const { UsageService } = await load('host/usage-service.ts')
   const { localDateKey } = await load('core/ledger.ts')
   const todayKey = localDateKey(Date.now())
+  const olderKey = localDateKey(Date.now() - 3 * 86_400_000)
   const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
   await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), JSON.stringify({ version: 1, days: { [todayKey]: { buddy: { m1: bucket(1000, 10) } } } }))
-  await writeFile(join(dir, 'usage-ledger.peerone.json'), JSON.stringify({ version: 1, deviceId: 'peerone', days: { [todayKey]: { peer: { p1: bucket(700, 7) } } } }))
+  await writeFile(join(dir, 'usage-ledger.peerone.json'), JSON.stringify({
+    version: 1,
+    deviceId: 'peerone',
+    days: { [todayKey]: { peer: { p1: bucket(700, 7) } }, [olderKey]: { peer: { p1: bucket(300, 3) } } },
+  }))
   const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
   await svc.loadPersisted()
-  check('an unverifiable peer is still counted', svc.overview().usage.all.totals.calls === 17, String(svc.overview().usage.all.totals.calls))
+  check('a day this machine already holds is not counted twice', svc.overview().usage.all.totals.calls === 13, String(svc.overview().usage.all.totals.calls))
+  check('a day this machine never recorded is counted', svc.overview().usage.days.some((row) => row.date === olderKey), JSON.stringify(svc.overview().usage.days.map((row) => row.date)))
   check('the unverified peer is reported', String(svc.overview().usage.ledgerNote ?? '').includes('unverified'), String(svc.overview().usage.ledgerNote))
   check('the unverified peer is listed as a device', svc.overview().usage.devices.length === 2, JSON.stringify(svc.overview().usage.devices))
   await svc.stop()
@@ -1317,8 +1324,10 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), '{"version":1,"days":{"2026-10-20":')
   const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
   await svc.loadPersisted()
-  const restored = svc.overview().usage.days.find((row) => row.date === '2026-09-21')
-  check('the pre-migration history survives a corrupt ledger', restored?.totals.calls === 3, JSON.stringify(svc.overview().usage.days.map((row) => row.date)))
+  // The restored day is older than the 30-day trend window, so it is read back
+  // through the day route (the ledger, not the chart) rather than `usage.days`.
+  const restored = svc.day('2026-09-21')
+  check('the pre-migration history survives a corrupt ledger', restored?.totals.calls === 3, JSON.stringify(restored?.totals))
   check('the rebuild is reported', String(svc.overview().usage.ledgerNote ?? '').includes('pre-migration'), String(svc.overview().usage.ledgerNote))
   check('the corrupt file is still quarantined', String(svc.overview().usage.ledgerError ?? '').includes('corrupt'), String(svc.overview().usage.ledgerError))
   await svc.stop()
@@ -1361,6 +1370,123 @@ async function writeTranscript(home, lines, session = 'sess1') {
   const kept = JSON.parse(await readFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), 'utf8'))
   check('a two-day history survives a jumped clock', Object.keys(kept.days).length === 2, Object.keys(kept.days).join(','))
   check('the refused prune is reported', String(svc.overview().usage.ledgerNote ?? '').includes('retention skipped'), String(svc.overview().usage.ledgerNote))
+  await svc.stop()
+}
+
+// ---- a slab prune is reported ------------------------------------------
+// The guard only refuses a jump that would drop every recorded day. A jump that
+// drops a slab of them is still a deletion the panel has to mention, or the days
+// simply disappear between two restarts.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const days = {}
+  for (let back = 100; back >= 1; back -= 1) days[localDateKey(Date.now() - back * 86_400_000)] = { buddy: { m1: bucket(100, 1) } }
+  await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), JSON.stringify({ version: 1, days }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 60 })
+  await svc.loadPersisted()
+  await svc.flushLedger()
+  const kept = JSON.parse(await readFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), 'utf8'))
+  check('a slab prune still prunes', Object.keys(kept.days).length <= 61, Object.keys(kept.days).length)
+  check('a slab prune is reported', String(svc.overview().usage.ledgerNote ?? '').includes('at once'), String(svc.overview().usage.ledgerNote))
+  await svc.stop()
+}
+
+// ---- an unreadable ledger does not stop the session from writing --------
+// Refusing to write for the rest of the session loses every call folded after the
+// boot. Once the retry budget is spent the bytes are moved aside (still on disk,
+// still salvageable) and counting continues in a fresh file.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const ledgerPath = join(dir, 'usage-ledger.' + localDeviceId() + '.json')
+  // A directory at the ledger path reads back as EISDIR: unreadable, not corrupt.
+  await mkdir(ledgerPath, { recursive: true })
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  // The boot has already spent its retry budget (5 x 20 s) on this file.
+  svc.loadRetries = 5
+  await svc.loadPersisted()
+  await svc.flushLedger()
+  const entries = await readdir(dir)
+  check('an unreadable ledger is moved aside', entries.some((name) => name.includes('.unreadable-')), entries.join(','))
+  const written = JSON.parse(await readFile(ledgerPath, 'utf8'))
+  check('the session keeps writing into a fresh file', typeof written.days === 'object', JSON.stringify(written).slice(0, 60))
+  await svc.stop()
+}
+
+// ---- the id a file was written under is recorded as an alias ------------
+// The pin file used to keep an empty alias list, and the only working alias was
+// the local ledger's own stamp, which the first flush replaces. Losing the pin
+// then turned an older file into a phantom peer whose days were summed on top of
+// the replay — so the outgoing id has to be written down.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const foreign = 'f'.repeat(32)
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), JSON.stringify({
+    version: 1,
+    deviceId: localDeviceId(),
+    machine: foreign,
+    days: { [localDateKey(Date.now())]: { buddy: { m1: bucket(100, 1) } } },
+  }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  const pin = JSON.parse(await readFile(join(dir, 'machine-id.json'), 'utf8'))
+  check('the id a file was written under is recorded as an alias', Array.isArray(pin.previous) && pin.previous.includes(foreign), JSON.stringify(pin))
+  await svc.stop()
+}
+
+// ---- the trend window is the last 30 calendar days ----------------------
+// The recorded tail can reach back months after a gap; a chart labelled "the last
+// 30 days" must not be showing a year of them.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), JSON.stringify({
+    version: 1,
+    days: {
+      [localDateKey(Date.now() - 40 * 86_400_000)]: { buddy: { m1: bucket(200, 2) } },
+      [localDateKey(Date.now() - 2 * 86_400_000)]: { buddy: { m1: bucket(100, 1) } },
+    },
+  }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const usage = svc.overview().usage
+  check('a day older than the trend window is not in it', usage.days.length === 1 && usage.days[0].date === localDateKey(Date.now() - 2 * 86_400_000), usage.days.map((row) => row.date).join(','))
+  check('the all-time figures still carry it', usage.all.totals.calls === 3, JSON.stringify(usage.all.totals))
+  await svc.stop()
+}
+
+// ---- a hand-dropped peer file is picked up by a refresh -----------------
+// The comment claimed the panel rescans after a file is dropped in by hand; no
+// route called it, so the file was only seen after a restart.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  await writeFile(join(dir, 'usage-ledger.peerone.json'), JSON.stringify({ version: 1, deviceId: 'peerone', days: { [localDateKey(Date.now())]: { peer: { p1: bucket(700, 7) } } } }))
+  await svc.refresh()
+  const devices = svc.overview().usage.devices.map((row) => row.deviceId)
+  check('a hand-dropped peer file is picked up by a refresh', devices.includes('peerone'), devices.join(','))
   await svc.stop()
 }
 

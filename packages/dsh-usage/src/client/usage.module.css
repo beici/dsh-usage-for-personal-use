@@ -825,15 +825,18 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  /* WCAG 2.2 target size: the glyph stays 14px, the box a thumb can hit. */
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: none;
   border-radius: 6px;
   background: transparent;
   color: inherit;
   cursor: pointer;
-  opacity: 0.55;
+  /* At rest the toggle still has to be findable, not a ghost: 0.55 measured
+     under the 3:1 non-text contrast the icon needs on both skins. */
+  opacity: 0.72;
   transition: opacity 120ms ease, background-color 120ms ease;
 }
 

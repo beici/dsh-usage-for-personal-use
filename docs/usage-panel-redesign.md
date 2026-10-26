@@ -166,14 +166,21 @@ corrected document whole, instead of max-merging its own stale totals back in.
 Retention is guarded the same way, but the guard has to tell a jumped clock from
 a setting the user lowered on purpose: a clock jump puts *every* recorded day
 outside the window at once, while a shrink keeps the recent days and drops the
-rest. So a prune that would delete all of them (with at least four days on file)
-is refused and reported as a note; a shrink is honoured, once, and the threshold
-applies again afterwards — the file records the window it was written under
-(`retentionDays`), so a restart does not read the user's own change as a jumped
-clock. A shrink that deletes days says how many it dropped, because the panel
-then simply shows less history. Keeping `retainDays` days also means dropping
-anything older than `today-(retainDays-1)`, so the widest window and "all" agree
-instead of the history keeping one extra day.
+rest. So a prune that would delete all of them is refused and reported as a note.
+A *partial* jump — a forward step that leaves some days inside the window — cannot
+be refused without wedging the file forever (an older build that kept more days
+than the window would never shrink again), so it prunes and says so: one pass that
+drops more than 30 % of at least four recorded days is reported as "pruned N of M
+recorded days at once — the clock may have jumped". A shrink is honoured, once,
+and the threshold applies again afterwards — the file records the window it was
+written under (`retentionDays`), so a restart does not read the user's own change
+as a jumped clock. A shrink that deletes days says how many it dropped, because
+the panel then simply shows less history — and that note is not cleared by the
+first flush (it would be gone three seconds after the user asked for the shrink):
+it stays until a start finds the file's recorded window equal to the setting,
+i.e. until the shrink is actually on disk. Keeping `retainDays` days also means
+dropping anything older than `today-(retainDays-1)`, so the widest window and
+"all" agree instead of the history keeping one extra day.
 
 Two more things the ledger file must survive, because both end in a silent wipe:
 
@@ -203,7 +210,11 @@ Two more things the ledger file must survive, because both end in a silent wipe:
   digest is only the fallback for a read-only profile that cannot pin one, and
   accepting it always means two machines whose host name, user and platform are
   identical share a history — an undercount, which is the lesser evil next to a
-  permanently doubled one.
+  permanently doubled one. The aliases are *durable*: `device-ledger.json` keeps a
+  short `machines` list of the stamps this profile has accepted, so a lost
+  `machine-id.json` no longer turns every old file into a second machine (a live
+  in-memory alias alone was inert — it was born at start and thrown away at exit,
+  which is exactly when the pin it substitutes for is read).
 
 The pre-rename `usage-ledger.json` is read when this device's file is missing,
 and so is the `.migrated` sibling a successful migration leaves behind: that
@@ -215,7 +226,11 @@ Two more write-path rules:
 - A ledger that cannot be read is never overwritten. `readLedgerFile` separates
   "missing" from "unreadable" (locked, permissions) from "corrupt"; unreadable
   keeps the write guard armed, retries the load five times 20 s apart and
-  surfaces `usage.ledgerError` in the panel. A corrupt file is renamed to
+  surfaces `usage.ledgerError` in the panel. Once that budget is spent the file is
+  moved aside as `usage-ledger.<device>.json.unreadable-<ts>.json` and counting
+  continues in a fresh document: refusing to write for the rest of the session
+  would lose every call folded after the boot, and the bytes stay salvageable by
+  hand. A corrupt file is renamed to
   `usage-ledger.<device>.json.corrupt-<ts>.json` and reported, so a fresh
   document keeps counting without destroying the bytes someone may still want.
 - A flush writes the file's growth plus this process's own growth. Two DSH
@@ -242,9 +257,13 @@ Two more write-path rules:
 - Peer discovery is not allowed to lose data either. A scan that fails keeps the
   peers it already knows and reports `usage.devicesError`; a peer document whose
   `deviceId` does not match its file name, or whose `machine` is this machine, is
-  skipped with a named failure. Non-fatal trouble (a skipped retention pass, a
-  transcript set that hit the discovery cap, a quarantined file) travels to the
-  panel as `usage.ledgerNote` instead of being swallowed.
+  skipped with a named failure. A peer document written before the `machine` digest
+  existed cannot be told apart from a copy of this machine's own export — the shape
+  is identical — so it contributes only the days this machine has never recorded,
+  and the note names the file and how many days it added (`unverified:<id>`).
+  Non-fatal trouble (a skipped retention pass, a transcript set that hit the
+  discovery cap, a quarantined file) travels to the panel as `usage.ledgerNote`
+  instead of being swallowed.
 
 The replay runs before `pruneIfNeeded`: pruning first only resurrects the days
 the replay then re-adds. One discovery pass feeds both the deduped replay and the
@@ -368,7 +387,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
 ## Verification
 
 - `node harness/render-test.mjs` — jsdom, real bundle, saved live fixtures,
-  **113/113 checks**: eight tiles with correct labels/values/`aria-pressed`
+  **144/144 checks**: eight tiles with correct labels/values/`aria-pressed`
   (近 3 天 sums 今日 + 10-19; 近 6 个月 / 全部 read the range aggregate, which the
   stub answers only up to yesterday — 49.2 M / 584 calls — so their 135 M / 1251
   tiles prove the panel folded the live today in itself, and no range fetch may
@@ -398,16 +417,30 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   keeps the previous total and gives up after five attempts, a today-only
   ledger sends no range request, the tablist keyboard contract (ArrowRight,
   Home, End), the from-date `min`, and the legend readable outside the image
-  role.
-- `node --experimental-strip-types harness/host-test.mjs` — 177 checks: range
+  role. Rounds 7–9 add: a cached day re-read when the ledger moves, a retry chain
+  that a no-op snapshot does not rewind, a canvas that cannot draw stating the
+  voucher failure and a successful redraw clearing it, the poll-interval field
+  committing only on blur or Enter (30–3600, an emptied field reverting), a
+  model shade independent of arrival order, every slot reaching all five shades,
+  a window missing a day printing `—` instead of a partial total, a calls cell
+  that names its unit, export failures told apart from import failures, the
+  sidebar card translated with the wire text in `title` and its figures no
+  longer behind an `aria-label`, and the collapse toggle measured 24×24 at
+  opacity 0.72.
+- `node --experimental-strip-types harness/host-test.mjs` — 186 checks: range
   aggregate + per-model series, route guards, device ledger, loopback fence,
   peak clock, the record-carried route of the live fold, transcript dedupe and
   the judged repair, ledger quarantine and unreadable-file protection, the
   delta merge between two processes, the pinned machine id (a renamed host is
   the same machine), a peer document without a machine id being refused, the
   retention guard telling a clock jump from a lowered `retainDays`, the note
-  registry not growing per poll, and legacy history being restored after a
-  quarantine.
+  registry not growing per poll, legacy history being restored after a
+  quarantine, a repair written under the flush lock and retried when it cannot
+  be, an unreadable ledger moved aside once the load budget is spent, the
+  durable machine-alias record in `device-ledger.json`, an unverified peer
+  contributing only days this machine never recorded, a trend window reported as
+  a named failure instead of a range error, and a retention note surviving the
+  first flush.
 - Live bundle serving was proven against the running host:
   `GET /plugins/events` (loopback-exempt) lists the plugin row's `rev`, and
   `GET /plugins/??@linxin666/dsh-usage/client.js&rev=<rev>` returns the new
@@ -427,5 +460,6 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   key walk starts at the window's end, so a decade-long custom range keeps the
   days near today instead of the oldest 731.
 - The trend chart is drawn on a canvas with `role="img"` and an `aria-label`;
-  the tab strip still lacks `aria-controls`/`tabpanel` wiring, so a screen
-  reader announces the tabs but not the panel they switch.
+  the three tabpanels are mounted and toggled with `hidden`, each button naming
+  its panel through `aria-controls`, so a screen reader announces both the tabs
+  and the panel they switch.

@@ -59,6 +59,7 @@ window.__ModuleLoader__.load({
 			"usage.error.network": "网络请求失败，请检查与 DSH 的连接",
 			"usage.error.status": "请求失败（HTTP {status}），请稍后再试",
 			"usage.error.unknown": "请求失败，请稍后再试",
+			"usage.error.readFailed": "读取失败",
 			"usage.disabled": "插件已停用：勾选下方「启用插件」即可恢复统计。",
 			"usage.current": "当前",
 			"usage.today": "今日用量",
@@ -77,6 +78,7 @@ window.__ModuleLoader__.load({
 			"usage.peak.ends": "{time} 结束",
 			"usage.peak.starts": "{time} 进入高峰",
 			"usage.calls": "{n} 次调用",
+			"usage.callsLabel": "次调用",
 			"usage.tokens.total": "总 tokens",
 			"usage.tokens.input": "输入",
 			"usage.tokens.output": "输出",
@@ -160,13 +162,17 @@ window.__ModuleLoader__.load({
 			"usage.ledger.note": "说明：{note}",
 			"usage.stale": "上次刷新失败（{error}），下面是 {time} 的数据",
 			"usage.device.export": "导出本机用量",
+			"usage.device.exported": "已导出本机用量",
+			"usage.device.exportFailed": "导出失败：{error}",
 			"usage.device.import": "导入其他设备",
 			"usage.device.importing": "导入中…",
 			"usage.device.imported": "已导入 {deviceId} 的用量",
 			"usage.device.importSame": "这个文件就是本机导出的，无需导入。",
 			"usage.device.importFailed": "导入失败：{error}",
 			"usage.device.dropHint": "也可以把导出的 .json 文件直接放进 ~/.dsh/dsh-usage/ 后点「重新扫描」。",
-			"usage.device.rescan": "重新扫描"
+			"usage.device.rescan": "重新扫描",
+			"usage.device.rescanned": "已重新扫描",
+			"usage.device.rescanFailed": "重新扫描失败：{error}"
 		};
 		/** English mirror; every zh key present. */
 		const en = {
@@ -182,6 +188,7 @@ window.__ModuleLoader__.load({
 			"usage.error.network": "Network request failed. Check the connection to DSH.",
 			"usage.error.status": "Request failed (HTTP {status}). Try again in a moment.",
 			"usage.error.unknown": "The request failed. Try again in a moment.",
+			"usage.error.readFailed": "Read failed",
 			"usage.disabled": "Plugin disabled. Tick \"Enable plugin\" below to resume statistics.",
 			"usage.current": "Current",
 			"usage.today": "Today",
@@ -200,6 +207,7 @@ window.__ModuleLoader__.load({
 			"usage.peak.ends": "ends {time}",
 			"usage.peak.starts": "peak at {time}",
 			"usage.calls": "{n} calls",
+			"usage.callsLabel": "calls",
 			"usage.tokens.total": "Total tokens",
 			"usage.tokens.input": "Input",
 			"usage.tokens.output": "Output",
@@ -283,13 +291,17 @@ window.__ModuleLoader__.load({
 			"usage.ledger.note": "Note: {note}",
 			"usage.stale": "Last refresh failed ({error}); the numbers below are from {time}",
 			"usage.device.export": "Export this device",
+			"usage.device.exported": "Exported this device",
+			"usage.device.exportFailed": "Export failed: {error}",
 			"usage.device.import": "Import another device",
 			"usage.device.importing": "Importing…",
 			"usage.device.imported": "Imported usage from {deviceId}",
 			"usage.device.importSame": "That file was exported by this device; nothing to import.",
 			"usage.device.importFailed": "Import failed: {error}",
 			"usage.device.dropHint": "You can also drop an exported .json into ~/.dsh/dsh-usage/ and press Rescan.",
-			"usage.device.rescan": "Rescan"
+			"usage.device.rescan": "Rescan",
+			"usage.device.rescanned": "Rescanned",
+			"usage.device.rescanFailed": "Rescan failed: {error}"
 		};
 		/**
 		* Active dictionary, picked by the document language at call time. The
@@ -306,8 +318,42 @@ window.__ModuleLoader__.load({
 			return text;
 		}
 		//#endregion
+		//#region src/client/error-text.ts
+		/**
+		* One translation table for host error text, shared by every surface that shows
+		* one: the section card, the sidebar foot card and the device card all state a
+		* failure in the user's language and keep the raw wire text in a `title`, where
+		* a diagnostic belongs. The mapping lives here rather than in the card that
+		* happened to grow it first, because three copies drift apart and one of them
+		* ends up printing `usage api/dsh-usage/overview failed: 500` to a user.
+		* @module @linxin666/dsh-usage/client/error-text
+		*/
+		/** Failures that mean "the host could not be reached", whatever the wording. */
+		const NETWORK_ERROR = /failed to fetch|networkerror|network error|econnrefused|econnreset|enotfound|socket hang up|load failed|timeout|timed out|abort/i;
+		/** A non-2xx answer carries its status as `… failed: 500`. */
+		const STATUS_ERROR = /failed: (\d{3})\b/;
+		/**
+		* A transport error as the panel states it: the wire's own words ("Failed to
+		* fetch", "ECONNREFUSED", a timeout) are diagnostics, not something a user can
+		* act on, so the network-shaped ones read as one localized sentence instead.
+		*
+		* A non-2xx answer arrives as `usage api/… failed: 500` — the internal route and
+		* a bare status code, which used to be printed verbatim next to the translated
+		* sentence around it. The status is the one part worth repeating, so it gets its
+		* own sentence. `fallback` names the sentence for everything else: an abort, a
+		* JSON parse failure ("Unexpected token <"), or a local file the host could not
+		* read — a read failure and a request failure are not the same thing to the
+		* person reading it. Callers keep the raw text in a title attribute, so the
+		* diagnostic is never lost.
+		*/
+		function describeError(error, fallback = "usage.error.unknown") {
+			if (NETWORK_ERROR.test(error)) return t("usage.error.network");
+			const status = STATUS_ERROR.exec(error);
+			return status === null ? t(fallback) : t("usage.error.status", { status: status[1] });
+		}
+		//#endregion
 		//#region \0dsh-css:packages/dsh-usage/src/client/usage.module.css.mjs
-		const css = ".cvtkAW_section{color:inherit;flex-direction:column;gap:16px;display:flex}.cvtkAW_header{justify-content:space-between;align-items:center;gap:12px;display:flex}.cvtkAW_currentProvider{opacity:.75;font-size:13px}.cvtkAW_refreshBtn{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.85;background:0 0;border:1px solid;border-radius:8px;padding:4px 12px;font-size:12px;transition:opacity .12s,background-color .12s}.cvtkAW_refreshBtn:hover:not(:disabled){opacity:1;background:color-mix(in srgb, currentColor 8%, transparent)}.cvtkAW_refreshBtn:disabled{cursor:default;opacity:.5}.cvtkAW_refreshBtn:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabs{border-bottom:1px solid color-mix(in srgb, currentColor 14%, transparent);gap:4px;display:flex}.cvtkAW_tab{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.65;background:0 0;border:none;border-bottom:2px solid #0000;margin-bottom:-1px;padding:6px 14px;font-size:13px}.cvtkAW_tab:hover{opacity:.9}.cvtkAW_tab:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabActive{opacity:1;border-bottom-color:currentColor;font-weight:600}.cvtkAW_panel{flex-direction:column;gap:16px;display:flex}.cvtkAW_panel[hidden]{display:none}.cvtkAW_card{border:1px solid color-mix(in srgb, currentColor 14%, transparent);border-radius:12px;flex-direction:column;gap:10px;padding:14px 16px;display:flex}.cvtkAW_cardTitle{letter-spacing:.04em;text-transform:uppercase;opacity:.6;font-size:12px;font-weight:600}.cvtkAW_dayPicker{align-items:center;gap:8px;display:flex}.cvtkAW_dayPickerLabel{opacity:.6;font-size:11px}.cvtkAW_daySelect{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_daySelect:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_daySelect option,.cvtkAW_settingItem select option{background-color:var(--dsw-alias-bg-multi-select,Canvas);color:var(--dsw-alias-label-primary,CanvasText)}.cvtkAW_statRow{flex-wrap:wrap;gap:18px;display:flex}.cvtkAW_stat{text-align:center;flex-direction:column;align-items:center;gap:2px;display:flex}.cvtkAW_statValue{font-variant-numeric:tabular-nums;font-size:18px;font-weight:600}.cvtkAW_statLabel{opacity:.6;font-size:11px}.cvtkAW_providerRow{border-top:1px solid color-mix(in srgb, currentColor 8%, transparent);flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;font-size:13px;display:flex}.cvtkAW_providerRow:first-of-type{border-top:none}.cvtkAW_providerName{align-items:center;gap:8px;min-width:0;display:flex}.cvtkAW_providerTokens{font-variant-numeric:tabular-nums;opacity:.75;white-space:nowrap}.cvtkAW_providerBalance{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}.cvtkAW_currentBadge{border:1px solid color-mix(in srgb, currentColor 35%, transparent);opacity:.8;border-radius:999px;flex:none;padding:1px 7px;font-size:10px;font-weight:600}.cvtkAW_chart{flex-direction:column;gap:12px;display:flex}.cvtkAW_chartProvider{flex-direction:column;gap:5px;display:flex}.cvtkAW_chartProvider+.cvtkAW_chartProvider{border-top:1px solid color-mix(in srgb, currentColor 7%, transparent);padding-top:10px}.cvtkAW_chartHead{justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;display:flex}.cvtkAW_chartHeadName{letter-spacing:.01em;font-weight:600}.cvtkAW_chartHeadTokens{font-variant-numeric:tabular-nums;opacity:.88;white-space:nowrap;font-size:11.5px;font-weight:600}.cvtkAW_chartTokens{font-variant-numeric:tabular-nums;opacity:.6;white-space:nowrap;font-size:11px}.cvtkAW_chartBar{background:color-mix(in srgb, currentColor 8%, transparent);border-radius:999px;height:8px;display:flex;overflow:hidden}.cvtkAW_chartSeg{flex:none;height:100%;display:block}.cvtkAW_chartModel{opacity:.8;grid-template-columns:minmax(0,180px) minmax(0,1fr) minmax(0,176px);align-items:center;gap:8px;padding-left:14px;font-size:11px;display:grid}.cvtkAW_chartModelName{text-overflow:ellipsis;white-space:nowrap;opacity:.95;overflow:hidden}.cvtkAW_chartModelBar{background:color-mix(in srgb, currentColor 6%, transparent);border-radius:999px;height:4px;display:block;overflow:hidden}.cvtkAW_chartModelFill{background:color-mix(in srgb, currentColor 35%, transparent);border-radius:999px;height:100%;transition:width .3s;display:block}.cvtkAW_trendWrap{flex-direction:column;gap:6px;display:flex}.cvtkAW_trendPlot{gap:6px;height:96px;display:flex}.cvtkAW_trendYLabels{flex:none;width:34px;position:relative}.cvtkAW_trendYLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;right:0;transform:translateY(50%)}.cvtkAW_trendArea{border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);flex:1 1 0;min-width:0;position:relative}.cvtkAW_trendGridline{background:color-mix(in srgb, currentColor 8%, transparent);height:1px;position:absolute;left:0;right:0}.cvtkAW_trendBars{align-items:flex-end;gap:2px;display:flex;position:absolute;inset:0}.cvtkAW_trendFailed{text-align:center;justify-content:center;align-items:center;padding:0 12px;display:flex;position:absolute;inset:0}.cvtkAW_trendBar{border-radius:2px 2px 0 0;flex-direction:column-reverse;flex:1 1 0;min-width:2px;height:100%;display:flex;overflow:hidden}.cvtkAW_trendBar:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_trendBar[data-failed=true]{outline:1px dashed color-mix(in srgb, currentColor 45%, transparent);outline-offset:-1px;background-image:repeating-linear-gradient(135deg, color-mix(in srgb, currentColor 12%, transparent) 0 2px, transparent 2px 5px)}.cvtkAW_trendSeg{width:100%;display:block}.cvtkAW_trendSegCache{background:color-mix(in srgb, currentColor 70%, transparent)}.cvtkAW_trendSegInput{background:color-mix(in srgb, currentColor 45%, transparent)}.cvtkAW_trendSegOutput{background:color-mix(in srgb, currentColor 22%, transparent)}.cvtkAW_trendBar:hover .cvtkAW_trendSeg{filter:saturate(1.15)brightness(1.06)}.cvtkAW_trendTooltip{z-index:2;border:1px solid color-mix(in srgb, currentColor 18%, transparent);background:var(--dsw-alias-bg-floating,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;box-shadow:0 4px 14px color-mix(in srgb, currentColor 18%, transparent);border-radius:8px;flex-direction:column;gap:2px;padding:6px 9px;font-size:11px;display:flex;position:absolute;transform:translate(-50%,-100%)}.cvtkAW_trendTooltipTitle{font-weight:600}.cvtkAW_trendTooltipLine{opacity:.8}.cvtkAW_trendXLabels{height:14px;margin-left:40px;position:relative}.cvtkAW_trendXLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;transform:translate(-50%)}.cvtkAW_trendLegend{opacity:.65;flex-wrap:wrap;gap:12px;font-size:10px;display:flex}.cvtkAW_trendLegendItem{align-items:center;gap:4px;display:inline-flex}.cvtkAW_trendSwatch{border-radius:2px;width:8px;height:8px;display:inline-block}.cvtkAW_rangeGrid{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;display:grid}.cvtkAW_rangeTile{appearance:none;border:1px solid color-mix(in srgb, currentColor 14%, transparent);color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border-radius:10px;flex-direction:column;gap:2px;padding:8px 10px;transition:background-color .12s,border-color .12s;display:flex}.cvtkAW_rangeTile:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_rangeTile:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_rangeTileActive{border-color:color-mix(in srgb, currentColor 45%, transparent);background:color-mix(in srgb, currentColor 9%, transparent)}.cvtkAW_rangeTileLabel{opacity:.65;font-size:11px}.cvtkAW_rangeTileValue{font-variant-numeric:tabular-nums;font-size:16px;font-weight:600}.cvtkAW_rangeTileMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_rangeControls{flex-wrap:wrap;align-items:center;gap:12px;display:flex}.cvtkAW_dateInput{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_dateInput:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_windowHead{flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_spanLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_modelRows{flex-direction:column;gap:4px;display:flex}.cvtkAW_muted{opacity:.6;font-size:12px}.cvtkAW_voucherPreview canvas{border-radius:8px;width:100%;height:auto;display:block}.cvtkAW_buttonRow{gap:8px;display:flex}.cvtkAW_errorLine{opacity:.75;font-size:12px}.cvtkAW_noteLine{opacity:.6;font-size:11.5px}.cvtkAW_planCard{flex-direction:column;gap:8px;display:flex}.cvtkAW_planHead{justify-content:space-between;align-items:baseline;gap:10px;display:flex}.cvtkAW_planName{font-size:14px;font-weight:600}.cvtkAW_windowRow{flex-direction:column;gap:4px;display:flex}.cvtkAW_windowLabel{opacity:.8;font-variant-numeric:tabular-nums;justify-content:space-between;font-size:12px;display:flex}.cvtkAW_bar{background:color-mix(in srgb, currentColor 10%, transparent);border-radius:999px;height:6px;overflow:hidden}.cvtkAW_barFill{background:color-mix(in srgb, currentColor 55%, transparent);border-radius:999px;height:100%;transition:width .3s}.cvtkAW_barWarn{background:#d97706}.cvtkAW_barLow{background:#dc2626}.cvtkAW_resetLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_settingsGrid{flex-wrap:wrap;align-items:center;gap:16px;display:flex}.cvtkAW_settingItem{align-items:center;gap:8px;font-size:13px;display:flex}.cvtkAW_settingItem input[type=checkbox]{accent-color:currentColor}.cvtkAW_settingItem input[type=number]{border:1px solid color-mix(in srgb, currentColor 25%, transparent);width:90px;color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem select{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem input:focus-visible,.cvtkAW_settingItem select:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footCard{box-sizing:border-box;background:color-mix(in srgb, currentColor 4%, transparent);width:100%;color:inherit;border:none;border-radius:12px;margin:2px 0 4px;transition:background-color .12s;position:relative}.cvtkAW_footCard:hover{background:var(--dsw-alias-interactive-bg-hover)}.cvtkAW_footCardCollapsed{background:0 0}.cvtkAW_footMain{appearance:none;box-sizing:border-box;width:100%;color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border:none;border-radius:12px;flex-direction:column;gap:4px;padding:8px;display:flex}.cvtkAW_footMain:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle{appearance:none;width:20px;height:20px;color:inherit;cursor:pointer;opacity:.55;background:0 0;border:none;border-radius:6px;justify-content:center;align-items:center;padding:0;transition:opacity .12s,background-color .12s;display:inline-flex;position:absolute;top:6px;right:6px}.cvtkAW_footCard:hover .cvtkAW_footToggle{opacity:.8}.cvtkAW_footToggle:hover{opacity:1;background:color-mix(in srgb, currentColor 10%, transparent)}.cvtkAW_footToggle:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle svg{display:block}.cvtkAW_footHead{justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_footTitle{opacity:.65;white-space:nowrap;align-items:center;gap:6px;min-width:0;font-size:12px;display:inline-flex}.cvtkAW_footTitle svg{flex:none;display:block}.cvtkAW_footValue{font-variant-numeric:tabular-nums;white-space:nowrap;margin-right:18px;font-size:15px;font-weight:600}.cvtkAW_footLine{opacity:.7;font-variant-numeric:tabular-nums;text-overflow:ellipsis;white-space:nowrap;font-size:11px;overflow:hidden}.cvtkAW_footMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_footCardCollapsed .cvtkAW_footMain{min-height:36px;padding:7px 8px}.cvtkAW_footStrip{white-space:nowrap;align-items:center;gap:6px;padding-right:20px;font-size:12px;display:flex;overflow:hidden}.cvtkAW_footStrip svg{opacity:.65;flex:none;display:block}.cvtkAW_footStripProvider{text-overflow:ellipsis;flex:none;max-width:38%;font-weight:500;overflow:hidden}.cvtkAW_footStripLabel{opacity:.65;text-overflow:ellipsis;overflow:hidden}.cvtkAW_footStripValue{font-variant-numeric:tabular-nums;margin-left:auto;font-weight:600}[data-dsh-frame][data-sidebar-collapsed] .cvtkAW_footCard,[data-sidebar-collapsed] .cvtkAW_footCard{display:none}.cvtkAW_peakBadge,.cvtkAW_peakLine{font-variant-numeric:tabular-nums;white-space:nowrap;align-items:center;gap:4px;font-size:11px;display:inline-flex}.cvtkAW_peakBadge{flex:none}.cvtkAW_peakLine{gap:6px}.cvtkAW_peakBadge[data-peak=on],.cvtkAW_peakLine[data-peak=on]{color:var(--dsw-alias-state-error-primary,#b42318)}.cvtkAW_peakBadge[data-peak=off],.cvtkAW_peakLine[data-peak=off]{color:var(--dsw-alias-state-success-primary,#067647)}.cvtkAW_peakDot{background:currentColor;border-radius:50%;flex:none;width:6px;height:6px}.cvtkAW_footPeak{white-space:nowrap;align-items:center;gap:5px;font-size:10px;display:flex;overflow:hidden}.cvtkAW_footPeakClock{opacity:.7;font-variant-numeric:tabular-nums}";
+		const css = ".cvtkAW_section{color:inherit;flex-direction:column;gap:16px;display:flex}.cvtkAW_header{justify-content:space-between;align-items:center;gap:12px;display:flex}.cvtkAW_currentProvider{opacity:.75;font-size:13px}.cvtkAW_refreshBtn{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.85;background:0 0;border:1px solid;border-radius:8px;padding:4px 12px;font-size:12px;transition:opacity .12s,background-color .12s}.cvtkAW_refreshBtn:hover:not(:disabled){opacity:1;background:color-mix(in srgb, currentColor 8%, transparent)}.cvtkAW_refreshBtn:disabled{cursor:default;opacity:.5}.cvtkAW_refreshBtn:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabs{border-bottom:1px solid color-mix(in srgb, currentColor 14%, transparent);gap:4px;display:flex}.cvtkAW_tab{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.65;background:0 0;border:none;border-bottom:2px solid #0000;margin-bottom:-1px;padding:6px 14px;font-size:13px}.cvtkAW_tab:hover{opacity:.9}.cvtkAW_tab:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabActive{opacity:1;border-bottom-color:currentColor;font-weight:600}.cvtkAW_panel{flex-direction:column;gap:16px;display:flex}.cvtkAW_panel[hidden]{display:none}.cvtkAW_card{border:1px solid color-mix(in srgb, currentColor 14%, transparent);border-radius:12px;flex-direction:column;gap:10px;padding:14px 16px;display:flex}.cvtkAW_cardTitle{letter-spacing:.04em;text-transform:uppercase;opacity:.6;font-size:12px;font-weight:600}.cvtkAW_dayPicker{align-items:center;gap:8px;display:flex}.cvtkAW_dayPickerLabel{opacity:.6;font-size:11px}.cvtkAW_daySelect{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_daySelect:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_daySelect option,.cvtkAW_settingItem select option{background-color:var(--dsw-alias-bg-multi-select,Canvas);color:var(--dsw-alias-label-primary,CanvasText)}.cvtkAW_statRow{flex-wrap:wrap;gap:18px;display:flex}.cvtkAW_stat{text-align:center;flex-direction:column;align-items:center;gap:2px;display:flex}.cvtkAW_statValue{font-variant-numeric:tabular-nums;font-size:18px;font-weight:600}.cvtkAW_statLabel{opacity:.6;font-size:11px}.cvtkAW_providerRow{border-top:1px solid color-mix(in srgb, currentColor 8%, transparent);flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;font-size:13px;display:flex}.cvtkAW_providerRow:first-of-type{border-top:none}.cvtkAW_providerName{align-items:center;gap:8px;min-width:0;display:flex}.cvtkAW_providerTokens{font-variant-numeric:tabular-nums;opacity:.75;white-space:nowrap}.cvtkAW_providerBalance{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}.cvtkAW_currentBadge{border:1px solid color-mix(in srgb, currentColor 35%, transparent);opacity:.8;border-radius:999px;flex:none;padding:1px 7px;font-size:10px;font-weight:600}.cvtkAW_chart{flex-direction:column;gap:12px;display:flex}.cvtkAW_chartProvider{flex-direction:column;gap:5px;display:flex}.cvtkAW_chartProvider+.cvtkAW_chartProvider{border-top:1px solid color-mix(in srgb, currentColor 7%, transparent);padding-top:10px}.cvtkAW_chartHead{justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;display:flex}.cvtkAW_chartHeadName{letter-spacing:.01em;font-weight:600}.cvtkAW_chartHeadTokens{font-variant-numeric:tabular-nums;opacity:.88;white-space:nowrap;font-size:11.5px;font-weight:600}.cvtkAW_chartTokens{font-variant-numeric:tabular-nums;opacity:.6;white-space:nowrap;font-size:11px}.cvtkAW_chartBar{background:color-mix(in srgb, currentColor 8%, transparent);border-radius:999px;height:8px;display:flex;overflow:hidden}.cvtkAW_chartSeg{flex:none;height:100%;display:block}.cvtkAW_chartModel{opacity:.8;grid-template-columns:minmax(0,180px) minmax(0,1fr) minmax(0,176px);align-items:center;gap:8px;padding-left:14px;font-size:11px;display:grid}.cvtkAW_chartModelName{text-overflow:ellipsis;white-space:nowrap;opacity:.95;overflow:hidden}.cvtkAW_chartModelBar{background:color-mix(in srgb, currentColor 6%, transparent);border-radius:999px;height:4px;display:block;overflow:hidden}.cvtkAW_chartModelFill{background:color-mix(in srgb, currentColor 35%, transparent);border-radius:999px;height:100%;transition:width .3s;display:block}.cvtkAW_trendWrap{flex-direction:column;gap:6px;display:flex}.cvtkAW_trendPlot{gap:6px;height:96px;display:flex}.cvtkAW_trendYLabels{flex:none;width:34px;position:relative}.cvtkAW_trendYLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;right:0;transform:translateY(50%)}.cvtkAW_trendArea{border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);flex:1 1 0;min-width:0;position:relative}.cvtkAW_trendGridline{background:color-mix(in srgb, currentColor 8%, transparent);height:1px;position:absolute;left:0;right:0}.cvtkAW_trendBars{align-items:flex-end;gap:2px;display:flex;position:absolute;inset:0}.cvtkAW_trendFailed{text-align:center;justify-content:center;align-items:center;padding:0 12px;display:flex;position:absolute;inset:0}.cvtkAW_trendBar{border-radius:2px 2px 0 0;flex-direction:column-reverse;flex:1 1 0;min-width:2px;height:100%;display:flex;overflow:hidden}.cvtkAW_trendBar:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_trendBar[data-failed=true]{outline:1px dashed color-mix(in srgb, currentColor 45%, transparent);outline-offset:-1px;background-image:repeating-linear-gradient(135deg, color-mix(in srgb, currentColor 12%, transparent) 0 2px, transparent 2px 5px)}.cvtkAW_trendSeg{width:100%;display:block}.cvtkAW_trendSegCache{background:color-mix(in srgb, currentColor 70%, transparent)}.cvtkAW_trendSegInput{background:color-mix(in srgb, currentColor 45%, transparent)}.cvtkAW_trendSegOutput{background:color-mix(in srgb, currentColor 22%, transparent)}.cvtkAW_trendBar:hover .cvtkAW_trendSeg{filter:saturate(1.15)brightness(1.06)}.cvtkAW_trendTooltip{z-index:2;border:1px solid color-mix(in srgb, currentColor 18%, transparent);background:var(--dsw-alias-bg-floating,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;box-shadow:0 4px 14px color-mix(in srgb, currentColor 18%, transparent);border-radius:8px;flex-direction:column;gap:2px;padding:6px 9px;font-size:11px;display:flex;position:absolute;transform:translate(-50%,-100%)}.cvtkAW_trendTooltipTitle{font-weight:600}.cvtkAW_trendTooltipLine{opacity:.8}.cvtkAW_trendXLabels{height:14px;margin-left:40px;position:relative}.cvtkAW_trendXLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;transform:translate(-50%)}.cvtkAW_trendLegend{opacity:.65;flex-wrap:wrap;gap:12px;font-size:10px;display:flex}.cvtkAW_trendLegendItem{align-items:center;gap:4px;display:inline-flex}.cvtkAW_trendSwatch{border-radius:2px;width:8px;height:8px;display:inline-block}.cvtkAW_rangeGrid{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;display:grid}.cvtkAW_rangeTile{appearance:none;border:1px solid color-mix(in srgb, currentColor 14%, transparent);color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border-radius:10px;flex-direction:column;gap:2px;padding:8px 10px;transition:background-color .12s,border-color .12s;display:flex}.cvtkAW_rangeTile:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_rangeTile:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_rangeTileActive{border-color:color-mix(in srgb, currentColor 45%, transparent);background:color-mix(in srgb, currentColor 9%, transparent)}.cvtkAW_rangeTileLabel{opacity:.65;font-size:11px}.cvtkAW_rangeTileValue{font-variant-numeric:tabular-nums;font-size:16px;font-weight:600}.cvtkAW_rangeTileMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_rangeControls{flex-wrap:wrap;align-items:center;gap:12px;display:flex}.cvtkAW_dateInput{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_dateInput:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_windowHead{flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_spanLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_modelRows{flex-direction:column;gap:4px;display:flex}.cvtkAW_muted{opacity:.6;font-size:12px}.cvtkAW_voucherPreview canvas{border-radius:8px;width:100%;height:auto;display:block}.cvtkAW_buttonRow{gap:8px;display:flex}.cvtkAW_errorLine{opacity:.75;font-size:12px}.cvtkAW_noteLine{opacity:.6;font-size:11.5px}.cvtkAW_planCard{flex-direction:column;gap:8px;display:flex}.cvtkAW_planHead{justify-content:space-between;align-items:baseline;gap:10px;display:flex}.cvtkAW_planName{font-size:14px;font-weight:600}.cvtkAW_windowRow{flex-direction:column;gap:4px;display:flex}.cvtkAW_windowLabel{opacity:.8;font-variant-numeric:tabular-nums;justify-content:space-between;font-size:12px;display:flex}.cvtkAW_bar{background:color-mix(in srgb, currentColor 10%, transparent);border-radius:999px;height:6px;overflow:hidden}.cvtkAW_barFill{background:color-mix(in srgb, currentColor 55%, transparent);border-radius:999px;height:100%;transition:width .3s}.cvtkAW_barWarn{background:#d97706}.cvtkAW_barLow{background:#dc2626}.cvtkAW_resetLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_settingsGrid{flex-wrap:wrap;align-items:center;gap:16px;display:flex}.cvtkAW_settingItem{align-items:center;gap:8px;font-size:13px;display:flex}.cvtkAW_settingItem input[type=checkbox]{accent-color:currentColor}.cvtkAW_settingItem input[type=number]{border:1px solid color-mix(in srgb, currentColor 25%, transparent);width:90px;color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem select{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem input:focus-visible,.cvtkAW_settingItem select:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footCard{box-sizing:border-box;background:color-mix(in srgb, currentColor 4%, transparent);width:100%;color:inherit;border:none;border-radius:12px;margin:2px 0 4px;transition:background-color .12s;position:relative}.cvtkAW_footCard:hover{background:var(--dsw-alias-interactive-bg-hover)}.cvtkAW_footCardCollapsed{background:0 0}.cvtkAW_footMain{appearance:none;box-sizing:border-box;width:100%;color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border:none;border-radius:12px;flex-direction:column;gap:4px;padding:8px;display:flex}.cvtkAW_footMain:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle{appearance:none;width:24px;height:24px;color:inherit;cursor:pointer;opacity:.72;background:0 0;border:none;border-radius:6px;justify-content:center;align-items:center;padding:0;transition:opacity .12s,background-color .12s;display:inline-flex;position:absolute;top:6px;right:6px}.cvtkAW_footCard:hover .cvtkAW_footToggle{opacity:.8}.cvtkAW_footToggle:hover{opacity:1;background:color-mix(in srgb, currentColor 10%, transparent)}.cvtkAW_footToggle:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle svg{display:block}.cvtkAW_footHead{justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_footTitle{opacity:.65;white-space:nowrap;align-items:center;gap:6px;min-width:0;font-size:12px;display:inline-flex}.cvtkAW_footTitle svg{flex:none;display:block}.cvtkAW_footValue{font-variant-numeric:tabular-nums;white-space:nowrap;margin-right:18px;font-size:15px;font-weight:600}.cvtkAW_footLine{opacity:.7;font-variant-numeric:tabular-nums;text-overflow:ellipsis;white-space:nowrap;font-size:11px;overflow:hidden}.cvtkAW_footMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_footCardCollapsed .cvtkAW_footMain{min-height:36px;padding:7px 8px}.cvtkAW_footStrip{white-space:nowrap;align-items:center;gap:6px;padding-right:20px;font-size:12px;display:flex;overflow:hidden}.cvtkAW_footStrip svg{opacity:.65;flex:none;display:block}.cvtkAW_footStripProvider{text-overflow:ellipsis;flex:none;max-width:38%;font-weight:500;overflow:hidden}.cvtkAW_footStripLabel{opacity:.65;text-overflow:ellipsis;overflow:hidden}.cvtkAW_footStripValue{font-variant-numeric:tabular-nums;margin-left:auto;font-weight:600}[data-dsh-frame][data-sidebar-collapsed] .cvtkAW_footCard,[data-sidebar-collapsed] .cvtkAW_footCard{display:none}.cvtkAW_peakBadge,.cvtkAW_peakLine{font-variant-numeric:tabular-nums;white-space:nowrap;align-items:center;gap:4px;font-size:11px;display:inline-flex}.cvtkAW_peakBadge{flex:none}.cvtkAW_peakLine{gap:6px}.cvtkAW_peakBadge[data-peak=on],.cvtkAW_peakLine[data-peak=on]{color:var(--dsw-alias-state-error-primary,#b42318)}.cvtkAW_peakBadge[data-peak=off],.cvtkAW_peakLine[data-peak=off]{color:var(--dsw-alias-state-success-primary,#067647)}.cvtkAW_peakDot{background:currentColor;border-radius:50%;flex:none;width:6px;height:6px}.cvtkAW_footPeak{white-space:nowrap;align-items:center;gap:5px;font-size:10px;display:flex;overflow:hidden}.cvtkAW_footPeakClock{opacity:.7;font-variant-numeric:tabular-nums}";
 		const tagId = "@linxin666/dsh-usage/packages/dsh-usage/src/client/usage.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -544,7 +590,7 @@ window.__ModuleLoader__.load({
 		*/
 		const LUMINANCE_FLOOR = MIN_CONTRAST * (luminance(SURFACE_DARK) + .05) - .05 + .004;
 		const LUMINANCE_CEILING = (luminance(SURFACE_LIGHT) + .05) / MIN_CONTRAST - .05 - .015;
-		/** Rungs on a slot's ladder: five shades, so a slot's second name sits two below. */
+		/** Rungs on a slot's ladder: five shades, so one slot can hold five names. */
 		const SHADE_COUNT = 5;
 		/** The color identity of a model: `prefix/`-stripped, trimmed, lower-cased. */
 		function normalizeModelName(model) {
@@ -637,17 +683,19 @@ window.__ModuleLoader__.load({
 		* promise of this table (the trend bars, the channel bars and the model rows
 		* share it, and the user learns the colors), so a collision between two of the
 		* sixteen hues is resolved on the shade ladder instead of by shifting someone
-		* else's hue. The rung is the name's order inside its slot, stepped by two, so
-		* consecutive names of one slot are as far apart on the ladder as it goes.
+		* else's hue. The rung is the next slice of the same hash — never an arrival
+		* counter: counting how many names of a slot had already been seen made a
+		* model's shade depend on the rest of the window, so the same model sat on one
+		* rung in 近 7 天 and on another in 近 30 天. Two names of one slot therefore
+		* only collide again when their hashes agree on the rung bits too.
 		*/
 		function assignModelColors(models) {
 			const colors = /* @__PURE__ */ new Map();
-			const taken = new Array(16).fill(0);
 			for (const name of new Set(models)) {
-				const slot = hashOf(name) % 16;
+				const hash = hashOf(name);
+				const slot = hash % 16;
 				const ladder = SLOT_SHADES[slot] ?? [];
-				const rung = (taken[slot] ?? 0) * 2 % Math.max(ladder.length, 1);
-				taken[slot] = (taken[slot] ?? 0) + 1;
+				const rung = (hash >>> 5) % Math.max(ladder.length, 1);
 				colors.set(name, ladder[rung] ?? "#6f6f78");
 			}
 			return colors;
@@ -843,18 +891,52 @@ window.__ModuleLoader__.load({
 				}
 			];
 		}
+		/** The one notice that stands in for a plot whose window failed whole. */
+		function TrendFailedNotice() {
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+				className: usage_module_css_default.trendFailed,
+				"data-dsh-part": "trend-failed",
+				children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					className: usage_module_css_default.errorLine,
+					children: t("usage.trend.loadFailed")
+				})
+			});
+		}
 		/**
 		* The trend chart. `rows` is one row per calendar day of the window, ascending
 		* and gap-filled (missing days carry zeroed totals); fewer than two rows is
-		* nothing to chart and renders nothing. `rows` model keys and `colors` keys
-		* are normalized names (see model-colors); `labels` optionally maps them back
-		* to a raw display spelling. A model outside the color table draws in the
-		* neutral slate.
+		* nothing to chart and renders nothing — unless the window failed whole, which
+		* is a fact a one-day window owes the reader just as much as a long one.
+		* `rows` model keys and `colors` keys are normalized names (see model-colors);
+		* `labels` optionally maps them back to a raw display spelling. A model outside
+		* the color table draws in the neutral slate.
 		*/
 		function TrendChart(props) {
 			const { rows, colors, labels, allFailed } = props;
 			const [hovered, setHovered] = (0, react.useState)(void 0);
-			if (rows.length < 2) return null;
+			const rangeFailed = allFailed === true;
+			if (rows.length < 2) {
+				if (!rangeFailed) return null;
+				const only = rows[0];
+				if (only === void 0) return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					className: usage_module_css_default.trendWrap,
+					"data-dsh-part": "trend-chart",
+					children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TrendFailedNotice, {})
+				});
+				return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					className: usage_module_css_default.trendWrap,
+					"data-dsh-part": "trend-chart",
+					children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						className: usage_module_css_default.trendPlot,
+						role: "img",
+						"aria-label": t("usage.trend.labelFailed", {
+							from: only.date,
+							to: only.date
+						}),
+						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TrendFailedNotice, {})
+					})
+				});
+			}
 			const buckets = buildBuckets(rows, granularityOf(rows.length));
 			const axisMax = niceCeil(Math.max(1, ...buckets.map((bucket) => totalOf$1(bucket.totals))));
 			const labelStep = Math.max(1, Math.ceil(buckets.length / X_LABEL_MAX));
@@ -885,7 +967,6 @@ window.__ModuleLoader__.load({
 				}
 			];
 			const anyFailed = buckets.some((bucket) => bucket.failed);
-			const rangeFailed = allFailed === true;
 			const chartFrom = buckets[0].from;
 			const chartTo = buckets[buckets.length - 1].to;
 			const chartTotal = buckets.reduce((sum, bucket) => sum + totalOf$1(bucket.totals), 0);
@@ -919,14 +1000,7 @@ window.__ModuleLoader__.load({
 									className: usage_module_css_default.trendGridline,
 									style: { bottom: `${fraction * 100}%` }
 								}, fraction)),
-								rangeFailed ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-									className: usage_module_css_default.trendFailed,
-									"data-dsh-part": "trend-failed",
-									children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-										className: usage_module_css_default.errorLine,
-										children: t("usage.trend.loadFailed")
-									})
-								}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								rangeFailed ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TrendFailedNotice, {}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 									className: usage_module_css_default.trendBars,
 									onMouseLeave: () => {
 										setHovered(void 0);
@@ -1999,8 +2073,9 @@ window.__ModuleLoader__.load({
 				try {
 					setNotice(await action());
 				} catch (error) {
+					const detail = error instanceof Error ? error.message : String(error);
 					setNotice({
-						text: t("usage.device.importFailed", { error: error instanceof Error ? error.message : String(error) }),
+						text: t(kind === "export" ? "usage.device.exportFailed" : kind === "rescan" ? "usage.device.rescanFailed" : "usage.device.importFailed", { error: detail }),
 						tone: "error"
 					});
 				} finally {
@@ -2011,7 +2086,7 @@ window.__ModuleLoader__.load({
 				run("export", async () => {
 					await api.exportLedger();
 					return {
-						text: t("usage.device.export"),
+						text: t("usage.device.exported"),
 						tone: "ok"
 					};
 				});
@@ -2033,7 +2108,7 @@ window.__ModuleLoader__.load({
 					await api.rescan();
 					onChanged();
 					return {
-						text: t("usage.device.rescan"),
+						text: t("usage.device.rescanned"),
 						tone: "ok"
 					};
 				});
@@ -2077,7 +2152,9 @@ window.__ModuleLoader__.load({
 					devicesError !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 						className: usage_module_css_default.errorLine,
 						role: "status",
-						children: t("usage.device.error", { error: devicesError })
+						"data-dsh-part": "device-error",
+						title: devicesError,
+						children: t("usage.device.error", { error: describeError(devicesError, "usage.error.readFailed") })
 					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: usage_module_css_default.rangeControls,
@@ -2261,24 +2338,6 @@ window.__ModuleLoader__.load({
 				left -= 1;
 			}
 			return whole;
-		}
-		/**
-		* A transport error as the panel states it: the wire's own words ("Failed to
-		* fetch", "ECONNREFUSED", a timeout) are diagnostics, not something a user can
-		* act on, so the network-shaped ones read as one localized sentence instead.
-		*
-		* A non-2xx answer arrives as `usage api/… failed: 500` — the internal route and
-		* a bare status code, which used to be printed verbatim next to the translated
-		* sentence around it. The status is the one part worth repeating, so it gets its
-		* own sentence; an abort, a JSON parse failure ("Unexpected token <") or any
-		* other wire text is a diagnostic with no meaning for the reader, so it reads as
-		* one generic sentence too (callers keep the raw text in a title attribute, so
-		* the diagnostic is never lost).
-		*/
-		function describeError(error) {
-			if (/failed to fetch|networkerror|network error|econnrefused|econnreset|enotfound|socket hang up|load failed|timeout|timed out|abort/i.test(error)) return t("usage.error.network");
-			const status = /failed: (\d{3})\b/.exec(error);
-			return status === null ? t("usage.error.unknown") : t("usage.error.status", { status: status[1] });
 		}
 		/** Units for plan-window keys the dictionary does not name (`7_day`, `12_hour`). */
 		const PLAN_WINDOW_UNIT_KEYS = {
@@ -2760,12 +2819,28 @@ window.__ModuleLoader__.load({
 			if (window.from === "" || window.to === "" || window.from > window.to) return [];
 			return recorded.filter((date) => date >= window.from && date <= window.to && date !== today);
 		}
+		/**
+		* The window's six stat cells. `partial` marks a window whose days have not all
+		* arrived yet: the sum over the days that did is a number nothing measured, so
+		* the row states an em dash — the same "—" the range tile above shows for the
+		* same window, so the two never disagree.
+		*/
 		function TotalsRow(props) {
-			const { totals } = props;
+			const { totals, partial = false } = props;
 			const billedInput = totals.inputTokens + totals.cacheReadTokens + totals.cacheWriteTokens;
 			const cacheHit = billedInput === 0 ? void 0 : totals.cacheReadTokens / billedInput * 100;
+			if (partial) return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+				className: usage_module_css_default.statRow,
+				"data-dsh-part": "window-totals",
+				"data-partial": "true",
+				children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					className: usage_module_css_default.muted,
+					children: "—"
+				})
+			});
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: usage_module_css_default.statRow,
+				"data-dsh-part": "window-totals",
 				children: [
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: usage_module_css_default.stat,
@@ -2824,7 +2899,7 @@ window.__ModuleLoader__.load({
 							children: formatTokens(totals.calls)
 						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 							className: usage_module_css_default.statLabel,
-							children: t("usage.calls", { n: totals.calls })
+							children: t("usage.callsLabel")
 						})]
 					})
 				]
@@ -3286,9 +3361,12 @@ window.__ModuleLoader__.load({
 			const loadsFailed = last30Days.error !== void 0 || customDays.error !== void 0 || last180Load.status === "error" || allLoad.status === "error" || customRangeLoad.status === "error";
 			const retryAttempts = (0, react.useRef)(0);
 			const progressStamp = snapshot?.updatedAt ?? 0;
+			const budgetStamp = (0, react.useRef)(progressStamp);
 			(0, react.useEffect)(() => {
-				retryAttempts.current = 0;
-			}, [progressStamp]);
+				if (progressStamp === budgetStamp.current) return;
+				budgetStamp.current = progressStamp;
+				if (loadsFailed && retryAttempts.current >= RETRY_MAX_ATTEMPTS) retryAttempts.current = 0;
+			}, [progressStamp, loadsFailed]);
 			(0, react.useEffect)(() => {
 				if (!loadsFailed) {
 					retryAttempts.current = 0;
@@ -3405,16 +3483,29 @@ window.__ModuleLoader__.load({
 				if (slice.load.error === void 0) return void 0;
 				return keysOf(key).some((date) => slice.load.days[date] === void 0) ? slice.load.error : void 0;
 			};
+			/**
+			* Whether this window's numbers are still incomplete: a settled load whose own
+			* days did not all arrive. The sum over the days that did is a number nothing
+			* measured, so the tile and the card both read this one predicate and neither
+			* can state a total the other calls "—".
+			*/
+			const slicePartial = (slice, key) => {
+				if (slice.kind !== "days") return false;
+				if (slice.load.status !== "ready") return false;
+				return keysOf(key).some((date) => slice.load.days[date] === void 0);
+			};
 			const activeSlice = windowSlices[rangeKey];
 			const activeWindow = activeSlice.window;
 			/** The failure this window's own numbers are missing because of. */
 			const activeError = sliceFailed(activeSlice, rangeKey);
+			/** The window's days are still arriving, so its totals are not stateable yet. */
+			const activePartial = slicePartial(activeSlice, rangeKey);
 			const summaryRaw = activeSlice.kind === "range" ? rangeSummaryOf(activeWindow, activeSlice.load) : summaryIn(activeWindow, keysOf(rangeKey), activeSlice.load, todayView);
 			const tiles = Object.keys(windowSlices).map((key) => {
 				const slice = windowSlices[key];
 				const totals = slice.kind === "range" ? rangeSummaryOf(slice.window, slice.load).totals : totalsIn(slice.window, keysOf(key), slice.load, todayView);
 				const loading = slicePending(slice, key);
-				const partial = slice.kind === "days" && slice.load.status === "ready" && keysOf(key).some((date) => slice.load.days[date] === void 0);
+				const partial = slicePartial(slice, key);
 				const hint = key === "custom" && !customPicked && !loading ? t("usage.range.customPick") : partial || slice.kind === "range" && slice.load.status === "error" ? "—" : void 0;
 				return {
 					key,
@@ -3513,7 +3604,8 @@ window.__ModuleLoader__.load({
 						className: usage_module_css_default.errorLine,
 						role: "status",
 						"data-dsh-part": "ledger-error",
-						children: t("usage.ledger.error", { error: snapshot.usage.ledgerError })
+						title: snapshot.usage.ledgerError,
+						children: t("usage.ledger.error", { error: describeError(snapshot.usage.ledgerError, "usage.error.readFailed") })
 					}),
 					snapshot.usage.ledgerError === void 0 && snapshot.usage.ledgerNote !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 						className: usage_module_css_default.noteLine,
@@ -3602,17 +3694,20 @@ window.__ModuleLoader__.load({
 									}) : slicePending(activeSlice, rangeKey) ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: usage_module_css_default.muted,
 										children: t("usage.range.loading")
-									}) : activeError !== void 0 ? trendRows.length >= TREND_CHART_MIN_DAYS && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TrendChart, {
+									}) : activeError !== void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TrendChart, {
 										rows: trendRows,
 										colors: modelColors,
 										labels: modelLabels,
 										allFailed: rangeFailed
-									}) : isEmptyTotals(summary.totals) && summary.providers.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									}) : isEmptyTotals(summary.totals) && summary.providers.length === 0 && !activePartial ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: usage_module_css_default.muted,
 										children: t("usage.range.empty")
 									}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)(TotalsRow, { totals: summary.totals }),
-										summary.totals.cost > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)(TotalsRow, {
+											totals: summary.totals,
+											partial: activePartial
+										}),
+										!activePartial && summary.totals.cost > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 											className: usage_module_css_default.providerRow,
 											"data-dsh-part": "window-cost",
 											children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
@@ -3752,6 +3847,7 @@ window.__ModuleLoader__.load({
 					const canvas = canvasRef.current;
 					if (canvas !== null) try {
 						drawVoucher(canvas, art, voucher);
+						setDrawError(void 0);
 					} catch (error) {
 						if (!cancelled) setDrawError(error instanceof Error ? error.message : String(error));
 					}
@@ -3927,6 +4023,25 @@ window.__ModuleLoader__.load({
 			});
 		}
 		/**
+		* The interval the Host enforces. A poll under 30s costs more than it can learn,
+		* and an hour is the longest interval the setting offers before the panel reads
+		* as stale.
+		*/
+		const POLL_MIN_SEC = 30;
+		const POLL_MAX_SEC = 3600;
+		/**
+		* The interval a typed draft asks for, or undefined when the draft names none.
+		* A half-typed edit ("12", "") is not a number the Host can honour, so this is
+		* only asked at commit time, never on the keystroke that produced it.
+		*/
+		function parsePollInterval(text) {
+			const trimmed = text.trim();
+			if (trimmed === "") return void 0;
+			const parsed = Number(trimmed);
+			if (!Number.isFinite(parsed)) return void 0;
+			return Math.min(POLL_MAX_SEC, Math.max(POLL_MIN_SEC, Math.round(parsed)));
+		}
+		/**
 		* The compact settings row. Both controls write through the shared form the
 		* moment the user changes them, and the Host answers each write with a
 		* boolean: a refused (or transport-failed) write is surfaced as a failed save,
@@ -3936,6 +4051,8 @@ window.__ModuleLoader__.load({
 			const { settings, snapshot, value } = props;
 			const disabled = snapshot === void 0 || !snapshot.writable;
 			const [failure, setFailure] = (0, react.useState)(void 0);
+			const [draft, setDraft] = (0, react.useState)(void 0);
+			const storedInterval = typeof value.pollIntervalSec === "number" ? value.pollIntervalSec : 60;
 			const write = (field, next) => {
 				setFailure(void 0);
 				let answer;
@@ -3951,6 +4068,20 @@ window.__ModuleLoader__.load({
 					setFailure(error instanceof Error ? error.message : String(error));
 				});
 			};
+			const commitInterval = () => {
+				if (draft === void 0) return;
+				const next = parsePollInterval(draft);
+				if (next === void 0) {
+					setDraft(void 0);
+					return;
+				}
+				setDraft(String(next));
+				if (next !== storedInterval) write("pollIntervalSec", next);
+			};
+			(0, react.useEffect)(() => {
+				if (draft === void 0) return;
+				if (parsePollInterval(draft) === storedInterval) setDraft(void 0);
+			}, [draft, storedInterval]);
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: usage_module_css_default.card,
 				"data-dsh-part": "settings-row",
@@ -3975,13 +4106,18 @@ window.__ModuleLoader__.load({
 							className: usage_module_css_default.settingItem,
 							children: [t("usage.config.pollIntervalSec"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
 								type: "number",
-								min: 30,
-								max: 3600,
-								value: typeof value.pollIntervalSec === "number" ? value.pollIntervalSec : 60,
+								min: POLL_MIN_SEC,
+								max: POLL_MAX_SEC,
+								value: draft ?? String(storedInterval),
 								disabled,
 								onChange: (event) => {
-									const parsed = Number(event.target.value);
-									if (Number.isFinite(parsed) && parsed >= 30 && parsed <= 3600) write("pollIntervalSec", Math.round(parsed));
+									setDraft(event.target.value);
+								},
+								onBlur: commitInterval,
+								onKeyDown: (event) => {
+									if (event.key !== "Enter") return;
+									event.preventDefault();
+									commitInterval();
 								}
 							})]
 						})]
@@ -4310,7 +4446,7 @@ window.__ModuleLoader__.load({
 				children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ChevronIcon, { collapsed })
 			});
 			if (snapshot === null) {
-				const quiet = ui.status === "error" ? t("usage.error", { error: ui.error ?? "" }) : t("usage.loading");
+				const quiet = ui.status === "error" ? t("usage.error", { error: describeError(ui.error ?? "") }) : t("usage.loading");
 				return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 					className: cardClass(collapsed),
 					"data-dsh-plugin": "usage",
@@ -4319,7 +4455,6 @@ window.__ModuleLoader__.load({
 						type: "button",
 						className: usage_module_css_default.footMain,
 						"data-dsh-part": "foot-card-main",
-						"aria-label": t("usage.foot.open"),
 						title: t("usage.foot.open"),
 						onClick: onOpen,
 						children: collapsed ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
@@ -4337,6 +4472,7 @@ window.__ModuleLoader__.load({
 							})
 						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 							className: usage_module_css_default.footLine,
+							title: ui.status === "error" ? ui.error ?? "" : void 0,
 							children: quiet
 						})] })
 					}), toggle]
@@ -4354,7 +4490,6 @@ window.__ModuleLoader__.load({
 					type: "button",
 					className: usage_module_css_default.footMain,
 					"data-dsh-part": "foot-card-main",
-					"aria-label": t("usage.foot.open"),
 					title: t("usage.foot.open"),
 					onClick: onOpen,
 					children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
@@ -4391,7 +4526,6 @@ window.__ModuleLoader__.load({
 					type: "button",
 					className: usage_module_css_default.footMain,
 					"data-dsh-part": "foot-card-main",
-					"aria-label": t("usage.foot.open"),
 					title: t("usage.foot.open"),
 					onClick: onOpen,
 					children: [

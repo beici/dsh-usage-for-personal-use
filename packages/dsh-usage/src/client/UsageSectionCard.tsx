@@ -24,6 +24,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, 
 import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { UsageStoreInstance } from './usage-store.ts'
 import { t } from './locales.ts'
+import { describeError } from './error-text.ts'
 import styles from './usage.module.css'
 import { PeakBadge } from './PeakBadge.tsx'
 import { TrendChart, type TrendRow } from './TrendChart.tsx'
@@ -196,27 +197,6 @@ function roundShares(exact: readonly number[]): number[] {
     left -= 1
   }
   return whole
-}
-
-/**
- * A transport error as the panel states it: the wire's own words ("Failed to
- * fetch", "ECONNREFUSED", a timeout) are diagnostics, not something a user can
- * act on, so the network-shaped ones read as one localized sentence instead.
- *
- * A non-2xx answer arrives as `usage api/… failed: 500` — the internal route and
- * a bare status code, which used to be printed verbatim next to the translated
- * sentence around it. The status is the one part worth repeating, so it gets its
- * own sentence; an abort, a JSON parse failure ("Unexpected token <") or any
- * other wire text is a diagnostic with no meaning for the reader, so it reads as
- * one generic sentence too (callers keep the raw text in a title attribute, so
- * the diagnostic is never lost).
- */
-function describeError(error: string): string {
-  if (/failed to fetch|networkerror|network error|econnrefused|econnreset|enotfound|socket hang up|load failed|timeout|timed out|abort/i.test(error)) {
-    return t('usage.error.network')
-  }
-  const status = /failed: (\d{3})\b/.exec(error)
-  return status === null ? t('usage.error.unknown') : t('usage.error.status', { status: status[1] })
 }
 
 /** Units for plan-window keys the dictionary does not name (`7_day`, `12_hour`). */
@@ -751,14 +731,27 @@ function recordedIn(window: RangeWindow, recorded: readonly string[], today: str
   return recorded.filter((date) => date >= window.from && date <= window.to && date !== today)
 }
 
-function TotalsRow(props: { totals: UsageTokenTotals }): ReactNode {
-  const { totals } = props
+/**
+ * The window's six stat cells. `partial` marks a window whose days have not all
+ * arrived yet: the sum over the days that did is a number nothing measured, so
+ * the row states an em dash — the same "—" the range tile above shows for the
+ * same window, so the two never disagree.
+ */
+function TotalsRow(props: { totals: UsageTokenTotals; partial?: boolean }): ReactNode {
+  const { totals, partial = false } = props
   // Cache-hit share: of everything billed as input, the part served from
   // cache. Nothing billed yet reads as an em dash rather than a bogus 0%.
   const billedInput = totals.inputTokens + totals.cacheReadTokens + totals.cacheWriteTokens
   const cacheHit = billedInput === 0 ? undefined : (totals.cacheReadTokens / billedInput) * 100
+  if (partial) {
+    return (
+      <div className={styles.statRow} data-dsh-part="window-totals" data-partial="true">
+        <span className={styles.muted}>—</span>
+      </div>
+    )
+  }
   return (
-    <div className={styles.statRow}>
+    <div className={styles.statRow} data-dsh-part="window-totals">
       <div className={styles.stat}>
         <span className={styles.statValue}>{formatTokens(totals.inputTokens + totals.cacheReadTokens + totals.cacheWriteTokens + totals.outputTokens)}</span>
         <span className={styles.statLabel}>{t('usage.tokens.total')}</span>
@@ -781,7 +774,8 @@ function TotalsRow(props: { totals: UsageTokenTotals }): ReactNode {
       </div>
       <div className={styles.stat}>
         <span className={styles.statValue}>{formatTokens(totals.calls)}</span>
-        <span className={styles.statLabel}>{t('usage.calls', { n: totals.calls })}</span>
+        {/* The value above already states the count; the label names the unit. */}
+        <span className={styles.statLabel}>{t('usage.callsLabel')}</span>
       </div>
     </div>
   )
@@ -1233,14 +1227,21 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   const loadsFailed = last30Days.error !== undefined || customDays.error !== undefined
     || last180Load.status === 'error' || allLoad.status === 'error' || customRangeLoad.status === 'error'
   const retryAttempts = useRef(0)
-  // A host that is answering again has recovered, so the budget refills. Without
-  // this the panel stopped retrying for good once it had spent five attempts and
-  // a failed window sat at "—" until the user pressed refresh, however long the
-  // section stayed open.
+  // A host that is answering again has recovered, so a spent budget refills.
+  // Without this the panel stopped retrying for good once it had spent five
+  // attempts and a failed window sat at "—" until the user pressed refresh,
+  // however long the section stayed open. Two things keep it honest: a stamp
+  // that did not move proves nothing (a poll that brought nothing new is not a
+  // recovery), and a chain still walking its ladder keeps its place, so an
+  // unrelated overview poll — or the user's own refresh, which lands the same
+  // way — cannot rewind the backoff to its first rung.
   const progressStamp = snapshot?.updatedAt ?? 0
+  const budgetStamp = useRef(progressStamp)
   useEffect(() => {
-    retryAttempts.current = 0
-  }, [progressStamp])
+    if (progressStamp === budgetStamp.current) return
+    budgetStamp.current = progressStamp
+    if (loadsFailed && retryAttempts.current >= RETRY_MAX_ATTEMPTS) retryAttempts.current = 0
+  }, [progressStamp, loadsFailed])
   useEffect(() => {
     if (!loadsFailed) {
       retryAttempts.current = 0
@@ -1360,10 +1361,23 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
     if (slice.load.error === undefined) return undefined
     return keysOf(key).some((date) => slice.load.days[date] === undefined) ? slice.load.error : undefined
   }
+  /**
+   * Whether this window's numbers are still incomplete: a settled load whose own
+   * days did not all arrive. The sum over the days that did is a number nothing
+   * measured, so the tile and the card both read this one predicate and neither
+   * can state a total the other calls "—".
+   */
+  const slicePartial = (slice: WindowSlice, key: RangeKey): boolean => {
+    if (slice.kind !== 'days') return false
+    if (slice.load.status !== 'ready') return false
+    return keysOf(key).some((date) => slice.load.days[date] === undefined)
+  }
   const activeSlice = windowSlices[rangeKey]
   const activeWindow = activeSlice.window
   /** The failure this window's own numbers are missing because of. */
   const activeError = sliceFailed(activeSlice, rangeKey)
+  /** The window's days are still arriving, so its totals are not stateable yet. */
+  const activePartial = slicePartial(activeSlice, rangeKey)
   const summaryRaw: UsageWindowSummary = activeSlice.kind === 'range'
     ? rangeSummaryOf(activeWindow, activeSlice.load)
     : summaryIn(activeWindow, keysOf(rangeKey), activeSlice.load, todayView)
@@ -1374,8 +1388,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
     // A window whose days did not all arrive has no total to state: the sum of
     // the days that loaded is a wrong number, not a small one. The card below
     // carries the reason and the refresh button retries it.
-    const partial = slice.kind === 'days' && slice.load.status === 'ready'
-      && keysOf(key).some((date) => slice.load.days[date] === undefined)
+    const partial = slicePartial(slice, key)
     // The custom tile has no window of its own until the user picks one; a
     // failed range fetch reads as an em dash rather than a fake zero.
     const hint = key === 'custom' && !customPicked && !loading
@@ -1467,10 +1480,11 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
         </span>
       )}
       {/* A ledger the host could not read makes every number below suspect, so
-          the reason is stated before the numbers themselves. */}
+          the reason is stated before the numbers themselves. The sentence is
+          translated and the raw text (a file path, an errno) stays in the title. */}
       {snapshot.usage.ledgerError !== undefined && (
-        <span className={styles.errorLine} role="status" data-dsh-part="ledger-error">
-          {t('usage.ledger.error', { error: snapshot.usage.ledgerError })}
+        <span className={styles.errorLine} role="status" data-dsh-part="ledger-error" title={snapshot.usage.ledgerError}>
+          {t('usage.ledger.error', { error: describeError(snapshot.usage.ledgerError, 'usage.error.readFailed') })}
         </span>
       )}
       {/* Not an error: what the totals below leave out. Said out loud because a
@@ -1547,13 +1561,15 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
                 // The days that did arrive are a WRONG total, not a small one,
                 // so a failed window states the failure and the per-day trend
                 // (each bar is that day's own number) instead of a sum that
-                // contradicts the "—" the tile shows for the same window.
-                ? trendRows.length >= TREND_CHART_MIN_DAYS && <TrendChart rows={trendRows} colors={modelColors} labels={modelLabels} allFailed={rangeFailed} />
-                : isEmptyTotals(summary.totals) && summary.providers.length === 0
+                // contradicts the "—" the tile shows for the same window. The
+                // chart decides for itself whether it has a plot to draw: a
+                // one-day window still owes the failure sentence.
+                ? <TrendChart rows={trendRows} colors={modelColors} labels={modelLabels} allFailed={rangeFailed} />
+                : isEmptyTotals(summary.totals) && summary.providers.length === 0 && !activePartial
                   ? <span className={styles.muted}>{t('usage.range.empty')}</span>
                   : <>
-                    <TotalsRow totals={summary.totals} />
-                    {summary.totals.cost > 0 && (
+                    <TotalsRow totals={summary.totals} partial={activePartial} />
+                    {!activePartial && summary.totals.cost > 0 && (
                       <div className={styles.providerRow} data-dsh-part="window-cost">
                         <span className={styles.providerName}>{t('usage.range.cost')}</span>
                         <span className={styles.providerTokens}>{formatCost(summary.totals.cost)}</span>
@@ -1666,6 +1682,10 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
       if (canvas !== null) {
         try {
           drawVoucher(canvas, art, voucher)
+          // A draw that works clears an earlier failure: the line describes the
+          // artwork currently on screen, and one transient decode error used to
+          // pin it for the rest of the mount.
+          setDrawError(undefined)
         } catch (error) {
           if (!cancelled) setDrawError(error instanceof Error ? error.message : String(error))
         }
@@ -1782,6 +1802,27 @@ function PlanCard(props: { provider: ProviderSnapshotView; current?: string }): 
 }
 
 /**
+ * The interval the Host enforces. A poll under 30s costs more than it can learn,
+ * and an hour is the longest interval the setting offers before the panel reads
+ * as stale.
+ */
+const POLL_MIN_SEC = 30
+const POLL_MAX_SEC = 3600
+
+/**
+ * The interval a typed draft asks for, or undefined when the draft names none.
+ * A half-typed edit ("12", "") is not a number the Host can honour, so this is
+ * only asked at commit time, never on the keystroke that produced it.
+ */
+function parsePollInterval(text: string): number | undefined {
+  const trimmed = text.trim()
+  if (trimmed === '') return undefined
+  const parsed = Number(trimmed)
+  if (!Number.isFinite(parsed)) return undefined
+  return Math.min(POLL_MAX_SEC, Math.max(POLL_MIN_SEC, Math.round(parsed)))
+}
+
+/**
  * The compact settings row. Both controls write through the shared form the
  * moment the user changes them, and the Host answers each write with a
  * boolean: a refused (or transport-failed) write is surfaced as a failed save,
@@ -1795,6 +1836,13 @@ function SettingsRow(props: {
   const { settings, snapshot, value } = props
   const disabled = snapshot === undefined || !snapshot.writable
   const [failure, setFailure] = useState<string | undefined>(undefined)
+  // The interval field keeps its own draft text. Bound straight to the snapshot
+  // it refused every intermediate value — typing "120" over "60" starts as "1",
+  // which is out of range, so the field snapped back on the first keystroke and
+  // Delete (empty, i.e. 0) was rejected too. The draft is committed on blur or
+  // Enter, which is also when a clamp is visible instead of fighting the keys.
+  const [draft, setDraft] = useState<string | undefined>(undefined)
+  const storedInterval = typeof value.pollIntervalSec === 'number' ? value.pollIntervalSec : 60
 
   const write = (field: 'enabled' | 'pollIntervalSec', next: boolean | number): void => {
     setFailure(undefined)
@@ -1814,6 +1862,28 @@ function SettingsRow(props: {
     )
   }
 
+  const commitInterval = (): void => {
+    if (draft === undefined) return
+    const next = parsePollInterval(draft)
+    if (next === undefined) {
+      // Not a number: drop the draft, which puts the stored interval back in the
+      // field rather than leaving it blank.
+      setDraft(undefined)
+      return
+    }
+    // Show the clamped number at once, so a typed 9999 reads as 3600 without
+    // waiting for the snapshot to round-trip through the Host.
+    setDraft(String(next))
+    if (next !== storedInterval) write('pollIntervalSec', next)
+  }
+
+  // Once the snapshot carries the committed number the draft has done its job;
+  // until then it keeps the field from flashing back to the old value.
+  useEffect(() => {
+    if (draft === undefined) return
+    if (parsePollInterval(draft) === storedInterval) setDraft(undefined)
+  }, [draft, storedInterval])
+
   return (
     <div className={styles.card} data-dsh-part="settings-row">
       <span className={styles.cardTitle}>{t('usage.config.title')}</span>
@@ -1831,13 +1901,16 @@ function SettingsRow(props: {
           {t('usage.config.pollIntervalSec')}
           <input
             type="number"
-            min={30}
-            max={3600}
-            value={typeof value.pollIntervalSec === 'number' ? value.pollIntervalSec : 60}
+            min={POLL_MIN_SEC}
+            max={POLL_MAX_SEC}
+            value={draft ?? String(storedInterval)}
             disabled={disabled}
-            onChange={(event) => {
-              const parsed = Number(event.target.value)
-              if (Number.isFinite(parsed) && parsed >= 30 && parsed <= 3600) write('pollIntervalSec', Math.round(parsed))
+            onChange={(event) => { setDraft(event.target.value) }}
+            onBlur={commitInterval}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter') return
+              event.preventDefault()
+              commitInterval()
             }}
           />
         </label>

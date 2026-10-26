@@ -34,7 +34,7 @@ const SESSION_LOG_PATTERN = /^session\.[^/\\]+\.jsonl\.zstd$/
 /** A transcript larger than this is skipped: a runaway log must not stall startup. */
 const SESSION_LOG_MAX_BYTES = 256 * 1024 * 1024
 /** The backfill replays at most this many transcripts per start. */
-const SESSION_LOG_MAX_FILES = 2048
+export const SESSION_LOG_MAX_FILES = 2048
 
 /**
  * Offset just past the zstd frame that starts at `start`, or -1 when the frame

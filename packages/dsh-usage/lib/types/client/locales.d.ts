@@ -19,6 +19,7 @@ export declare const zh: {
     'usage.error.network': string;
     'usage.error.status': string;
     'usage.error.unknown': string;
+    'usage.error.readFailed': string;
     'usage.disabled': string;
     'usage.current': string;
     'usage.today': string;
@@ -37,6 +38,7 @@ export declare const zh: {
     'usage.peak.ends': string;
     'usage.peak.starts': string;
     'usage.calls': string;
+    'usage.callsLabel': string;
     'usage.tokens.total': string;
     'usage.tokens.input': string;
     'usage.tokens.output': string;
@@ -120,6 +122,8 @@ export declare const zh: {
     'usage.ledger.note': string;
     'usage.stale': string;
     'usage.device.export': string;
+    'usage.device.exported': string;
+    'usage.device.exportFailed': string;
     'usage.device.import': string;
     'usage.device.importing': string;
     'usage.device.imported': string;
@@ -127,6 +131,8 @@ export declare const zh: {
     'usage.device.importFailed': string;
     'usage.device.dropHint': string;
     'usage.device.rescan': string;
+    'usage.device.rescanned': string;
+    'usage.device.rescanFailed': string;
 };
 /** English mirror; every zh key present. */
 export declare const en: Record<UsageKey, string>;

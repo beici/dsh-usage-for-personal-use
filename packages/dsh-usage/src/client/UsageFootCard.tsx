@@ -26,6 +26,7 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { t } from './locales.ts'
+import { describeError } from './error-text.ts'
 import styles from './usage.module.css'
 import { formatClock, PeakBadge } from './PeakBadge.tsx'
 import { formatTokens, type UsageSettings } from './UsageSectionCard.tsx'
@@ -246,10 +247,17 @@ export function UsageFootCard(props: UsageFootCardProps): ReactNode {
   )
 
   if (snapshot === null) {
-    const quiet = ui.status === 'error' ? t('usage.error', { error: ui.error ?? '' }) : t('usage.loading')
+    // The sentence is translated; the raw wire text (route and status) stays in
+    // the title, where a diagnostic belongs — printed inline it read as
+    // "加载失败：usage api/dsh-usage/overview failed: 500".
+    const quiet = ui.status === 'error'
+      ? t('usage.error', { error: describeError(ui.error ?? '') })
+      : t('usage.loading')
     return (
       <div className={cardClass(collapsed)} data-dsh-plugin="usage" data-dsh-part="foot-card">
-        <button type="button" className={styles.footMain} data-dsh-part="foot-card-main" aria-label={t('usage.foot.open')} title={t('usage.foot.open')} onClick={onOpen}>
+        {/* No aria-label: it replaced the visible figures as the button's name,
+            so a screen reader heard "打开使用统计设置" and never the numbers. */}
+        <button type="button" className={styles.footMain} data-dsh-part="foot-card-main" title={t('usage.foot.open')} onClick={onOpen}>
           {collapsed
             ? <span className={styles.footStrip} data-dsh-part="foot-card-strip"><GaugeIcon /><span className={styles.footStripValue}>—</span></span>
             : (
@@ -257,7 +265,7 @@ export function UsageFootCard(props: UsageFootCardProps): ReactNode {
                 <span className={styles.footHead}>
                   <span className={styles.footTitle}><GaugeIcon />{t('usage.title')}</span>
                 </span>
-                <span className={styles.footLine}>{quiet}</span>
+                <span className={styles.footLine} title={ui.status === 'error' ? ui.error ?? '' : undefined}>{quiet}</span>
               </>
             )}
         </button>
@@ -277,7 +285,7 @@ export function UsageFootCard(props: UsageFootCardProps): ReactNode {
   if (collapsed) {
     return (
       <div className={cardClass(true)} data-dsh-plugin="usage" data-dsh-part="foot-card">
-        <button type="button" className={styles.footMain} data-dsh-part="foot-card-main" aria-label={t('usage.foot.open')} title={t('usage.foot.open')} onClick={onOpen}>
+        <button type="button" className={styles.footMain} data-dsh-part="foot-card-main" title={t('usage.foot.open')} onClick={onOpen}>
           <span className={styles.footStrip} data-dsh-part="foot-card-strip">
             <GaugeIcon />
             {head.provider !== undefined && <span className={styles.footStripProvider}>{head.provider}</span>}
@@ -293,7 +301,7 @@ export function UsageFootCard(props: UsageFootCardProps): ReactNode {
 
   return (
     <div className={cardClass(false)} data-dsh-plugin="usage" data-dsh-part="foot-card">
-      <button type="button" className={styles.footMain} data-dsh-part="foot-card-main" aria-label={t('usage.foot.open')} title={t('usage.foot.open')} onClick={onOpen}>
+      <button type="button" className={styles.footMain} data-dsh-part="foot-card-main" title={t('usage.foot.open')} onClick={onOpen}>
         <span className={styles.footHead}>
           <span className={styles.footTitle}><GaugeIcon />{head.label}</span>
           <span className={styles.footValue}>{head.value}</span>

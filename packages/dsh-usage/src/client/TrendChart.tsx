@@ -202,13 +202,23 @@ function tokenStack(totals: UsageTokenTotals): Array<{ value: number; className:
   ]
 }
 
+/** The one notice that stands in for a plot whose window failed whole. */
+function TrendFailedNotice(): ReactNode {
+  return (
+    <div className={styles.trendFailed} data-dsh-part="trend-failed">
+      <span className={styles.errorLine}>{t('usage.trend.loadFailed')}</span>
+    </div>
+  )
+}
+
 /**
  * The trend chart. `rows` is one row per calendar day of the window, ascending
  * and gap-filled (missing days carry zeroed totals); fewer than two rows is
- * nothing to chart and renders nothing. `rows` model keys and `colors` keys
- * are normalized names (see model-colors); `labels` optionally maps them back
- * to a raw display spelling. A model outside the color table draws in the
- * neutral slate.
+ * nothing to chart and renders nothing — unless the window failed whole, which
+ * is a fact a one-day window owes the reader just as much as a long one.
+ * `rows` model keys and `colors` keys are normalized names (see model-colors);
+ * `labels` optionally maps them back to a raw display spelling. A model outside
+ * the color table draws in the neutral slate.
  */
 export function TrendChart(props: {
   rows: ReadonlyArray<TrendRow>
@@ -219,7 +229,28 @@ export function TrendChart(props: {
 }): ReactNode {
   const { rows, colors, labels, allFailed } = props
   const [hovered, setHovered] = useState<number | undefined>(undefined)
-  if (rows.length < 2) return null
+  // A window that failed whole has nothing to chart: painting each of its buckets
+  // as a failed stripe drew a wall of full-height hatch marks — 27 of them across
+  // a six-month window — which reads as data rather than as an error. One notice
+  // stands in for the plot instead; the stripes stay for a partial failure, where
+  // they mark the gaps in an otherwise real chart.
+  const rangeFailed = allFailed === true
+  if (rows.length < 2) {
+    // The guard below used to return before the notice, so a wholesale failure on
+    // a one-day window rendered nothing at all: no bars, no sentence, no reason.
+    if (!rangeFailed) return null
+    const only = rows[0]
+    if (only === undefined) {
+      return <div className={styles.trendWrap} data-dsh-part="trend-chart"><TrendFailedNotice /></div>
+    }
+    return (
+      <div className={styles.trendWrap} data-dsh-part="trend-chart">
+        <div className={styles.trendPlot} role="img" aria-label={t('usage.trend.labelFailed', { from: only.date, to: only.date })}>
+          <TrendFailedNotice />
+        </div>
+      </div>
+    )
+  }
   const buckets = buildBuckets(rows, granularityOf(rows.length))
   const axisMax = niceCeil(Math.max(1, ...buckets.map((bucket) => totalOf(bucket.totals))))
   const labelStep = Math.max(1, Math.ceil(buckets.length / X_LABEL_MAX))
@@ -242,12 +273,6 @@ export function TrendChart(props: {
   // A failed bucket makes the sum meaningless: the label states the span and the
   // failure instead of a total nothing measured.
   const anyFailed = buckets.some((bucket) => bucket.failed)
-  // A window that failed whole has nothing to chart: painting each of its buckets
-  // as a failed stripe drew a wall of full-height hatch marks — 27 of them across
-  // a six-month window — which reads as data rather than as an error. One notice
-  // stands in for the plot instead; the stripes stay for a partial failure, where
-  // they mark the gaps in an otherwise real chart.
-  const rangeFailed = allFailed === true
   const chartFrom = buckets[0].from
   const chartTo = buckets[buckets.length - 1].to
   const chartTotal = buckets.reduce((sum, bucket) => sum + totalOf(bucket.totals), 0)
@@ -276,11 +301,7 @@ export function TrendChart(props: {
             <span key={fraction} className={styles.trendGridline} style={{ bottom: `${fraction * 100}%` }} />
           ))}
           {rangeFailed
-            ? (
-              <div className={styles.trendFailed} data-dsh-part="trend-failed">
-                <span className={styles.errorLine}>{t('usage.trend.loadFailed')}</span>
-              </div>
-            )
+            ? <TrendFailedNotice />
             : (
               <div className={styles.trendBars} onMouseLeave={() => { setHovered(undefined) }}>
                 {buckets.map((bucket, index) => {

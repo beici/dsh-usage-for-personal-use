@@ -112,8 +112,16 @@ export async function ensureMachineId(dir: string): Promise<string> {
     // losing id looks like a different machine to its own sibling.
     await writeFile(path, machineIdBody(minted, []), { encoding: 'utf8', flag: 'wx' })
   } catch (error) {
-    // Losing the race is the expected path: read back what the winner wrote.
-    const settled = await read()
+    // Losing the race is the expected path: read back what the winner wrote. The
+    // winner creates the file in one syscall and writes its bytes in the next, so a
+    // parse that fails here may simply have caught the empty file: retry before
+    // treating it as corrupt, or the loser overwrites the winner and the two ids
+    // disagree for the rest of the session.
+    let settled = await read()
+    for (let attempt = 0; settled === undefined && attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      settled = await read()
+    }
     if (settled !== undefined) return settled
     if ((error as { code?: string }).code !== 'EEXIST') {
       // A read-only profile cannot pin the id: the digest still names this
@@ -168,6 +176,41 @@ export async function readMachineAliases(dir: string): Promise<string[]> {
   } catch {
     return []
   }
+}
+
+/** How many earlier ids the pin file keeps: a handful of renames, not a log. */
+const MACHINE_ALIAS_MAX = 16
+
+/**
+ * Record `id` as an id this profile has written under before.
+ *
+ * `readMachineAliases` can only know what the pin file says, and a fresh mint
+ * writes `previous: []` — so the durable list was always empty in practice and the
+ * only working alias source was the local ledger's own `machine` stamp, which the
+ * first flush overwrites with the new pin. Losing the pin while an older file under
+ * the previous id still exists would then turn that file into a phantom peer whose
+ * days are summed on top of the replay. This is where the outgoing id is carried
+ * over, before the flush can replace it.
+ */
+export async function rememberMachineAlias(dir: string, id: string): Promise<void> {
+  if (!MACHINE_ID_PATTERN.test(id)) return
+  const path = join(dir, MACHINE_ID_FILE)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(await readFile(path, 'utf8'))
+  } catch {
+    return
+  }
+  const body = parsed as { machineId?: unknown; previous?: unknown } | null
+  const current = body?.machineId
+  if (typeof current !== 'string' || !MACHINE_ID_PATTERN.test(current) || current === id) return
+  const previous = Array.isArray(body?.previous)
+    ? body.previous.filter((entry): entry is string => typeof entry === 'string' && MACHINE_ID_PATTERN.test(entry))
+    : []
+  if (previous.includes(id)) return
+  // Newest first, bounded, and never listing the live id as its own alias.
+  const next = [id, ...previous.filter((entry) => entry !== current)].slice(0, MACHINE_ALIAS_MAX)
+  await writeFile(path, machineIdBody(current, next), 'utf8').catch(() => undefined)
 }
 
 /** 32 lowercase hex characters: what `ensureMachineId` mints and accepts. */

@@ -80,8 +80,10 @@ const bundleSource = readFileSync(`${ROOT}/harness/client.test.cjs`, 'utf8')
 new Function('window', 'document', 'navigator', 'globalThis', bundleSource)(window, window.document, window.navigator, globalThis)
 if (captured === undefined) throw new Error('bundle did not register with the loader')
 
-const { UsageSectionCard } = captured
+const { UsageSectionCard, TrendChart, UsageFootCard } = captured
 if (typeof UsageSectionCard !== 'function') throw new Error('UsageSectionCard export missing')
+if (typeof TrendChart !== 'function') throw new Error('TrendChart export missing')
+if (typeof UsageFootCard !== 'function') throw new Error('UsageFootCard export missing')
 
 // ---- fake face the slot would inject ------------------------------------
 const listeners = new Set()
@@ -96,18 +98,26 @@ const store = {
 }
 const settingsState = { status: 'ready', writable: true, value: { enabled: true, pollIntervalSec: 60 } }
 const settingsListeners = new Set()
+// Every write the row attempts, so a test can tell "typed but not committed"
+// from "committed and sent" — the whole point of the draft field.
+const settingsCalls = []
 const settings = {
   getSnapshot: () => settingsState,
   subscribe: (fn) => { settingsListeners.add(fn); return () => settingsListeners.delete(fn) },
-  set: async () => true,
+  set: async (field, value) => { settingsCalls.push({ field, value }); return true },
 }
 // Device sync is fully stubbed: the card's job is the export/import wiring and
 // the device list it renders, not the host's file I/O (which the host bundle
 // covers on its own).
 const syncCalls = []
 let importAnswer = 'laptop-4f7b21'
+// Set to make the next export throw, so the card's failure wording is testable.
+let exportError = null
 const deviceSync = {
-  exportLedger: async () => { syncCalls.push('export') },
+  exportLedger: async () => {
+    syncCalls.push('export')
+    if (exportError !== null) throw new Error(exportError)
+  },
   importLedger: async (text) => {
     syncCalls.push('import:' + text.trim())
     if (importAnswer === 'same') throw new Error('this file was exported by THIS device; nothing to import')
@@ -371,6 +381,19 @@ if (deviceCard !== null) {
   await act(async () => { exportBtn?.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
   await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
   check('export reaches the host API', syncCalls.includes('export'), JSON.stringify(syncCalls))
+  // A notice that repeats the button label reads as a prompt, not as an answer:
+  // the export must say it finished.
+  check('a finished export says so', text(q('[data-dsh-part="device-notice"]')).startsWith('已导出'),
+    text(q('[data-dsh-part="device-notice"]')))
+  // And a broken export must not blame the import: one shared failure key told
+  // the user whose export failed that a file they never imported was at fault.
+  exportError = 'EACCES: permission denied, open usage-ledger.jsonl'
+  await act(async () => { exportBtn?.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+  const exportFailed = q('[data-dsh-part="device-notice"]')
+  check('a failed export blames the export, not the import',
+    text(exportFailed).startsWith('导出失败') && !text(exportFailed).includes('导入'), text(exportFailed))
+  exportError = null
   // Import goes through a real <input type=file>: drive it the way a browser
   // does, by defining `files` on the element before dispatching change.
   const fileInput = deviceCard.querySelector('input[type="file"]')
@@ -632,7 +655,14 @@ console.log('   plans tab text:', text(container).slice(0, 200))
   await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
 
   const line = host.querySelector('[data-dsh-part="ledger-error"]')
-  check('a ledger read failure is surfaced', line !== null && text(line).includes('EBUSY'), line === null ? 'no line' : text(line))
+  // The sentence is the user's language; the raw read error (a path, an errno)
+  // belongs in the title, where it is a diagnostic rather than a headline.
+  check('a ledger read failure is surfaced',
+    line !== null && text(line).startsWith('账本读取异常') && !text(line).includes('EBUSY'),
+    line === null ? 'no line' : text(line))
+  check('the ledger read error stays available in the title',
+    line !== null && String(line.getAttribute('title')).includes('EBUSY'),
+    line === null ? 'no line' : String(line.getAttribute('title')))
   check('the tiles stay rendered under it', host.querySelectorAll('[data-dsh-part="range-tiles"] button').length === 8,
     String(host.querySelectorAll('[data-dsh-part="range-tiles"] button').length))
 
@@ -1499,12 +1529,18 @@ console.log('   plans tab text:', text(container).slice(0, 200))
 // ---- two models in one palette slot stay distinguishable ----------------
 // Sixteen hues are not enough for every name: two names that hash to the same
 // slot used to share a color exactly, so two sub-bars of one channel looked
-// like one. The shade axis keeps them apart without moving anyone else.
+// like one. The shade axis keeps them apart without moving anyone else. The
+// rung is a hash of the name now, not an arrival counter, so the pair has to be
+// picked with two different rungs — otherwise this would be asserting a
+// collision rather than a distinction.
+// The palette is a pure function, so the tests read it from the TypeScript
+// source (Node's type stripping) instead of waiting for a bundle.
+const palette = await import(new URL('../packages/dsh-usage/src/client/model-colors.ts', import.meta.url).href)
 {
   const host = window.document.createElement('div')
   window.document.body.appendChild(host)
-  // The slot function is reimplemented here so the fixture is not a magic pair:
-  // the test finds two names that really do land in one slot.
+  // The slot and rung functions are reimplemented here so the fixture is not a
+  // magic pair: the test finds two names that really do land in one slot.
   const fnv = (name) => {
     let hash = 0x811c9dc5
     for (let at = 0; at < name.length; at += 1) {
@@ -1513,15 +1549,29 @@ console.log('   plans tab text:', text(container).slice(0, 200))
     }
     return hash >>> 0
   }
+  const slotOf = (name) => fnv(name) % 16
+  const rungOf = (name) => (fnv(name) >>> 5) % 5
   const bySlot = new Map()
   let pair
   for (let index = 0; index < 400 && pair === undefined; index += 1) {
     const name = 'slotprobe-' + index + '.'
-    const slot = fnv(name) % 16
+    const slot = slotOf(name)
     const taken = bySlot.get(slot)
     if (taken === undefined) bySlot.set(slot, name)
-    else pair = [taken, name]
+    else if (rungOf(taken) !== rungOf(name)) pair = [taken, name]
   }
+  // A model's shade must not depend on which other models the window happens to
+  // contain: 近 7 天 and 近 30 天 are two different model sets, and the same model
+  // used to change color between them because the rung was an arrival counter.
+  const wide = palette.assignModelColors(['alpha.', 'beta.', 'gamma.'])
+  const narrow = palette.assignModelColors(['beta.'])
+  check('a model keeps its shade when the window model set changes',
+    wide.get('beta.') !== undefined && wide.get('beta.') === narrow.get('beta.'),
+    `${wide.get('beta.')} vs ${narrow.get('beta.')}`)
+  const reversed = palette.assignModelColors(['gamma.', 'beta.', 'alpha.'])
+  check('the shade does not depend on the order models arrive',
+    reversed.get('alpha.') === wide.get('alpha.') && reversed.get('gamma.') === wide.get('gamma.'),
+    `${wide.get('alpha.')}/${reversed.get('alpha.')} ${wide.get('gamma.')}/${reversed.get('gamma.')}`)
   const bucket = (calls, input) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
   const models = pair === undefined ? [] : pair.map((model) => ({ model, totals: bucket(1, 100) }))
   const collided = {
@@ -1575,11 +1625,8 @@ console.log('   plans tab text:', text(container).slice(0, 200))
 // The shades used to be a color-mix toward white or black: the ends of that ramp
 // measured 1.40:1 on the white card and 2.29:1 on the dark one, and two rungs of
 // one slot sat 1.36 apart in RGB — invisible as a difference. The ladder is cut
-// from measured luminance now, so the same numbers are asserted here. The palette
-// is a pure function, so the test reads it from the TypeScript source instead of
-// waiting for a bundle.
+// from measured luminance now, so the same numbers are asserted here.
 {
-  const palette = await import(new URL('../packages/dsh-usage/src/client/model-colors.ts', import.meta.url).href)
   const channelsOf = (hex) => {
     const value = Number.parseInt(String(hex).slice(1), 16)
     return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff]
@@ -1603,44 +1650,487 @@ console.log('   plans tab text:', text(container).slice(0, 200))
     }
     return hash >>> 0
   }
-  // Five names per palette slot: the ladder's rungs only meet inside one slot.
+  // Every shade of every slot, from a probe wide enough that each slot shows all
+  // five. Two names may share a rung (the rung is a hash of the name, so a
+  // collision is stable rather than shifting), so the colors are deduplicated:
+  // the property under test is that the SHADES of one slot are told apart.
   const slots = new Map()
   for (let index = 0; index < 4000; index += 1) {
     const name = 'legible-' + index + '.'
     const slot = hashOf(name) % 16
-    const group = slots.get(slot) ?? []
-    if (group.length < 5) {
-      group.push(name)
-      slots.set(slot, group)
-    }
-  }
-  const colors = palette.assignModelColors([...slots.values()].flat())
-  const rgbOf = (name) => {
-    const color = colors.get(name)
-    return color === undefined ? [NaN, NaN, NaN] : channelsOf(color)
+    const group = slots.get(slot) ?? new Map()
+    const color = palette.assignModelColors([name]).get(name)
+    if (color !== undefined) group.set(color, name)
+    slots.set(slot, group)
   }
   const light = channelsOf('#ffffff')
   const dark = channelsOf('#16171a')
   let worstLight = Infinity
   let worstDark = Infinity
   let closest = Infinity
+  let shades = 0
   for (const group of slots.values()) {
-    for (const name of group) {
-      worstLight = Math.min(worstLight, contrastOf(rgbOf(name), light))
-      worstDark = Math.min(worstDark, contrastOf(rgbOf(name), dark))
+    const colors = [...group.keys()]
+    shades += colors.length
+    for (const color of colors) {
+      const rgb = channelsOf(color)
+      worstLight = Math.min(worstLight, contrastOf(rgb, light))
+      worstDark = Math.min(worstDark, contrastOf(rgb, dark))
     }
-    for (let a = 0; a < group.length; a += 1) {
-      for (let b = a + 1; b < group.length; b += 1) {
-        closest = Math.min(closest, distanceOf(rgbOf(group[a]), rgbOf(group[b])))
+    for (let a = 0; a < colors.length; a += 1) {
+      for (let b = a + 1; b < colors.length; b += 1) {
+        closest = Math.min(closest, distanceOf(channelsOf(colors[a]), channelsOf(colors[b])))
       }
     }
   }
   check('every model color clears 3:1 on the light card', worstLight >= 3, worstLight.toFixed(2))
   check('every model color clears 3:1 on the dark card', worstDark >= 3, worstDark.toFixed(2))
   check('the rungs of one palette slot are told apart', closest >= 16, String(closest))
+  check('every slot reaches all five shades', shades >= 16 * 5, String(shades))
   check('the other-models color is legible on both skins',
     contrastOf(channelsOf(palette.MODEL_COLOR_OTHER), light) >= 3 && contrastOf(channelsOf(palette.MODEL_COLOR_OTHER), dark) >= 3,
     palette.MODEL_COLOR_OTHER)
+}
+
+// ---- the poll interval takes a typed value -------------------------------
+// The field was controlled straight by the settings snapshot and only wrote a
+// value already inside 30..3600, so typing "120" over "60" reverted on the first
+// keystroke ("1") and Delete (empty, which parses to 0) was rejected as well: the
+// number could not be changed by hand at all. It keeps a draft string now and
+// commits on blur or Enter.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const localRoot = ReactDOMClient.createRoot(host)
+  const before = settingsCalls.length
+  const setValue = (input, value) => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(input, value)
+    input.dispatchEvent(new window.Event('input', { bubbles: true }))
+  }
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 200)) })
+  const input = host.querySelector('[data-dsh-part="settings-row"] input[type="number"]')
+  check('the poll-interval field renders', input !== null)
+  if (input !== null) {
+    await act(async () => { setValue(input, '120') })
+    check('typing an interval keeps the draft and writes nothing',
+      settingsCalls.length === before && input.value === '120',
+      'calls=' + (settingsCalls.length - before) + ' value=' + input.value)
+    await act(async () => {
+      input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    const committed = settingsCalls.slice(before)
+    check('Enter commits the typed interval',
+      committed.length === 1 && committed[0].field === 'pollIntervalSec' && committed[0].value === 120,
+      JSON.stringify(committed))
+    await act(async () => { setValue(input, '') })
+    check('an emptied interval is allowed while typing',
+      input.value === '' && settingsCalls.length === before + 1,
+      'value=' + input.value + ' calls=' + (settingsCalls.length - before))
+    await act(async () => {
+      input.dispatchEvent(new window.FocusEvent('focusout', { bubbles: true }))
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    check('an emptied interval reverts to the stored value on blur',
+      input.value === '60' && settingsCalls.length === before + 1,
+      'value=' + input.value + ' calls=' + (settingsCalls.length - before))
+  }
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- a half-loaded window states no total --------------------------------
+// A new window signature reused the previous ready load, so the tiles printed
+// "—" (their day had not arrived) while the totals row summed only the days
+// already in hand: a partial number presented as the window's total. The totals
+// row takes the same partial signal as the tiles now. The calls cell also names
+// its unit instead of repeating the count beside it.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const localRoot = ReactDOMClient.createRoot(host)
+  const withToday = (date, updatedAt) => {
+    const next = JSON.parse(JSON.stringify(overview))
+    next.usage.today.date = date
+    if (updatedAt !== undefined) next.updatedAt = updatedAt
+    return next
+  }
+  const first = withToday('2026-10-19')
+  let releasePending = null
+  const gatedDay = (date) => {
+    if (date !== '2026-10-20') return loadDay(date)
+    // Parked: the window that needs this day never completes while the test
+    // holds it, which is the partially loaded state under test.
+    return new Promise((resolve, reject) => {
+      releasePending = () => { loadDay(date).then(resolve, reject) }
+    })
+  }
+  let state = { snapshot: first, status: 'ready', error: null }
+  const storeListeners = new Set()
+  const localStore = {
+    getSnapshot: () => state,
+    subscribe: (fn) => { storeListeners.add(fn); return () => storeListeners.delete(fn) },
+  }
+  const publish = (next) => {
+    state = { snapshot: next, status: 'ready', error: null }
+    for (const listener of storeListeners) listener()
+  }
+  const totalsRow = () => host.querySelector('[data-dsh-part="window-totals"]')
+  const statValues = () => [...host.querySelectorAll('[data-dsh-part="window-totals"] [class*="statValue"]')]
+  const tileOf = (label) => [...host.querySelectorAll('[data-dsh-part="range-tiles"] button')]
+    .find((button) => text(button).includes(label))
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay: gatedDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 250)) })
+  // The card opens on today's window, which is complete by definition; the wide
+  // window is the one that can be caught half-loaded.
+  await act(async () => {
+    tileOf('近 30 天')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 200))
+  })
+  check('a complete window states its totals',
+    statValues().length === 6 && totalsRow()?.getAttribute('data-partial') !== 'true',
+    'cells=' + statValues().length)
+  // The window grows by a day the card has not fetched yet.
+  await act(async () => {
+    publish(withToday('2026-10-21', overview.updatedAt + 60000))
+    await new Promise((r) => setTimeout(r, 250))
+  })
+  const partialTile = text(tileOf('近 30 天') ?? host)
+  check('a window still missing a day says so on its tile', partialTile.includes('—'), partialTile)
+  check('a window still missing a day states no total',
+    totalsRow() !== null && statValues().length === 0 && text(totalsRow()) === '—'
+      && totalsRow()?.getAttribute('data-partial') === 'true',
+    'cells=' + statValues().length + ' row=' + text(totalsRow()))
+  await act(async () => {
+    if (releasePending !== null) releasePending()
+    await new Promise((r) => setTimeout(r, 300))
+  })
+  check('the total comes back once the missing day lands', statValues().length === 6, 'cells=' + statValues().length)
+  const cells = [...host.querySelectorAll('[data-dsh-part="window-totals"] > div')]
+  const callsCell = cells[cells.length - 1]
+  const callsLabel = callsCell === undefined ? '' : text(callsCell.querySelector('[class*="statLabel"]'))
+  check('the calls cell names its unit instead of repeating the count',
+    callsLabel === '次调用' && !/[0-9]/.test(callsLabel), callsLabel)
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- the sidebar card states failures in the reader's language ------------
+// The card interpolated the raw wire text ("usage api/dsh-usage/overview failed:
+// 500") into the sentence, so the reader got the transport's words instead of a
+// sentence they can act on; the translated sentence is the visible text now and
+// the raw text is the title. The card body is also a button whose aria-label used
+// to replace the figures it shows: without the label the visible text names it.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const localRoot = ReactDOMClient.createRoot(host)
+  const mountFoot = async (footState) => {
+    const localStore = { getSnapshot: () => footState, subscribe: () => () => {} }
+    await act(async () => {
+      localRoot.render(React.createElement(UsageFootCard, {
+        store: localStore,
+        poll: () => {},
+        onOpen: () => {},
+        settings,
+      }))
+    })
+    await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
+  }
+  const raw = 'usage api/dsh-usage/overview failed: 500'
+  await mountFoot({ snapshot: null, status: 'error', error: raw })
+  const footCard = host.querySelector('[data-dsh-part="foot-card"]')
+  check('the sidebar card translates a transport failure',
+    footCard !== null && text(footCard).includes('请求失败（HTTP 500）') && !text(footCard).includes('usage api'),
+    text(footCard))
+  const footLine = host.querySelector('[class*="footLine"]')
+  check('the sidebar card keeps the wire text in the title',
+    footLine !== null && String(footLine.getAttribute('title') ?? '').includes('failed: 500'),
+    footLine === null ? 'no line' : String(footLine.getAttribute('title')))
+  await mountFoot({ snapshot: overview, status: 'ready', error: null })
+  const footMain = host.querySelector('[data-dsh-part="foot-card-main"]')
+  check('the sidebar card body does not hide its figures behind a label',
+    footMain !== null && footMain.getAttribute('aria-label') === null,
+    footMain === null ? 'no card' : String(footMain.getAttribute('aria-label')))
+  check('the sidebar card body names itself with its figures',
+    footMain !== null && text(footMain).includes('tokens') && text(footMain).includes('次调用'),
+    footMain === null ? 'no card' : text(footMain))
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- the collapse toggle is a target, not a ghost ------------------------
+// jsdom does not resolve CSS-module class names to rules, so the rule text is the
+// only honest place to measure this: the audit read 20x20 at 0.55 opacity, under
+// the 24x24 WCAG 2.2 minimum and unreadable until hovered.
+{
+  const css = readClient('usage.module.css')
+  const rule = /\.footToggle\s*\{([^}]*)\}/.exec(css)
+  const body = rule === null ? '' : rule[1]
+  const width = /width:\s*(\d+)px/.exec(body)
+  const height = /height:\s*(\d+)px/.exec(body)
+  const opacity = /opacity:\s*([\d.]+)/.exec(body)
+  check('the collapse toggle is a 24px target',
+    width !== null && height !== null && Number(width[1]) >= 24 && Number(height[1]) >= 24,
+    'w=' + (width?.[1] ?? '?') + ' h=' + (height?.[1] ?? '?'))
+  check('the collapse toggle is findable at rest',
+    opacity !== null && Number(opacity[1]) >= 0.7, opacity?.[1] ?? '?')
+}
+
+// ---- a failed voucher draw is not pinned for the session ----------------
+// The art load is cached and the draw error was only ever set, so one transient
+// failure kept "票券生成失败" on screen for every later, successful draw.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const mint = JSON.parse(JSON.stringify(overview))
+  const mintTotals = { inputTokens: 900000, outputTokens: 300000, cacheReadTokens: 600000, cacheWriteTokens: 0, reasoningTokens: 0, calls: 9, cost: 1.2 }
+  const mintRow = { provider: 'deepseek', totals: mintTotals, models: [{ model: 'deepseek-v4.1-flash', totals: mintTotals }] }
+  // The bank window is the host's whole-ledger aggregate, so the minting row has
+  // to live there for the note to have a face value at all.
+  mint.usage.all.providers = [...mint.usage.all.providers, mintRow]
+  let state = { snapshot: mint, status: 'ready', error: null }
+  const storeListeners = new Set()
+  const localStore = {
+    getSnapshot: () => state,
+    subscribe: (fn) => { storeListeners.add(fn); return () => storeListeners.delete(fn) },
+  }
+  const realImage = globalThis.Image
+  const realGetContext = window.HTMLCanvasElement.prototype.getContext
+  class FakeImage {
+    constructor() {
+      this.naturalWidth = 512
+      this.naturalHeight = 512
+      this.onload = null
+      this.onerror = null
+    }
+    set src(value) {
+      this._src = value
+      setTimeout(() => { if (typeof this.onload === 'function') this.onload() }, 0)
+    }
+    get src() { return this._src }
+  }
+  globalThis.Image = FakeImage
+  window.Image = FakeImage
+  const workingCtx = {
+    drawImage: () => {},
+    measureText: (value) => ({ width: String(value).length * 10 }),
+    fillText: () => {},
+  }
+  window.HTMLCanvasElement.prototype.getContext = () => null
+  const localRoot = ReactDOMClient.createRoot(host)
+  try {
+    await act(async () => {
+      localRoot.render(React.createElement(UsageSectionCard, {
+        store: localStore,
+        poll: () => {},
+        refresh: () => {},
+        loadDay,
+        loadRange,
+        settings,
+        deviceSync,
+        close: () => {},
+      }))
+    })
+    await act(async () => { await new Promise((r) => setTimeout(r, 250)) })
+    const tabButtons = [...host.querySelectorAll('[data-dsh-part="tabs"] button')]
+    await act(async () => {
+      tabButtons[2]?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+      await new Promise((r) => setTimeout(r, 250))
+    })
+    const drawError = () => host.querySelector('[data-dsh-part="bank-card"] [class*="errorLine"]')
+    check('a canvas that cannot draw reports the voucher failure',
+      drawError() !== null && text(drawError()).includes('票券生成失败'),
+      drawError() === null ? 'no error line' : text(drawError()))
+    // The next draw works: the art is cached and the canvas has a context now.
+    window.HTMLCanvasElement.prototype.getContext = () => workingCtx
+    const bumped = JSON.parse(JSON.stringify(mint))
+    bumped.updatedAt = mint.updatedAt + 60000
+    const lastRow = bumped.usage.all.providers[bumped.usage.all.providers.length - 1]
+    lastRow.totals = { ...mintTotals, calls: 12, inputTokens: 950000 }
+    await act(async () => {
+      state = { snapshot: bumped, status: 'ready', error: null }
+      for (const listener of storeListeners) listener()
+      await new Promise((r) => setTimeout(r, 300))
+    })
+    check('a successful redraw clears the voucher failure', drawError() === null,
+      drawError() === null ? '' : text(drawError()))
+  } finally {
+    window.HTMLCanvasElement.prototype.getContext = realGetContext
+    globalThis.Image = realImage
+    window.Image = realImage
+    await act(async () => { localRoot.unmount() })
+    host.remove()
+  }
+}
+
+// ---- a one-day failure still says so ------------------------------------
+// The chart returned null before the failure notice whenever it had fewer than
+// two rows, so a wholesale failure on a one-day window rendered nothing at all.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const localRoot = ReactDOMClient.createRoot(host)
+  const rows = [{ date: '2026-10-20', totals: zeroTotals() }]
+  await act(async () => { localRoot.render(React.createElement(TrendChart, { rows, allFailed: true })) })
+  const notice = host.querySelector('[data-dsh-part="trend-failed"]')
+  check('a one-day window still states a wholesale failure', notice !== null, text(host))
+  const plot = host.querySelector('[role="img"]')
+  check('a one-day failure keeps the plot labelled',
+    plot !== null && String(plot.getAttribute('aria-label') ?? '').includes('2026-10-20'),
+    plot === null ? 'no plot' : String(plot.getAttribute('aria-label')))
+  await act(async () => { localRoot.render(React.createElement(TrendChart, { rows })) })
+  check('a one-day window with nothing failed draws nothing',
+    host.querySelector('[data-dsh-part="trend-chart"]') === null && text(host) === '', text(host))
+  await act(async () => { localRoot.render(React.createElement(TrendChart, { rows: [], allFailed: true })) })
+  check('an empty failed window still states the failure',
+    host.querySelector('[data-dsh-part="trend-failed"]') !== null, text(host))
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- a retry chain is not rewound by every poll -------------------------
+// The budget refilled whenever snapshot.updatedAt moved, so a host that kept
+// answering polls (and the user's own Refresh) rewound the backoff while the
+// windows kept failing: the ladder never reached its cap. Only a spent budget
+// refills now, so a chain in flight keeps its place. The timers are captured
+// instead of fired so the test can move the stamp between two rungs.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  let state = { snapshot, status: 'ready', error: null }
+  const storeListeners = new Set()
+  const localStore = {
+    getSnapshot: () => state,
+    subscribe: (fn) => { storeListeners.add(fn); return () => storeListeners.delete(fn) },
+  }
+  let loads = 0
+  const deadRange = async (from, to) => {
+    loads += 1
+    throw new Error('usage api/dsh-usage/range?from=' + from + '&to=' + to + ' failed: 500')
+  }
+  const pending = new Map()
+  let nextId = 0
+  const realSetTimeout = window.setTimeout
+  const realClearTimeout = window.clearTimeout
+  window.setTimeout = (callback) => {
+    if (typeof callback !== 'function') return 0
+    nextId += 1
+    pending.set(nextId, callback)
+    return nextId
+  }
+  window.clearTimeout = (id) => { pending.delete(id) }
+  const localRoot = ReactDOMClient.createRoot(host)
+  let fired = 0
+  const runPending = async () => {
+    const due = [...pending.values()]
+    pending.clear()
+    fired += due.length
+    for (const callback of due) {
+      await act(async () => {
+        callback()
+        await new Promise((r) => setTimeout(r, 150))
+      })
+    }
+    return due.length
+  }
+  try {
+    await act(async () => {
+      localRoot.render(React.createElement(UsageSectionCard, {
+        store: localStore,
+        poll: () => {},
+        refresh: () => {},
+        loadDay,
+        loadRange: deadRange,
+        settings,
+        deviceSync,
+        close: () => {},
+      }))
+    })
+    await act(async () => { await new Promise((r) => setTimeout(r, 200)) })
+    // One rung of the ladder: the chain is in flight now.
+    await runPending()
+    const afterOneRung = fired
+    // The host answers a poll with a newer stamp, the case the audit found.
+    await act(async () => {
+      state = { snapshot: { ...state.snapshot, updatedAt: state.snapshot.updatedAt + 1000 }, status: 'ready', error: null }
+      for (const listener of storeListeners) listener()
+      await new Promise((r) => setTimeout(r, 200))
+    })
+    let guard = 0
+    while (pending.size > 0 && guard < 20) {
+      await runPending()
+      guard += 1
+    }
+    check('a retry chain is not rewound by a newer snapshot',
+      afterOneRung >= 1 && fired <= 5 && loads > 2,
+      'rungs=' + afterOneRung + ' fired=' + fired + ' loads=' + loads + ' guard=' + guard)
+  } finally {
+    window.setTimeout = realSetTimeout
+    window.clearTimeout = realClearTimeout
+    await act(async () => { localRoot.unmount() })
+    host.remove()
+  }
+}
+
+// ---- the device card states a read failure in the reader's language ------
+// The devicesError line interpolated the host's raw read error (a path, an errno)
+// exactly as the ledger line did. The sentence is translated now and the raw text
+// is the title, so the two halves are asserted separately.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const variant = JSON.parse(JSON.stringify(overview))
+  variant.usage.devicesError = 'EACCES: permission denied, scandir /home/u/.dsh/dsh-usage'
+  const state = { snapshot: variant, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 200)) })
+  const deviceError = host.querySelector('[data-dsh-part="device-error"]')
+  check('a device read failure is translated',
+    deviceError !== null && text(deviceError).includes('部分文件无法读取') && !text(deviceError).includes('EACCES'),
+    deviceError === null ? 'no line' : text(deviceError))
+  check('the device read error stays available in the title',
+    deviceError !== null && String(deviceError.getAttribute('title') ?? '').includes('EACCES'),
+    deviceError === null ? 'no line' : String(deviceError.getAttribute('title')))
+  await act(async () => { localRoot.unmount() })
+  host.remove()
 }
 
 const failed = report.filter((row) => !row.ok)

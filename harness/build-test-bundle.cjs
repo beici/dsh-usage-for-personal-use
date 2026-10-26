@@ -19,7 +19,14 @@ const SOURCE = path.join(ROOT, 'packages/dsh-usage/lib/client.js')
 const TARGET = path.join(__dirname, 'client.test.cjs')
 
 const EXPORT_ANCHOR = '\t\texports.apply = apply;'
-const EXPORT_LINE = '\t\texports.UsageSectionCard = UsageSectionCard;\n\t\texports.openUsageSettings = openUsageSettings;\n'
+// UsageSectionCard/openUsageSettings cover the panel; TrendChart and
+// UsageFootCard are exported too because two of their behaviours are only
+// reachable in isolation (a one-day window's failure notice, the sidebar card's
+// accessible name), not through the mounted panel.
+const EXPORT_LINE = '\t\texports.UsageSectionCard = UsageSectionCard;\n'
+  + '\t\texports.openUsageSettings = openUsageSettings;\n'
+  + '\t\texports.TrendChart = TrendChart;\n'
+  + '\t\texports.UsageFootCard = UsageFootCard;\n'
 
 const source = fs.readFileSync(SOURCE, 'utf8')
 if (source.includes('\t\texports.UsageSectionCard = UsageSectionCard;')) {

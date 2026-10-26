@@ -12,6 +12,7 @@
 
 import { useRef, useState, type ReactNode } from 'react'
 import { t } from './locales.ts'
+import { describeError } from './error-text.ts'
 import styles from './usage.module.css'
 import type { DeviceLedgerEntryView } from '../core/types.ts'
 
@@ -60,13 +61,21 @@ export function DeviceSyncCard(props: {
   // dead control there, so it renders nothing instead of an empty shell.
   if (devices === undefined || api === undefined) return undefined
 
+  // Each action names itself in both directions: one shared "import failed" for
+  // all three told a user whose export broke that the file they never imported
+  // was at fault, and a success notice that repeats the button label reads as a
+  // prompt rather than as an answer.
   const run = async (kind: 'export' | 'import' | 'rescan', action: () => Promise<Notice>): Promise<void> => {
     setBusy(kind)
     setNotice(undefined)
     try {
       setNotice(await action())
     } catch (error) {
-      setNotice({ text: t('usage.device.importFailed', { error: error instanceof Error ? error.message : String(error) }), tone: 'error' })
+      const detail = error instanceof Error ? error.message : String(error)
+      const key = kind === 'export'
+        ? 'usage.device.exportFailed'
+        : kind === 'rescan' ? 'usage.device.rescanFailed' : 'usage.device.importFailed'
+      setNotice({ text: t(key, { error: detail }), tone: 'error' })
     } finally {
       setBusy(undefined)
     }
@@ -75,7 +84,7 @@ export function DeviceSyncCard(props: {
   const onExport = (): void => {
     void run('export', async () => {
       await api.exportLedger()
-      return { text: t('usage.device.export'), tone: 'ok' }
+      return { text: t('usage.device.exported'), tone: 'ok' }
     })
   }
 
@@ -93,7 +102,7 @@ export function DeviceSyncCard(props: {
     void run('rescan', async () => {
       await api.rescan()
       onChanged()
-      return { text: t('usage.device.rescan'), tone: 'ok' }
+      return { text: t('usage.device.rescanned'), tone: 'ok' }
     })
   }
 
@@ -122,7 +131,11 @@ export function DeviceSyncCard(props: {
         </div>
       ))}
       {devicesError !== undefined && (
-        <span className={styles.errorLine} role="status">{t('usage.device.error', { error: devicesError })}</span>
+        // The sentence is translated; the raw read error (a path, an errno) stays
+        // in the title, where a diagnostic belongs.
+        <span className={styles.errorLine} role="status" data-dsh-part="device-error" title={devicesError}>
+          {t('usage.device.error', { error: describeError(devicesError, 'usage.error.readFailed') })}
+        </span>
       )}
       <div className={styles.rangeControls} style={{ marginTop: 8 }}>
         <button type="button" className={styles.refreshBtn} onClick={onExport} disabled={busy !== undefined}>
