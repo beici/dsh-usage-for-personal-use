@@ -104,13 +104,31 @@ export async function ensureMachineId(dir: string): Promise<string> {
   const known = await read()
   if (known !== undefined) return known
   const minted = randomUUID().replace(/-/g, '')
+  const body = `${JSON.stringify({ version: 1, machineId: minted }, null, 2)}\n`
   try {
     await mkdir(dir, { recursive: true })
-    await writeFile(path, `${JSON.stringify({ version: 1, machineId: minted }, null, 2)}\n`, 'utf8')
-  } catch {
-    // A read-only profile cannot pin the id: the digest still names this machine
-    // well enough for one run, and the next writable start mints the real one.
-    return localMachineId()
+    // Two processes starting together both find no file and both mint an id;
+    // whichever writes second must lose, or the two of them spend the session
+    // stamping documents with ids that disagree — and a file stamped with the
+    // losing id looks like a different machine to its own sibling.
+    await writeFile(path, body, { encoding: 'utf8', flag: 'wx' })
+  } catch (error) {
+    // Losing the race is the expected path: read back what the winner wrote.
+    const settled = await read()
+    if (settled !== undefined) return settled
+    if ((error as { code?: string }).code !== 'EEXIST') {
+      // A read-only profile cannot pin the id: the digest still names this
+      // machine well enough for one run, and the next writable start mints the
+      // real one.
+      return localMachineId()
+    }
+    // The file exists but is unreadable: overwrite it rather than run unpinned.
+    try {
+      await writeFile(path, body, 'utf8')
+      return minted
+    } catch {
+      return localMachineId()
+    }
   }
   return minted
 }

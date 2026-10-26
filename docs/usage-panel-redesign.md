@@ -378,7 +378,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   ledger sends no range request, the tablist keyboard contract (ArrowRight,
   Home, End), the from-date `min`, and the legend readable outside the image
   role.
-- `node --experimental-strip-types harness/host-test.mjs` — 162 checks: range
+- `node --experimental-strip-types harness/host-test.mjs` — 168 checks: range
   aggregate + per-model series, route guards, device ledger, loopback fence,
   peak clock, the record-carried route of the live fold, transcript dedupe and
   the judged repair, ledger quarantine and unreadable-file protection, the

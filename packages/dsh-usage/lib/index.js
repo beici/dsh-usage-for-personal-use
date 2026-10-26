@@ -1588,14 +1588,26 @@ async function ensureMachineId(dir) {
 	const known = await read();
 	if (known !== void 0) return known;
 	const minted = randomUUID().replace(/-/g, "");
+	const body = `${JSON.stringify({
+		version: 1,
+		machineId: minted
+	}, null, 2)}\n`;
 	try {
 		await mkdir(dir, { recursive: true });
-		await writeFile(path, `${JSON.stringify({
-			version: 1,
-			machineId: minted
-		}, null, 2)}\n`, "utf8");
-	} catch {
-		return localMachineId();
+		await writeFile(path, body, {
+			encoding: "utf8",
+			flag: "wx"
+		});
+	} catch (error) {
+		const settled = await read();
+		if (settled !== void 0) return settled;
+		if (error.code !== "EEXIST") return localMachineId();
+		try {
+			await writeFile(path, body, "utf8");
+			return minted;
+		} catch {
+			return localMachineId();
+		}
 	}
 	return minted;
 }
@@ -3061,7 +3073,7 @@ var UsageService = class {
 			} catch {}
 		}
 		if (restored === 0) return;
-		pruneLedger(this.ledger, localDateKey(Date.now()), this.options.retainDays);
+		this.pruneForWrite(this.ledger);
 		this.note("legacy-restore", "the quarantined ledger was rebuilt from the pre-migration file");
 	}
 	async adoptLegacyLedger() {
@@ -3085,7 +3097,7 @@ var UsageService = class {
 		} catch {
 			return;
 		}
-		if (await writeJsonAtomic(this.ledgerPath, this.ledger).then(() => true, () => false) && source.path === legacyPath) await rename(legacyPath, migratedPath).catch(() => void 0);
+		if (await writeJsonAtomic(this.ledgerPath, ledgerFileDocument(this.ledger, { machine: this.machine })).then(() => true, () => false) && source.path === legacyPath) await rename(legacyPath, migratedPath).catch(() => void 0);
 	}
 	/**
 	* Re-read every peer ledger file in the persist directory.
@@ -3134,10 +3146,16 @@ var UsageService = class {
 					continue;
 				}
 				if (parsed.machine === void 0) {
-					failures.push(`${name}: no machine id in the document, not summed`);
+					peers.push({
+						deviceId,
+						machine: void 0,
+						doc: parsed.doc,
+						updatedAt: info.mtimeMs
+					});
+					this.note(`unverified:${deviceId}`, `${name}: no machine id in the document, summed as an unverified device`);
 					continue;
 				}
-				if (parsed.machine !== void 0 && parsed.machine === localMachine) {
+				if (parsed.machine !== void 0 && (parsed.machine === localMachine || parsed.machine === localMachineId())) {
 					mergeLedgerMax(this.ledger, parsed.doc);
 					this.note(`renamed:${deviceId}`, `${name}: this machine under an older name, folded in rather than summed`);
 					continue;
@@ -3192,6 +3210,7 @@ var UsageService = class {
 				} else if (this.seenRepairedAt > 0 && disk.repairedAt === void 0) {
 					this.note("stale-writer", "a build without ledger identity rewrote the file; its inflated buckets were not re-adopted");
 					if (this.ledgerWritten !== void 0) mergeLedgerDelta(target, this.ledger, this.ledgerWritten);
+					if (this.replayDoc !== void 0) mergeLedgerMax(target, this.replayDoc);
 				} else {
 					if (this.ledgerWritten !== void 0) mergeLedgerDelta(target, this.ledger, this.ledgerWritten);
 					mergeLedgerMax(target, this.ledger);
@@ -3202,13 +3221,17 @@ var UsageService = class {
 			await writeJsonAtomic(this.ledgerPath, this.ledgerFileDocument());
 			this.ledgerWritten = structuredClone(this.ledger);
 			this.ledgerError = void 0;
+			this.clearNote("stale-writer");
 		} catch (error) {
 			this.ledgerError = `ledger write failed (${error instanceof Error ? error.message : String(error)})`;
 		}
 	}
 	/** This process's ledger as a file document: the identity travels with it. */
 	ledgerFileDocument() {
-		return ledgerFileDocument(this.ledger, this.seenRepairedAt > 0 ? { repairedAt: this.seenRepairedAt } : void 0);
+		return ledgerFileDocument(this.ledger, {
+			machine: this.machine,
+			...this.seenRepairedAt > 0 ? { repairedAt: this.seenRepairedAt } : {}
+		});
 	}
 	/**
 	* Prune a document about to be written, refusing a prune that would delete
@@ -3225,7 +3248,7 @@ var UsageService = class {
 		const prunable = countPrunable(doc, todayKey, this.options.retainDays);
 		const shrank = this.options.retainDays < this.retentionSeen;
 		this.retentionSeen = Math.min(this.retentionSeen, this.options.retainDays);
-		if (!shrank && days >= 4 && prunable === days) {
+		if (!shrank && days > 0 && prunable === days) {
 			this.note("retention", `retention skipped: the clock would drop all ${days} recorded days`);
 			return 0;
 		}
@@ -3344,6 +3367,7 @@ var UsageService = class {
 				providers: Object.fromEntries(this.snapshots),
 				...watch !== void 0 ? { spendWatch: watch } : {}
 			});
+			this.clearNote("snapshots");
 		} catch (error) {
 			this.note("snapshots", `snapshot write failed (${error instanceof Error ? error.message : String(error)})`);
 		}

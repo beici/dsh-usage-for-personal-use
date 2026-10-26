@@ -1399,8 +1399,9 @@ export class UsageService {
     if (restored === 0) return
     // The restored days are as old as the history gets: apply retention to them
     // the same way a normal load would, or the merge would resurrect days the
-    // user already let go.
-    pruneLedger(this.ledger, localDateKey(Date.now()), this.options.retainDays)
+    // user already let go — through the guard, so a jumped clock cannot use the
+    // restore as a way around it.
+    this.pruneForWrite(this.ledger)
     this.note('legacy-restore', 'the quarantined ledger was rebuilt from the pre-migration file')
   }
 
@@ -1426,7 +1427,10 @@ export class UsageService {
     // Not `flushLedger()`: that defers to `loaded`, and the migration runs
     // precisely while `loaded` is still false. The write goes straight to this
     // device's file instead, and only a successful one retires the legacy file.
-    const written = await writeJsonAtomic(this.ledgerPath, this.ledger).then(
+    const written = await writeJsonAtomic(
+      this.ledgerPath,
+      ledgerFileDocument(this.ledger, { machine: this.machine }),
+    ).then(
       () => true,
       () => false,
     )
@@ -1490,14 +1494,17 @@ export class UsageService {
           continue
         }
         if (parsed.machine === undefined) {
-          // Written before this build stamped its machine, or placed by hand: it
-          // cannot prove which machine it came from. Counting it as a device is
-          // how one machine's own history gets summed twice, so it is reported
-          // and left out until it is re-exported by a build that stamps identity.
-          failures.push(`${name}: no machine id in the document, not summed`)
+          // Exported before this build stamped a machine id. Its device id is
+          // not ours and it is not a bare document, so it is a real peer file —
+          // but nothing in it proves which machine wrote it. Counting it is the
+          // lesser evil (dropping it silently shrinks the user's history by
+          // whatever that device contributed), so it is summed and reported as
+          // unverified instead.
+          peers.push({ deviceId, machine: undefined, doc: parsed.doc, updatedAt: info.mtimeMs })
+          this.note(`unverified:${deviceId}`, `${name}: no machine id in the document, summed as an unverified device`)
           continue
         }
-        if (parsed.machine !== undefined && parsed.machine === localMachine) {
+        if (parsed.machine !== undefined && (parsed.machine === localMachine || parsed.machine === localMachineId())) {
           // This machine under an older name: the host was renamed, so a new
           // device id was minted while this file kept the old one. Its calls are
           // this machine's own, so they are folded in (max merge: the same days
@@ -1579,6 +1586,9 @@ export class UsageService {
           // file again below.
           this.note('stale-writer', 'a build without ledger identity rewrote the file; its inflated buckets were not re-adopted')
           if (this.ledgerWritten !== undefined) mergeLedgerDelta(target, this.ledger, this.ledgerWritten)
+          // A replay recovers buckets the file never held, and a delta cannot
+          // carry them: without this the day it recovered disappears here.
+          if (this.replayDoc !== undefined) mergeLedgerMax(target, this.replayDoc)
         } else {
           if (this.ledgerWritten !== undefined) mergeLedgerDelta(target, this.ledger, this.ledgerWritten)
           // A replay recovers buckets the file never held: that is not
@@ -1595,6 +1605,9 @@ export class UsageService {
       await writeJsonAtomic(this.ledgerPath, this.ledgerFileDocument())
       this.ledgerWritten = structuredClone(this.ledger)
       this.ledgerError = undefined
+      // The file now carries our identity again, so the warning about a build
+      // that stripped it no longer applies.
+      this.clearNote('stale-writer')
     } catch (error) {
       // Persistence failures must not stop the counting, but the panel has to
       // say why these numbers will not survive a restart.
@@ -1604,7 +1617,13 @@ export class UsageService {
 
   /** This process's ledger as a file document: the identity travels with it. */
   private ledgerFileDocument(): UsageLedgerDocument & { deviceId: string; machine: string; repairedAt?: number } {
-    return ledgerFileDocument(this.ledger, this.seenRepairedAt > 0 ? { repairedAt: this.seenRepairedAt } : undefined)
+    // `this.machine` is the pinned id: the wrapper's own fallback derives a
+    // digest from host, platform and user, which changes the moment the host is
+    // renamed — the exact event the pinned id exists to survive.
+    return ledgerFileDocument(this.ledger, {
+      machine: this.machine,
+      ...(this.seenRepairedAt > 0 ? { repairedAt: this.seenRepairedAt } : {}),
+    })
   }
 
   /**
@@ -1627,7 +1646,7 @@ export class UsageService {
     // recent days and drops the rest.
     const shrank = this.options.retainDays < this.retentionSeen
     this.retentionSeen = Math.min(this.retentionSeen, this.options.retainDays)
-    if (!shrank && days >= 4 && prunable === days) {
+    if (!shrank && days > 0 && prunable === days) {
       this.note('retention', `retention skipped: the clock would drop all ${days} recorded days`)
       return 0
     }
@@ -1758,6 +1777,7 @@ export class UsageService {
         providers: Object.fromEntries(this.snapshots),
         ...(watch !== undefined ? { spendWatch: watch } : {}),
       })
+      this.clearNote('snapshots')
     } catch (error) {
       // Counting is unaffected; the voucher's observed spend is what will not
       // survive a restart, so the panel says so.

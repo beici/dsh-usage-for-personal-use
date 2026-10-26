@@ -1086,10 +1086,12 @@ async function writeTranscript(home, lines, session = 'sess1') {
   check('a field-wise merge keeps the larger value of every field', totalTokens(merged) === 3000, String(totalTokens(merged)))
 }
 
-// ---- a peer must prove which machine wrote it ---------------------------
-// Counting an unverifiable file as a second device is how one machine's own
-// history gets summed twice, so a document without a machine id is reported and
-// left out of the totals.
+// ---- an unverifiable peer is summed, but flagged ------------------------
+// A peer file exported before this build stamped machine ids names a device that
+// is not us and is not a bare document, so it is real history — but nothing in it
+// proves which machine wrote it. Refusing it would shrink the user's totals by
+// whatever that device contributed (on the real profile: 6.9 % of all calls), so
+// it is summed and reported as unverified instead.
 {
   const home = await freshHome()
   const dir = join(home, 'dsh-usage')
@@ -1102,8 +1104,9 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await writeFile(join(dir, 'usage-ledger.peerone.json'), JSON.stringify({ version: 1, deviceId: 'peerone', days: { [todayKey]: { peer: { p1: bucket(700, 7) } } } }))
   const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
   await svc.loadPersisted()
-  check('a peer without a machine id is not summed', svc.overview().usage.all.totals.calls === 10, String(svc.overview().usage.all.totals.calls))
-  check('the unverified peer is reported', String(svc.overview().usage.devicesError ?? '').includes('no machine id'), String(svc.overview().usage.devicesError))
+  check('an unverifiable peer is still counted', svc.overview().usage.all.totals.calls === 17, String(svc.overview().usage.all.totals.calls))
+  check('the unverified peer is reported', String(svc.overview().usage.ledgerNote ?? '').includes('unverified'), String(svc.overview().usage.ledgerNote))
+  check('the unverified peer is listed as a device', svc.overview().usage.devices.length === 2, JSON.stringify(svc.overview().usage.devices))
   await svc.stop()
 }
 
@@ -1124,6 +1127,12 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await first.loadPersisted()
   await first.stop()
   const pinned = JSON.parse(await readFile(join(dir, 'machine-id.json'), 'utf8')).machineId
+  // The ordinary flush has to stamp that pinned id: the wrapper's fallback is a
+  // digest of host, platform and user, which changes exactly when the host is
+  // renamed — the event the pinned id exists for.
+  const ownFile = JSON.parse(await readFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), 'utf8'))
+  check('the flushed file carries the pinned machine id', ownFile.machine === pinned, String(ownFile.machine))
+  check('the flushed file names its device', ownFile.deviceId === localDeviceId(), String(ownFile.deviceId))
   // The same history, copied out under the old host name, and slightly larger.
   await writeFile(join(dir, 'usage-ledger.oldhost-abc123.json'), JSON.stringify({
     version: 1, deviceId: 'oldhost-abc123', machine: pinned,
@@ -1194,6 +1203,46 @@ async function writeTranscript(home, lines, session = 'sess1') {
   check('the pre-migration history survives a corrupt ledger', restored?.totals.calls === 3, JSON.stringify(svc.overview().usage.days.map((row) => row.date)))
   check('the rebuild is reported', String(svc.overview().usage.ledgerNote ?? '').includes('pre-migration'), String(svc.overview().usage.ledgerNote))
   check('the corrupt file is still quarantined', String(svc.overview().usage.ledgerError ?? '').includes('corrupt'), String(svc.overview().usage.ledgerError))
+  await svc.stop()
+}
+
+// ---- the machine id is minted once, even under a race ------------------
+// Two processes starting together both find no file; whichever writes second must
+// adopt the winner's id instead of spending the session stamping documents with
+// an id the other one does not know.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { ensureMachineId } = await load('host/device-ledger.ts')
+  const [a, b] = await Promise.all([ensureMachineId(dir), ensureMachineId(dir)])
+  const disk = JSON.parse(await readFile(join(dir, 'machine-id.json'), 'utf8')).machineId
+  check('a machine id race settles on one id', a === b && a === disk, a + ' / ' + b + ' / ' + disk)
+}
+
+// ---- a short history is guarded too ------------------------------------
+// The guard exists for a jumped clock, and a fresh install with two days on file
+// is exactly where a jump wipes everything.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const todayKey = localDateKey(Date.now())
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const daysAgo = (n) => localDateKey(Date.now() - n * 86_400_000)
+  const old = daysAgo(400)
+  const older = daysAgo(401)
+  await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), JSON.stringify({
+    version: 1,
+    days: { [old]: { buddy: { m1: bucket(100, 1) } }, [older]: { buddy: { m1: bucket(200, 2) } } },
+  }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  await svc.flushLedger()
+  const kept = JSON.parse(await readFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), 'utf8'))
+  check('a two-day history survives a jumped clock', Object.keys(kept.days).length === 2, Object.keys(kept.days).join(','))
+  check('the refused prune is reported', String(svc.overview().usage.ledgerNote ?? '').includes('retention skipped'), String(svc.overview().usage.ledgerNote))
   await svc.stop()
 }
 

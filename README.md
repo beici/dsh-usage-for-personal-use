@@ -86,7 +86,7 @@ cd ../.. && node harness/build-test-bundle.cjs && node harness/render-test.mjs
 node --experimental-strip-types harness/host-test.mjs
 ```
 
-期望输出:`=== 99/99 checks passed ===` 和 `=== 162/162 checks passed ===`。`node_modules/` 已被 git 忽略,新克隆的仓库要先装依赖;构建能逐字节复现已提交的产物。
+期望输出:`=== 99/99 checks passed ===` 和 `=== 168/168 checks passed ===`。`node_modules/` 已被 git 忽略,新克隆的仓库要先装依赖;构建能逐字节复现已提交的产物。
 
 ### English
 
@@ -100,7 +100,7 @@ cd ../.. && node harness/build-test-bundle.cjs && node harness/render-test.mjs
 node --experimental-strip-types harness/host-test.mjs
 ```
 
-Expected: `=== 99/99 checks passed ===` and `=== 162/162 checks passed ===`. `node_modules/` is git-ignored, so a fresh clone must run the install first; the build reproduces the committed artifacts byte-for-byte.
+Expected: `=== 99/99 checks passed ===` and `=== 168/168 checks passed ===`. `node_modules/` is git-ignored, so a fresh clone must run the install first; the build reproduces the committed artifacts byte-for-byte.
 
 ---
 
@@ -212,7 +212,7 @@ Then **restart DSH**: the host bundle joins the ESM graph once at boot, so new h
 | --- | --- | --- |
 | `lib/client.js` | 499,570 B | `d8189176e78aed24c88d1309a0b47767` |
 | `lib/client.js.map` | 647,464 B | `decb0096a99d7cf94aeda4d9e48d9d5c` |
-| `lib/index.js` | 149,748 B | `3c6a1247326954fdc7f2543fc930e4f1` |
+| `lib/index.js` | 150,401 B | `e93ce2a3dc532f05dd468de1419dbf3c` |
 
 `lib/client.js.map` 会把源码原样嵌进去,只有源码用 LF 换行时才能逐字节复现(`.gitattributes` 在 checkout 时强制 `eol=lf`);工作区留 CRLF 源码时 map 会变大、哈希对不上,而 `client.js` 本身不变。两边都从 `src/` 构建,`lib/index.js` 和已安装副本是同一个产物。部署就是一次普通拷贝,但有两个坑:在 profile 里跑 `pnpm install` 会把包重置回 registry tarball;`cp` 到 pnpm 硬链接上会穿透写入 content-addressed store。详见 [`docs/build-and-redeploy.md`](docs/build-and-redeploy.md)。
 
@@ -224,7 +224,7 @@ Artifacts built from this repository (verified 2026-10-27):
 | --- | --- | --- |
 | `lib/client.js` | 499,570 B | `d8189176e78aed24c88d1309a0b47767` |
 | `lib/client.js.map` | 647,464 B | `decb0096a99d7cf94aeda4d9e48d9d5c` |
-| `lib/index.js` | 149,748 B | `3c6a1247326954fdc7f2543fc930e4f1` |
+| `lib/index.js` | 150,401 B | `e93ce2a3dc532f05dd468de1419dbf3c` |
 
 `lib/client.js.map` embeds the sources verbatim and is only reproducible when the sources use LF endings (`.gitattributes` enforces `eol=lf` in the checkout); a worktree left with CRLF sources produces a larger, differently hashed map while `client.js` itself stays identical. Both halves build from `src/`, so `lib/index.js` and the installed copy are the same artifact. Deploying is a plain copy, with two hazards: a `pnpm install` in the profile resets the package to the registry tarball, and `cp` onto a pnpm hardlink writes through to the content-addressed store. See [`docs/build-and-redeploy.md`](docs/build-and-redeploy.md).
 
@@ -240,7 +240,7 @@ Artifacts built from this repository (verified 2026-10-27):
 | `shared/tsdown.client.ts` | 客户端打包预设(`clientBundle()` / `clientConfig()`,来自上游 monorepo),`packages/dsh-usage/tsdown.config.ts` 依赖它。 |
 | `shared/web-platform.ts` | `PLATFORM_MODULES`:浏览器包允许向 shell 外部引用的模块清单。 |
 | `harness/render-test.mjs` | jsdom 渲染测试:用保存的线上 fixture 挂载构建产物,断言 99 条事实,覆盖 8 个窗口、汇总行、趋势图、渠道拆分、设备同步卡、DeepSeek 峰谷标签,失败窗口不出总数、失败日期在趋势图上以斜纹标注、失败聚合不画笃定柱、重试有上限且不丢已结算值、模型行百分比凑满 100%、模型色相跨窗口不变、页签键盘导航、自定义窗口不许越过今天。 |
-| `harness/host-test.mjs` | host 侧测试(162 条),用 Node 类型剥离直接跑 `src/`:设备 id、导出/导入、账本相加、旧版迁移、会话日志回填(含跨文件去重与一次性回退修复)、实时 fold、range 聚合、账本隔离与双进程合并、修复幂等与地板、固定机器 id(改名后仍是同一台机器)、无 machine 的同伴文件不计入、保留期区分时钟跳变与用户调小、提示按类去重、账本隔离后的旧历史恢复、loopback 校验、峰谷时钟。 |
+| `harness/host-test.mjs` | host 侧测试(168 条),用 Node 类型剥离直接跑 `src/`:设备 id、导出/导入、账本相加、旧版迁移、会话日志回填(含跨文件去重与一次性回退修复)、实时 fold、range 聚合、账本隔离与双进程合并、修复幂等与地板、固定机器 id(改名后仍是同一台机器)、无 machine 的同伴文件不计入、保留期区分时钟跳变与用户调小、提示按类去重、账本隔离后的旧历史恢复、loopback 校验、峰谷时钟。 |
 | `harness/build-test-bundle.cjs` | 从构建好的 `lib/client.js` 派生 `harness/client.test.cjs`,只多插一行测试需要的导出。 |
 | `harness/make-panel-html.cjs` | 生成 `harness/panel.html`,自包含页面,用于无头截图。 |
 | `fixtures/` | 2026-10-20 抓取的线上 `/api/dsh-usage` 响应(总览 + 4 天记录)。 |
@@ -257,7 +257,7 @@ Artifacts built from this repository (verified 2026-10-27):
 | `shared/tsdown.client.ts` | The client-bundle preset (`clientBundle()` / `clientConfig()` from the upstream monorepo) — required by `packages/dsh-usage/tsdown.config.ts`. |
 | `shared/web-platform.ts` | `PLATFORM_MODULES`: the externals the browser bundle may require from the shell. |
 | `harness/render-test.mjs` | jsdom render test: mounts the built bundle with saved live fixtures and asserts 99 facts about the eight windows, the totals row, the trend chart, the channel breakdown, the device-sync card and the DeepSeek peak badge — plus a failed window stating no total, a failed aggregate drawing no confident bars, a retry loop that backs off and gives up, model rows adding up to 100 %, a keyboard-navigable tablist and a custom window refusing to run past today. |
-| `harness/host-test.mjs` | Host-side tests (162 checks), run straight off `src/` with Node type stripping: device ids, export/import, ledger summing, legacy migration, transcript backfill (cross-file dedupe and the one-time repair), the live fold, the range aggregate, ledger quarantine and two-process merging, repair idempotence and its floors, field-wise merges, repaired-at adoption, a pinned machine id that survives a host rename, peer documents without one being refused, a retention guard that tells a clock jump from a lowered retention, a note registry that does not grow per poll, legacy history restored after a quarantine, the loopback fence and the peak clock. |
+| `harness/host-test.mjs` | Host-side tests (168 checks), run straight off `src/` with Node type stripping: device ids, export/import, ledger summing, legacy migration, transcript backfill (cross-file dedupe and the one-time repair), the live fold, the range aggregate, ledger quarantine and two-process merging, repair idempotence and its floors, field-wise merges, repaired-at adoption, a pinned machine id that survives a host rename, peer documents without one being refused, a retention guard that tells a clock jump from a lowered retention, a note registry that does not grow per poll, legacy history restored after a quarantine, the loopback fence and the peak clock. |
 | `harness/build-test-bundle.cjs` | Derives `harness/client.test.cjs` from the built `lib/client.js` by adding one export line the test needs. |
 | `harness/make-panel-html.cjs` | Builds `harness/panel.html`, a self-contained page for headless screenshots. |
 | `fixtures/` | Live `/api/dsh-usage` responses captured 2026-10-20 (overview + 4 recorded days). |
