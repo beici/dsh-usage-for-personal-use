@@ -103,6 +103,12 @@ export declare class UsageService {
     /** The window a shrink in this session asked for, so later prunes still read as one. */
     private shrankTo;
     /**
+     * Whether the write in progress holds the ledger lock. A write that could not
+     * take it goes ahead anyway (losing every later call is worse), but it must not
+     * retire the `lock-busy` note that its own wait just raised.
+     */
+    private lockHeld;
+    /**
      * This machine's identity as recorded in every file it writes.
      *
      * Pinned in `machine-id.json` on first run rather than derived from the host
@@ -469,6 +475,10 @@ export declare class UsageService {
     private writeLedgerLocked;
     /** This process's ledger as a file document: the identity travels with it. */
     private ledgerFileDocument;
+    /** The retention bookkeeping a write may move before it fails. */
+    private retentionSnapshot;
+    /** Put that bookkeeping back after a write that never landed. */
+    private restoreRetention;
     /**
      * The window the file should record as the one its days were pruned against.
      *

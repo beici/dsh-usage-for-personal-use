@@ -40,7 +40,6 @@ export declare const zh: {
     'usage.tokens.output': string;
     'usage.tokens.cacheRead': string;
     'usage.tokens.cacheHit': string;
-    'usage.trend': string;
     'usage.trend.label': string;
     'usage.trend.labelFailed': string;
     'usage.trend.labelPartial': string;

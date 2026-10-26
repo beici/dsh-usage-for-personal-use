@@ -249,7 +249,10 @@ export function apply(ctx: ClientContext): void {
       const seq = pollSeq + 1
       pollSeq = seq
       const snapshot = await usageApi.rescan()
-      store.actions.setSnapshot(snapshot)
+      // A poll that started after the button and answered first holds the newer
+      // read: applying the scan's answer over it would put the older totals back
+      // until the next poll. The devices come from the scan either way.
+      if (seq === pollSeq) store.actions.setSnapshot(snapshot)
       return snapshot.usage.devices ?? []
     },
   }

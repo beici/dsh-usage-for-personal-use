@@ -667,6 +667,22 @@
   opacity: 0.75;
 }
 
+/* The raw text of a diagnostic. The same words sit in a `title` (a path, an
+   errno — a diagnostic belongs there), but a title is reachable only with a
+   mouse; the translated sentence is what a screen reader or a keyboard user
+   hears, so the raw text rides along invisibly rather than not at all. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* A note is information, not a warning: dimmer than an error, and it must not
    push the numbers around when it appears. */
 .noteLine {

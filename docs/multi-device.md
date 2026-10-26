@@ -95,6 +95,21 @@ The export envelope:
 }
 ```
 
+An import merges into the peer file already on disk instead of replacing it (an
+older export of a device that kept counting would otherwise drop the days this
+machine can no longer fetch), and it keeps what that file already recorded: the
+`machine` id it was written under, and the `retentionDays` window its days were
+pruned to — an export from an older build carries neither, and copying this
+machine's window over the peer's would relabel history that was pruned to a
+different one. The merge and the write run under the same lock as every other
+ledger write, so two imports of one peer cannot lose each other's merge.
+
+The pre-split migration follows the same rule: `usage-ledger.json` and
+`usage-ledger.json.migrated` are max-merged into one document before it is
+adopted, because `.migrated` is written as a superset of the legacy file and
+absorbing both would count their shared days twice — permanently, since the
+repair pass only knows replay duplicates.
+
 Routes (all behind the same `isUsageAllowed` guard as the rest of the API):
 
 | Route | Method | Purpose |
@@ -171,7 +186,7 @@ peer, delete its `usage-ledger.<id>.json` and press 重新扫描.
 node --experimental-strip-types harness/host-test.mjs
 ```
 
-207 checks, covering device id hygiene, the export envelope shape, import of
+214 checks, covering device id hygiene, the export envelope shape, import of
 valid and invalid payloads, merging rather than replacing a peer file, summing,
 re-import idempotence, the local-ledger invariant, legacy migration (including
 that it persists before renaming the old file away), transcript backfill, the

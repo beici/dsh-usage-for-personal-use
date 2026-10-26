@@ -2348,6 +2348,12 @@ var UsageService = class {
 	/** The window a shrink in this session asked for, so later prunes still read as one. */
 	shrankTo;
 	/**
+	* Whether the write in progress holds the ledger lock. A write that could not
+	* take it goes ahead anyway (losing every later call is worse), but it must not
+	* retire the `lock-busy` note that its own wait just raised.
+	*/
+	lockHeld = true;
+	/**
 	* This machine's identity as recorded in every file it writes.
 	*
 	* Pinned in `machine-id.json` on first run rather than derived from the host
@@ -2494,27 +2500,30 @@ var UsageService = class {
 		if (doc === void 0) throw new UsageImportError("unreadable ledger payload");
 		await mkdir(this.persistDir, { recursive: true });
 		const target = join(this.persistDir, ledgerFileName(claimedId));
-		const existing = await readFile(target, "utf8").then((text) => {
-			try {
-				return parsePeerLedger(JSON.parse(text));
-			} catch {
-				return;
+		await this.withLedgerLock(async () => {
+			const existing = await readFile(target, "utf8").then((text) => {
+				try {
+					return parsePeerLedger(JSON.parse(text));
+				} catch {
+					return;
+				}
+			}, () => void 0);
+			const merged = existing === void 0 ? doc.doc : structuredClone(existing.doc);
+			if (existing !== void 0) mergeLedgerMax(merged, doc.doc);
+			const machine = doc.machine ?? existing?.machine;
+			if (existing !== void 0) {
+				const kept = ledgerDayKeys(existing.doc).filter((key) => doc.doc.days[key] === void 0);
+				if (kept.length > 0) this.note(`import:${claimedId}`, `import merged into the peer file; ${kept.length} day(s) it already held were kept`);
 			}
-		}, () => void 0);
-		const merged = existing === void 0 ? doc.doc : structuredClone(existing.doc);
-		if (existing !== void 0) mergeLedgerMax(merged, doc.doc);
-		const machine = doc.machine ?? existing?.machine;
-		if (existing !== void 0) {
-			const kept = ledgerDayKeys(existing.doc).filter((key) => doc.doc.days[key] === void 0);
-			if (kept.length > 0) this.note(`import:${claimedId}`, `import merged into the peer file; ${kept.length} day(s) it already held were kept`);
-		}
-		await writeJsonAtomic(target, {
-			schema: LEDGER_EXPORT_SCHEMA,
-			version: 1,
-			deviceId: claimedId,
-			...machine === void 0 ? {} : { machine },
-			exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
-			ledger: merged
+			await writeJsonAtomic(target, {
+				schema: LEDGER_EXPORT_SCHEMA,
+				version: 1,
+				deviceId: claimedId,
+				...machine === void 0 ? {} : { machine },
+				exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+				retentionDays: doc.retentionDays ?? existing?.retentionDays ?? this.recordedWindow(),
+				ledger: merged
+			});
 		});
 		await this.refreshPeers();
 		return { deviceId: claimedId };
@@ -2966,7 +2975,10 @@ var UsageService = class {
 				this.retentionSeen = Math.max(this.retentionSeen, read.retentionDays);
 				this.fileRetention = read.retentionDays;
 			}
-			if (read.retentionDays !== void 0 && read.retentionDays === this.options.retainDays) this.clearNote("retention");
+			if (read.retentionDays !== void 0 && read.retentionDays === this.options.retainDays) {
+				this.clearNote("retention");
+				this.clearNote("retention-jump");
+			}
 		} else if (read.kind === "missing") await this.adoptLegacyLedger();
 		if (lostHistory) await this.restoreMigratedHistory();
 		await this.loadSnapshots();
@@ -3300,11 +3312,16 @@ var UsageService = class {
 		}), () => void 0));
 		if (source === void 0) return;
 		try {
+			let doc = deserializeLedger(JSON.parse(source.raw));
 			if (source.path === legacyPath) {
 				const previous = await this.readLedgerDocument(migratedPath);
-				if (previous !== void 0) this.absorb(this.ledger, previous);
+				if (previous !== void 0) {
+					const merged = structuredClone(previous);
+					mergeLedgerMax(merged, doc);
+					doc = merged;
+				}
 			}
-			this.absorb(this.ledger, deserializeLedger(JSON.parse(source.raw)));
+			this.absorb(this.ledger, doc);
 			this.pruneForWrite(this.ledger);
 			this.lastPrune = {
 				dayKey: localDateKey(Date.now()),
@@ -3509,6 +3526,7 @@ var UsageService = class {
 			await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
 		}
 		if (handle === void 0) this.note("lock-busy", "the ledger lock stayed taken; this write may have raced another process");
+		this.lockHeld = handle !== void 0;
 		try {
 			await work();
 		} finally {
@@ -3519,7 +3537,8 @@ var UsageService = class {
 		}
 	}
 	async writeLedgerLocked() {
-		const before = this.ledger;
+		const before = structuredClone(this.ledger);
+		const retention = this.retentionSnapshot();
 		const disk = await this.readDiskLedger();
 		if (disk.kind === "bad") {
 			this.ledgerError = `ledger unreadable (${disk.error}); write skipped`;
@@ -3557,6 +3576,7 @@ var UsageService = class {
 					await writeJsonAtomic(this.ledgerPath, this.ledgerFileDocument());
 				} catch (error) {
 					this.ledger = before;
+					this.restoreRetention(retention);
 					throw error;
 				}
 				this.ledgerWritten = structuredClone(this.ledger);
@@ -3575,6 +3595,7 @@ var UsageService = class {
 			await writeJsonAtomic(this.ledgerPath, this.ledgerFileDocument());
 		} catch (error) {
 			this.ledger = before;
+			this.restoreRetention(retention);
 			throw error;
 		}
 		this.ledgerWritten = structuredClone(this.ledger);
@@ -3582,7 +3603,7 @@ var UsageService = class {
 		this.fileRetention = this.recordedWindow();
 		this.shrankTo = void 0;
 		this.clearNote("stale-writer");
-		this.clearNote("lock-busy");
+		if (this.lockHeld) this.clearNote("lock-busy");
 	}
 	/** This process's ledger as a file document: the identity travels with it. */
 	ledgerFileDocument() {
@@ -3591,6 +3612,23 @@ var UsageService = class {
 			...this.seenRepairedAt > 0 ? { repairedAt: this.seenRepairedAt } : {},
 			retentionDays: this.recordedWindow()
 		});
+	}
+	/** The retention bookkeeping a write may move before it fails. */
+	retentionSnapshot() {
+		return {
+			seen: this.retentionSeen,
+			shrankTo: this.shrankTo,
+			refused: this.windowRefused,
+			note: this.notes.get("retention")
+		};
+	}
+	/** Put that bookkeeping back after a write that never landed. */
+	restoreRetention(snapshot) {
+		this.retentionSeen = snapshot.seen;
+		this.shrankTo = snapshot.shrankTo;
+		this.windowRefused = snapshot.refused;
+		if (snapshot.note === void 0) this.clearNote("retention");
+		else this.notes.set("retention", snapshot.note);
 	}
 	/**
 	* The window the file should record as the one its days were pruned against.
@@ -3620,13 +3658,14 @@ var UsageService = class {
 		const stale = this.fileRetention === void 0 ? 0 : countPrunable(doc, todayKey, fileWindow);
 		const seenBefore = this.retentionSeen;
 		const shrank = this.options.retainDays < seenBefore || this.shrankTo === this.options.retainDays;
-		const jump = stale > 0 && prunable > days * .5 || prunable === days && !shrank;
+		const jump = stale > 0 && prunable > days * .5 || prunable === days;
 		if (days > 0 && jump) {
 			this.windowRefused = true;
 			this.note("retention-jump", `retention skipped: the clock would drop ${prunable} of ${days} recorded days — delete the ledger file to accept it`);
 			return 0;
 		}
 		this.windowRefused = false;
+		this.clearNote("retention-jump");
 		if (shrank) this.shrankTo = this.options.retainDays;
 		this.retentionSeen = Math.min(this.retentionSeen, this.options.retainDays);
 		const pruned = pruneLedger(doc, todayKey, this.options.retainDays);

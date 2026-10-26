@@ -1778,6 +1778,89 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await svc.stop()
 }
 
+// ---- a shrink cannot wipe the ledger either ------------------------------
+// The all-days refusal was exempted for a shrink, on the reading that the user
+// asked for it. But the days a shrink deletes are older than the transcripts can
+// rebuild, and "the window I just picked happens to exclude everything I have" is
+// not a decision the setting made — it is a jump wearing a shrink's clothes.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const days = {}
+  for (let back = 400; back < 403; back += 1) days[localDateKey(Date.now() - back * 86_400_000)] = { buddy: { m1: bucket(100, 1) } }
+  const ledgerPath = join(dir, 'usage-ledger.' + localDeviceId() + '.json')
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, retentionDays: 365, days }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 30 })
+  await svc.loadPersisted()
+  await svc.flushLedger()
+  const kept = JSON.parse(await readFile(ledgerPath, 'utf8'))
+  check('a shrink cannot wipe the ledger', Object.keys(kept.days).length === 3, Object.keys(kept.days).join(','))
+  check('the refused shrink is reported', String(svc.overview().usage.ledgerNote ?? '').includes('retention skipped'), String(svc.overview().usage.ledgerNote))
+  // Once enough days inside the window exist the refusal has nothing left to
+  // refuse: the old days are pruned as a slab, and the note must stop telling the
+  // user to delete a file the prune has already dealt with.
+  for (let back = 0; back < 4; back += 1) svc.ledger.days[localDateKey(Date.now() - back * 86_400_000)] = { buddy: { m1: bucket(10, 1) } }
+  await svc.flushLedger()
+  check('a landed prune clears the refusal', !String(svc.overview().usage.ledgerNote ?? '').includes('retention skipped'), String(svc.overview().usage.ledgerNote))
+  const pruned = JSON.parse(await readFile(ledgerPath, 'utf8'))
+  check('the landed prune keeps only the days inside the window', Object.keys(pruned.days).length === 4, Object.keys(pruned.days).join(','))
+  await svc.stop()
+}
+
+// ---- the two migration halves are max-merged, not added ------------------
+// `.migrated` is written as a superset of the legacy file, so absorbing both
+// counted their shared days twice — and this path re-runs whenever the device
+// file is missing, which would make the inflation permanent.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const shared = localDateKey(Date.now() - 2 * 86_400_000)
+  const earlier = localDateKey(Date.now() - 5 * 86_400_000)
+  const legacyPath = join(dir, 'usage-ledger.json')
+  await mkdir(dir, { recursive: true })
+  await writeFile(legacyPath, JSON.stringify({ version: 1, days: { [shared]: { buddy: { m1: bucket(100, 3) } } } }))
+  await writeFile(legacyPath + '.migrated', JSON.stringify({ version: 1, days: { [shared]: { buddy: { m1: bucket(100, 5) } }, [earlier]: { buddy: { m1: bucket(100, 2) } } } }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 30 })
+  await svc.loadPersisted()
+  const device = JSON.parse(await readFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), 'utf8'))
+  check('a shared day across the migration halves is not added twice', device.days[shared]?.buddy?.m1?.calls === 5, String(device.days[shared]?.buddy?.m1?.calls))
+  check('the older migration half still lands', device.days[earlier]?.buddy?.m1?.calls === 2, String(device.days[earlier]?.buddy?.m1?.calls))
+  await svc.stop()
+}
+
+// ---- an import keeps the window the peer recorded -----------------------
+// The peer file's `retentionDays` is the only evidence of which window its days
+// were pruned against. Re-importing an export that omits it used to overwrite the
+// record with this machine's own window, relabelling the peer's history.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const older = localDateKey(Date.now() - 3 * 86_400_000)
+  await mkdir(dir, { recursive: true })
+  await writeFile(
+    join(dir, 'usage-ledger.laptop-4f7b21.json'),
+    JSON.stringify({ schema: 'dsh-usage/ledger-export@1', version: 1, deviceId: 'laptop-4f7b21', machine: 'laptop-machine', retentionDays: 90, ledger: { version: 1, days: { [older]: { buddy: { m1: bucket(100, 2) } } } } }),
+  )
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const envelope = JSON.stringify({ schema: 'dsh-usage/ledger-export@1', version: 1, deviceId: 'laptop-4f7b21', ledger: { version: 1, days: { [localDateKey(Date.now() - 1 * 86_400_000)]: { buddy: { m1: bucket(100, 1) } } } } })
+  await svc.importPeer(envelope)
+  const peerFile = JSON.parse(await readFile(join(dir, 'usage-ledger.laptop-4f7b21.json'), 'utf8'))
+  check('an import keeps the window the peer recorded', peerFile.retentionDays === 90, String(peerFile.retentionDays))
+  await svc.stop()
+}
+
 const failed = report.filter((row) => !row.ok)
 console.log('\n=== ' + (report.length - failed.length) + '/' + report.length + ' checks passed ===')
 if (failed.length > 0) process.exitCode = 1

@@ -10,7 +10,7 @@
  * @module @linxin666/dsh-usage/client/DeviceSyncCard
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { t } from './locales.ts'
 import { describeError } from './error-text.ts'
 import styles from './usage.module.css'
@@ -59,6 +59,10 @@ export function DeviceSyncCard(props: {
   onChanged: () => void
 }): ReactNode {
   const { deviceId, devices, devicesError, api, onChanged } = props
+  // Hidden descriptions for the raw diagnostics: unique per card, so two cards
+  // cannot describe each other's error.
+  const errorDetailId = useId()
+  const noticeDetailId = useId()
   const [busy, setBusy] = useState<'export' | 'import' | 'rescan' | undefined>(undefined)
   const [notice, setNotice] = useState<Notice | undefined>(undefined)
   const [copied, setCopied] = useState(false)
@@ -169,11 +173,21 @@ export function DeviceSyncCard(props: {
         </div>
       ))}
       {devicesError !== undefined && (
-        // The sentence is translated; the raw read error (a path, an errno) stays
-        // in the title, where a diagnostic belongs.
-        <span className={styles.errorLine} role="status" data-dsh-part="device-error" title={devicesError}>
-          {t('usage.device.error', { error: describeError(devicesError, 'usage.error.readFailed') })}
-        </span>
+        <>
+          {/* The sentence is translated; the raw read error (a path, an errno) stays
+              in the title, where a diagnostic belongs — and in a hidden description,
+              because a title is reachable only with a mouse. */}
+          <span
+            className={styles.errorLine}
+            role="status"
+            data-dsh-part="device-error"
+            title={devicesError}
+            aria-describedby={errorDetailId}
+          >
+            {t('usage.device.error', { error: describeError(devicesError, 'usage.error.readFailed') })}
+          </span>
+          <span id={errorDetailId} className={styles.srOnly}>{devicesError}</span>
+        </>
       )}
       <div className={styles.rangeControls} style={{ marginTop: 8 }}>
         <button type="button" className={styles.refreshBtn} onClick={onExport} disabled={busy !== undefined}>
@@ -203,9 +217,18 @@ export function DeviceSyncCard(props: {
         />
       </div>
       {notice !== undefined && (
-        <span className={notice.tone === 'error' ? styles.errorLine : styles.muted} role="status" data-dsh-part="device-notice" title={notice.title}>
-          {notice.text}
-        </span>
+        <>
+          <span
+            className={notice.tone === 'error' ? styles.errorLine : styles.muted}
+            role="status"
+            data-dsh-part="device-notice"
+            title={notice.title}
+            aria-describedby={notice.title === undefined ? undefined : noticeDetailId}
+          >
+            {notice.text}
+          </span>
+          {notice.title !== undefined && <span id={noticeDetailId} className={styles.srOnly}>{notice.title}</span>}
+        </>
       )}
       <span className={styles.muted}>{t('usage.device.dropHint')}</span>
     </div>

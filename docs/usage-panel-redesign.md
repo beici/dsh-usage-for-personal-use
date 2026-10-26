@@ -171,16 +171,21 @@ clock moved — the file's own prune would already have dropped it. A file from 
 older build records no window at all, so its days are never read as a jump. So:
 
 - one prune is refused outright: more than half the recorded days would go while
-  days sit outside the file's own window, or every recorded day would go without
-  the user shrinking the window. The share matters because a replay can rebuild a
-  day or two near the new "today" while everything recorded before the jump falls
-  out — a count of survivors looked healthy two days after a 420-day jump. The
-  note names the way out: delete the ledger file to accept the jump.
-- the refusal is sticky. While it stands, the file keeps the window it carried
-  before the jump; writing the new setting would make the next flush — and the
-  next boot — read those days as "inside the file's window" and prune them, so
-  the refusal would last exactly one flush. The setting is written again once a
-  prune is accepted.
+  days sit outside the file's own window, or every recorded day would go — a
+  shrink does not exempt the second case, because a window that happens to
+  exclude everything on file is not a retention decision, and the days it would
+  take have no transcripts to rebuild them. The share matters because a replay can
+  rebuild a day or two near the new "today" while everything recorded before the
+  jump falls out — a count of survivors looked healthy two days after a 420-day
+  jump. The note names the way out: delete the ledger file to accept the jump.
+- the refusal is sticky, and it ends when it stops being true. While it stands,
+  the file keeps the window it carried before the jump; writing the new setting
+  would make the next flush — and the next boot — read those days as "inside the
+  file's window" and prune them, so the refusal would last exactly one flush. The
+  setting is written again once a prune is accepted, and the note is retired by
+  the same pass that finally prunes (or by a start that finds the file's window
+  equal to the setting): leaving "delete the ledger file" standing beside a
+  healthy ledger is advice that destroys data for no reason.
 - a shrink is honoured for the *size* of what it drops, never for wiping the
   ledger: its days are inside the file's own window, so it never trips the share
   test, but it cannot empty the file either.
@@ -482,7 +487,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
 ## Verification
 
 - `node harness/render-test.mjs` — jsdom, real bundle, saved live fixtures,
-  **183/183 checks**: eight tiles with correct labels/values/`aria-pressed`
+  **185/185 checks**: eight tiles with correct labels/values/`aria-pressed`
   (近 3 天 sums 今日 + 10-19; 近 6 个月 / 全部 read the range aggregate, which the
   stub answers only up to yesterday — 49.2 M / 584 calls — so their 135 M / 1251
   tiles prove the panel folded the live today in itself, and no range fetch may
@@ -534,7 +539,13 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   range strip folded by the card's own width (no viewport query), a rescan that
   is one round trip (one host call, no follow-up refresh), a one-day window
   saying it has too few days for a trend, and the dead dictionary keys gone.
-- `node --experimental-strip-types harness/host-test.mjs` — 207 checks: range
+  Round 12 adds: the raw ledger and device read errors reachable by keyboard and
+  screen readers (`aria-describedby` onto a hidden description, since `title` is
+  mouse-only) while the visible sentence stays the only text in the status line,
+  a range cache bounded to the six most recent spans, a null voucher blob stated
+  as a save failure instead of vanishing, and a rescan that cannot overwrite a
+  newer poll's snapshot.
+- `node --experimental-strip-types harness/host-test.mjs` — 214 checks: range
   aggregate + per-model series, route guards, device ledger, loopback fence,
   peak clock, the record-carried route of the live fold, transcript dedupe and
   the judged repair, ledger quarantine and unreadable-file protection, the
@@ -550,7 +561,12 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   error, a retention note surviving the first flush, a second migration keeping
   the days the first one retired, an import keeping the machine id the peer file
   already had, quarantine files capped at three, and a `refresh()` during the
-  load not double counting a peer.
+  load not double counting a peer. Round 12 adds: a shrink that would wipe the
+  ledger refused exactly like a jumped clock (and the refusal note retired once a
+  prune really lands), the two migration halves max-merged instead of summed (a
+  shared day counted once, however often the path re-runs), an import keeping the
+  window the peer file recorded rather than relabelling it with this machine's,
+  and the `lock-busy` note retired only by a write that actually held the lock.
 - Live bundle serving was proven against the running host:
   `GET /plugins/events` (loopback-exempt) lists the plugin row's `rev`, and
   `GET /plugins/??@linxin666/dsh-usage/client.js&rev=<rev>` returns the new

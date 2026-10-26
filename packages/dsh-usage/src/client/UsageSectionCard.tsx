@@ -20,7 +20,7 @@
  * @module @linxin666/dsh-usage/client/UsageSectionCard
  */
 
-import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react'
 import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { UsageStoreInstance } from './usage-store.ts'
 import { t } from './locales.ts'
@@ -462,6 +462,14 @@ interface RangeResult {
  */
 const rangeResults = new Map<string, RangeResult>()
 
+/**
+ * How many settled aggregates the session keeps. Each one carries a series row
+ * per day of its span, and the key is `from:to`, so a user walking the window
+ * strip (or nudging the custom range) minted a new entry per span and kept every
+ * payload for the tab's life. Six covers the strip's own spans plus a custom one.
+ */
+const RANGE_CACHE_MAX = 6
+
 /** In-flight range requests, so overlapping windows share one fetch. */
 const rangeRequests = new Map<string, { promise: Promise<UsageRangeResponse>; generation: number; stamp: string }>()
 
@@ -474,7 +482,15 @@ function requestRange(loadRange: (from: string, to: string) => Promise<UsageRang
     (response) => {
       if (rangeRequests.get(key)?.generation === generation) rangeRequests.delete(key)
       if (generation === cacheGeneration) {
+        // Re-insert so the eviction below drops the least recently stored span,
+        // not the one that just answered.
+        rangeResults.delete(key)
         rangeResults.set(key, { summary: { totals: response.totals, providers: response.providers }, series: response.series, stamp })
+        while (rangeResults.size > RANGE_CACHE_MAX) {
+          const oldest = rangeResults.keys().next()
+          if (oldest.done === true) break
+          rangeResults.delete(oldest.value)
+        }
       }
       return response
     },
@@ -1100,6 +1116,9 @@ const TAB_LABEL_KEYS: Record<TabKey, string> = {
 export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   const { store, poll, refresh, loadDay, loadRange, settings, deviceSync } = props
   const ui = useSyncExternalStore(store.subscribe, store.getSnapshot)
+  // One id per card instance: the raw ledger error is a hidden description, and
+  // two cards on one page must not point at each other's text.
+  const ledgerDetailId = useId()
   const settingsSnapshot = settings.getSnapshot()
   const settingsValue = settingsSnapshot.value ?? {}
   const [tab, setTab] = useState<TabKey>('usage')
@@ -1546,9 +1565,20 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
           the reason is stated before the numbers themselves. The sentence is
           translated and the raw text (a file path, an errno) stays in the title. */}
       {snapshot.usage.ledgerError !== undefined && (
-        <span className={styles.errorLine} role="status" data-dsh-part="ledger-error" title={snapshot.usage.ledgerError}>
-          {t('usage.ledger.error', { error: describeError(snapshot.usage.ledgerError, 'usage.error.readFailed') })}
-        </span>
+        <>
+          <span
+            className={styles.errorLine}
+            role="status"
+            data-dsh-part="ledger-error"
+            title={snapshot.usage.ledgerError}
+            aria-describedby={ledgerDetailId}
+          >
+            {t('usage.ledger.error', { error: describeError(snapshot.usage.ledgerError, 'usage.error.readFailed') })}
+          </span>
+          {/* A title is mouse-only, so the raw text rides along where a screen
+              reader can reach it without repeating it on screen. */}
+          <span id={ledgerDetailId} className={styles.srOnly}>{snapshot.usage.ledgerError}</span>
+        </>
       )}
       {/* Not an error: what the totals below leave out. Said out loud because a
           replay cut short or a skipped retention otherwise reads as lost history. */}
@@ -1812,7 +1842,13 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
     try {
       canvas.toBlob((blob) => {
         try {
-          if (blob === null) return
+          // A null blob is a failed draw too (a canvas too large for the encoder,
+          // no encoder at all): the click used to release the button and say
+          // nothing, which read as a save that silently did not happen.
+          if (blob === null) {
+            if (mounted.current) setSaveError('canvas produced no image')
+            return
+          }
           const url = URL.createObjectURL(blob)
           const anchor = document.createElement('a')
           anchor.href = url

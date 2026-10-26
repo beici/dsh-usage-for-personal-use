@@ -50,7 +50,6 @@ export const zh = {
   'usage.tokens.output': '输出',
   'usage.tokens.cacheRead': '缓存读',
   'usage.tokens.cacheHit': '缓存命中',
-  'usage.trend': '近 30 天',
   'usage.trend.label': '用量趋势图：{from} 至 {to}，合计 {tokens}',
   // A failed aggregate leaves the total unmeasured: the label states the span
   // and the failure instead of a number nothing backs.
@@ -186,7 +185,6 @@ export const en: Record<UsageKey, string> = {
   'usage.tokens.output': 'Output',
   'usage.tokens.cacheRead': 'Cache read',
   'usage.tokens.cacheHit': 'Cache hit',
-  'usage.trend': 'Last 30 days',
   'usage.trend.label': 'Usage trend: {from} to {to}, {tokens} in total',
   'usage.trend.labelFailed': 'Usage trend: {from} to {to}, some days failed to load',
   'usage.trend.labelPartial': 'Usage trend: {from} to {to}, {tokens} across the days that loaded',

@@ -678,6 +678,18 @@ console.log('   plans tab text:', text(container).slice(0, 200))
   check('the ledger read error stays available in the title',
     line !== null && String(line.getAttribute('title')).includes('EBUSY'),
     line === null ? 'no line' : String(line.getAttribute('title')))
+  // A title is mouse-only, so the raw text also sits in a hidden description:
+  // `aria-describedby` is what a screen reader or keyboard user can reach.
+  check('the ledger read error is described for screen readers',
+    (() => {
+      const id = line?.getAttribute('aria-describedby')
+      if (id === null || id === undefined) return false
+      // React's `useId` produces ids like ":r1:", which `querySelector` cannot
+      // take; `getElementById` is the only safe lookup for them.
+      const detail = document.getElementById(id)
+      return detail !== null && text(detail).includes('EBUSY') && !text(line).includes('EBUSY')
+    })(),
+    line === null ? 'no line' : String(line.getAttribute('aria-describedby')))
   check('the tiles stay rendered under it', host.querySelectorAll('[data-dsh-part="range-tiles"] button').length === 8,
     String(host.querySelectorAll('[data-dsh-part="range-tiles"] button').length))
 
@@ -2465,6 +2477,14 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
   check('the device read error stays available in the title',
     deviceError !== null && String(deviceError.getAttribute('title') ?? '').includes('EACCES'),
     deviceError === null ? 'no line' : String(deviceError.getAttribute('title')))
+  check('the device read error is described for screen readers',
+    (() => {
+      const id = deviceError?.getAttribute('aria-describedby')
+      if (id === null || id === undefined) return false
+      const detail = document.getElementById(id)
+      return detail !== null && text(detail).includes('EACCES') && !text(deviceError).includes('EACCES')
+    })(),
+    deviceError === null ? 'no line' : String(deviceError.getAttribute('aria-describedby')))
   await act(async () => { localRoot.unmount() })
   host.remove()
 }
