@@ -1978,9 +1978,11 @@ window.__ModuleLoader__.load({
 		* per day the ledger recorded inside the window (the overview lists those
 		* days); a longer one reads a single `/api/dsh-usage/range` aggregate instead
 		* — one request answering the whole-window summary plus the per-day series,
-		* which is what makes the multi-month windows viable. Merged days and fetched
-		* ranges are cached for the session. Polling runs only while the section is
-		* mounted and the tab is visible.
+		* which is what makes the multi-month windows viable. Both paths stop at
+		* yesterday and take today from the live overview, so a cached window can
+		* never disagree with the poll. Merged days and fetched ranges are cached for
+		* the session. Polling runs only while the section is mounted and the tab is
+		* visible.
 		* @module @linxin666/dsh-usage/client/UsageSectionCard
 		*/
 		/** Poll cadence while the section is open. */
@@ -2339,6 +2341,45 @@ window.__ModuleLoader__.load({
 					})).sort((a, b) => totalOf(b.totals) - totalOf(a.totals)).slice(0, WINDOW_MODEL_CAP)
 				};
 			});
+		}
+		/**
+		* The span a range-kind window actually fetches.
+		*
+		* Today is never fetched: the overview already carries it live, so the
+		* aggregate stops at yesterday — the same split the per-day path uses. Fetching
+		* today would freeze the whole window at the moment of the request (the fetch
+		* is cached for the session), which is how 近 6 个月 could read BELOW 近 30 天:
+		* the multi-month tiles held a stale copy of today while the short windows kept
+		* counting with the poll. A window holding nothing but today has no fetch at
+		* all; the live day is everything it renders.
+		*/
+		function fetchSpanOf(window, today) {
+			if (window.from === "" || window.to === "") return void 0;
+			const to = window.to >= today ? shiftDateKey(today, -1) : window.to;
+			return to < window.from ? void 0 : {
+				from: window.from,
+				to
+			};
+		}
+		/**
+		* Fold the live overview day into a fetched window aggregate.
+		*
+		* The range route is asked for a span that ends yesterday (see `fetchSpanOf`),
+		* so a multi-month window has to add today itself to state the whole window.
+		* Doing it here — not in the host — keeps the tile exact as the day goes on and
+		* keeps one live source of truth for today across every window.
+		*/
+		function withLiveToday(summary, window, todayView) {
+			if (todayView === void 0 || !inWindow(window, todayView.date)) return summary;
+			return {
+				from: summary.from,
+				to: summary.to,
+				...summarizeViews([{
+					date: todayView.date,
+					totals: summary.totals,
+					providers: summary.providers
+				}, todayView])
+			};
 		}
 		/** The day views one window holds, including the live overview day. */
 		function viewsIn(window, dateKeys, load, todayView) {
@@ -2822,9 +2863,18 @@ window.__ModuleLoader__.load({
 			const customIsRange = (customPicked ? dateKeysBetween(customWindow.from, customWindow.to).length : 0) > RANGE_FETCH_MAX_DAYS;
 			const last30Days = useWindowDays(loadDay, recordedIn(last30Window, recorded, todayDate), cache, cacheEpoch);
 			const customDays = useWindowDays(loadDay, customPicked && !customIsRange ? recordedIn(customWindow, recorded, todayDate) : [], cache, cacheEpoch);
-			const last180Load = useRangeData(loadRange, last180Window, cacheEpoch);
-			const allLoad = useRangeData(loadRange, allWindow, cacheEpoch);
-			const customRangeLoad = useRangeData(loadRange, customPicked && customIsRange ? customWindow : void 0, cacheEpoch);
+			const last180Load = useRangeData(loadRange, fetchSpanOf(last180Window, todayDate), cacheEpoch);
+			const allLoad = useRangeData(loadRange, fetchSpanOf(allWindow, todayDate), cacheEpoch);
+			const customRangeLoad = useRangeData(loadRange, customPicked && customIsRange ? fetchSpanOf(customWindow, todayDate) : void 0, cacheEpoch);
+			/** One range-kind window as the panel states it: the fetched aggregate plus the live day. */
+			const rangeSummaryOf = (window, load) => withLiveToday({
+				from: window.from,
+				to: window.to,
+				...load.summary ?? {
+					totals: emptyTotals(),
+					providers: []
+				}
+			}, window, todayView);
 			const dayOptions = snapshot === null ? [] : [...new Set([todayDate, ...snapshot.usage.availableDays ?? []].filter((date) => date !== void 0 && date !== ""))].sort().reverse();
 			const bankSelection = bankDay !== void 0 && dayOptions.includes(bankDay) ? bankDay : void 0;
 			const bankDayLoad = useDayView(loadDay, bankSelection, todayDate);
@@ -2913,17 +2963,10 @@ window.__ModuleLoader__.load({
 			const keysOf = (key) => recordedIn(windowSlices[key].window, recorded, todayDate);
 			const activeSlice = windowSlices[rangeKey];
 			const activeWindow = activeSlice.window;
-			const summaryRaw = activeSlice.kind === "range" ? {
-				from: activeWindow.from,
-				to: activeWindow.to,
-				...activeSlice.load.summary ?? {
-					totals: emptyTotals(),
-					providers: []
-				}
-			} : summaryIn(activeWindow, keysOf(rangeKey), activeSlice.load, todayView);
+			const summaryRaw = activeSlice.kind === "range" ? rangeSummaryOf(activeWindow, activeSlice.load) : summaryIn(activeWindow, keysOf(rangeKey), activeSlice.load, todayView);
 			const tiles = Object.keys(windowSlices).map((key) => {
 				const slice = windowSlices[key];
-				const totals = slice.kind === "range" ? slice.load.summary?.totals ?? emptyTotals() : totalsIn(slice.window, keysOf(key), slice.load, todayView);
+				const totals = slice.kind === "range" ? rangeSummaryOf(slice.window, slice.load).totals : totalsIn(slice.window, keysOf(key), slice.load, todayView);
 				const loading = slice.load.status === "loading";
 				const hint = key === "custom" && !customPicked && !loading ? t("usage.range.customPick") : slice.kind === "range" && slice.load.status === "error" ? "—" : void 0;
 				return {

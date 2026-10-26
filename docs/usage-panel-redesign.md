@@ -81,8 +81,15 @@ days, not a calendar window, and the host offers no arbitrary-range route.
 Data paths: windows ≤45 days merge per-day views (`/api/dsh-usage/day`, cached
 per session); longer ones — 近 6 个月 and 全部 — read one
 `/api/dsh-usage/range` aggregate whose series rows also carry each day's
-per-model split (aggregated across providers). 全部 spans the oldest retained
-day through today. Constants: `RANGE_FETCH_MAX_DAYS = 45`,
+per-model split (aggregated across providers). **Both paths stop at yesterday**:
+today is never fetched, it is folded in from the live overview (`viewsIn` for
+merged days, `withLiveToday` for an aggregate), so every window keeps counting
+with the poll and no cached aggregate can hold a stale copy of today. Caching one
+that already carried today froze the day at fetch time and made 近 6 个月 read
+*below* 近 30 天 — hence `fetchSpanOf`, which asks the range route for `from`
+through `today - 1` and skips the request entirely for a window holding nothing
+but today. 全部 spans the oldest retained day through today. Constants:
+`RANGE_FETCH_MAX_DAYS = 45`,
 `TREND_CHART_MIN_DAYS = 2` (a single day would paint one full-width bar that
 reads as a solid block, so 今日/昨日 show totals + breakdown only),
 `WINDOW_MODEL_CAP = 12` (mirrors the host's `summarizeDays` cap),
@@ -169,8 +176,11 @@ only ever nav-picked, never re-opened.
 ## Verification
 
 - `node harness/render-test.mjs` — jsdom, real bundle, saved live fixtures,
-  **60/60 checks**: eight tiles with correct labels/values/`aria-pressed`
-  (近 3 天 sums 今日 + 10-19; 近 6 个月 / 全部 read the range aggregate), six
+  **61/61 checks**: eight tiles with correct labels/values/`aria-pressed`
+  (近 3 天 sums 今日 + 10-19; 近 6 个月 / 全部 read the range aggregate, which the
+  stub answers only up to yesterday — 49.2 M / 584 calls — so their 135 M / 1251
+  tiles prove the panel folded the live today in itself, and no range fetch may
+  end on today), six
   stat cells with the cache-hit share, no chart for single-day windows, 30
   model-stacked bars + 4 gridlines + hover tooltip (incl. a 无记录 slot) for
   近 30 天, model-named legend, per-model colored channel bars, exactly 3 day

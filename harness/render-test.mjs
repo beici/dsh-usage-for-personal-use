@@ -122,19 +122,41 @@ const loadDay = async (date) => {
   if (day === undefined) throw new Error('no fixture for ' + date)
   return day
 }
-// The range stub answers any window from the saved overview: the whole-ledger
-// aggregate as the window summary, the trend rows as the per-day series. The
-// real route computes both from the merged ledger the same way.
+// The range stub mirrors the contract the panel relies on: the aggregate covers
+// the recorded days inside the requested span, summed the way the host's own
+// summarizeDays does. The panel never asks for today (it rides the live
+// overview), so a window ending today arrives with yesterday as its last row and
+// the panel folds today in itself — the regression this pins (a stale today in
+// the cached aggregate made 近 6 个月 read BELOW 近 30 天).
 const rangeCalls = []
+const dayRows = Object.entries(days).map(([date, day]) => ({ date, ...day }))
+const zeroTotals = () => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 0, cost: 0 })
+const addInto = (target, source) => { for (const key of Object.keys(target)) target[key] += source[key] ?? 0 }
 const loadRange = async (from, to) => {
   rangeCalls.push(from + ':' + to)
+  const rows = dayRows.filter((row) => row.date >= from && row.date <= to)
+  const totals = zeroTotals()
+  const providers = new Map()
+  for (const row of rows) {
+    addInto(totals, row.totals)
+    for (const channel of row.providers) {
+      let entry = providers.get(channel.provider)
+      if (entry === undefined) { entry = { provider: channel.provider, totals: zeroTotals(), models: new Map() }; providers.set(channel.provider, entry) }
+      addInto(entry.totals, channel.totals)
+      for (const model of channel.models) {
+        const bucket = entry.models.get(model.model) ?? zeroTotals()
+        addInto(bucket, model.totals)
+        entry.models.set(model.model, bucket)
+      }
+    }
+  }
   return {
     ok: true,
     from,
     to,
-    totals: overview.usage.all.totals,
-    providers: overview.usage.all.providers,
-    series: overview.usage.days.map((row) => ({ date: row.date, totals: row.totals })),
+    totals,
+    providers: [...providers.values()].map((entry) => ({ provider: entry.provider, totals: entry.totals, models: [...entry.models].map(([model, modelTotals]) => ({ model, totals: modelTotals })) })),
+    series: rows.map((row) => ({ date: row.date, totals: row.totals })),
   }
 }
 
@@ -177,12 +199,17 @@ if (tiles.length === 8) {
   for (const b of tiles) console.log('   tile:', text(b))
   // 近 3 天 = today + 2026-10-19 (10-18 未记录): 85.8M + 45.0M ≈ 131M, 1188 次调用.
   check('last3 tile sums today + 10-19', text(tiles[2]).includes('131M') && text(tiles[2]).includes('1188'), text(tiles[2]))
-  // 近 6 个月 / 全部 read the range aggregate: the stub answers with the
-  // whole-ledger totals (135M, 1251 次调用), fetched once per window on mount.
-  check('last180 tile reads the range aggregate', text(tiles[5]).includes('135M') && text(tiles[5]).includes('1251'), text(tiles[5]))
-  check('all tile reads the range aggregate', text(tiles[6]).includes('135M') && text(tiles[6]).includes('1251'), text(tiles[6]))
-  check('range fetches fired for both long windows',
-    rangeCalls.includes('2026-04-24:2026-10-20') && rangeCalls.includes('2026-09-21:2026-10-20'),
+  // 近 6 个月 / 全部 fold the live today into the range aggregate: the stub
+  // answers up to yesterday only (49.2M, 584 次调用 — the whole ledger minus
+  // today), so reading 135M / 1251 proves the panel added today itself. That is
+  // the regression pinned here: a cached aggregate that already carried today
+  // froze it at fetch time, and 近 6 个月 read BELOW 近 30 天.
+  check('last180 tile folds the live today into the aggregate', text(tiles[5]).includes('135M') && text(tiles[5]).includes('1251'), text(tiles[5]))
+  check('all tile folds the live today into the aggregate', text(tiles[6]).includes('135M') && text(tiles[6]).includes('1251'), text(tiles[6]))
+  check('range aggregate alone stops at yesterday', !text(tiles[5]).includes('49.2M'), text(tiles[5]))
+  check('range fetches stop at yesterday',
+    rangeCalls.includes('2026-04-24:2026-10-19') && rangeCalls.includes('2026-09-21:2026-10-19')
+      && !rangeCalls.some((call) => call.endsWith(':2026-10-20')),
     JSON.stringify(rangeCalls))
 }
 
@@ -315,7 +342,9 @@ if (dateInputs.length === 2) {
   check('long custom fetches one range aggregate', rangeCalls.includes('2026-01-01:2026-09-30'), JSON.stringify(rangeCalls))
   const barsLong = qa('[data-dsh-part="trend-chart"] [data-dsh-part="trend-bar"]')
   check('long custom buckets by month', barsLong.length === 9, 'bars=' + barsLong.length)
-  check('long custom tile reads the aggregate', text(tiles[7]).includes('135M'), text(tiles[7]))
+  // 2026-01-01 ~ 2026-09-30 ends before today, so the panel overlays nothing:
+  // the tile reads exactly the span's own days (09-21 + 09-22 = 4.2M, 63 calls).
+  check('long custom tile reads its span aggregate', text(tiles[7]).includes('4.2M') && text(tiles[7]).includes('63'), text(tiles[7]))
 }
 
 // ---- multi-device card ---------------------------------------------------

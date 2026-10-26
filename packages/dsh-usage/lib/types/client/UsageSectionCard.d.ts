@@ -12,9 +12,11 @@
  * per day the ledger recorded inside the window (the overview lists those
  * days); a longer one reads a single `/api/dsh-usage/range` aggregate instead
  * — one request answering the whole-window summary plus the per-day series,
- * which is what makes the multi-month windows viable. Merged days and fetched
- * ranges are cached for the session. Polling runs only while the section is
- * mounted and the tab is visible.
+ * which is what makes the multi-month windows viable. Both paths stop at
+ * yesterday and take today from the live overview, so a cached window can
+ * never disagree with the poll. Merged days and fetched ranges are cached for
+ * the session. Polling runs only while the section is mounted and the tab is
+ * visible.
  * @module @linxin666/dsh-usage/client/UsageSectionCard
  */
 import { type ReactNode } from 'react';
