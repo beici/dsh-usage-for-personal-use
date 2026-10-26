@@ -149,6 +149,14 @@ body[data-ds-dark-theme] .section {
   border-bottom-color: currentColor;
 }
 
+/* 每个 tab 面板的包裹层:面板本身就是 .section 的 flex 子项,所以它要接住
+   同一套纵向间距,否则卡片会挤成一坨。 */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .card {
   border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
   border-radius: 12px;
@@ -457,6 +465,19 @@ body[data-ds-dark-theme] .section {
 
 .trendBar:hover {
   background: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+/* 加载失败的柱子是"未知",不是"没有记录":整列描一圈虚线并铺一层斜纹。柱子本身
+   有全高,所以即使一个段都没有(失败日通常没有数据)标记也看得见;outline-offset
+   取负值让描边画在盒内,不压到相邻的柱子。 */
+.trendBar[data-failed='true'] {
+  outline: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
+  outline-offset: -1px;
+  background-image: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, currentColor 12%, transparent) 0 2px,
+    transparent 2px 5px
+  );
 }
 
 .trendSeg {

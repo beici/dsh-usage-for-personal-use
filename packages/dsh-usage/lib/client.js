@@ -57,6 +57,7 @@ window.__ModuleLoader__.load({
 			"usage.loading": "正在加载用量数据…",
 			"usage.error": "加载失败：{error}",
 			"usage.error.network": "网络请求失败，请检查与 DSH 的连接",
+			"usage.error.status": "请求失败（HTTP {status}），请稍后再试",
 			"usage.disabled": "插件已停用：勾选下方「启用插件」即可恢复统计。",
 			"usage.current": "当前",
 			"usage.today": "今日用量",
@@ -82,6 +83,7 @@ window.__ModuleLoader__.load({
 			"usage.tokens.cacheHit": "缓存命中",
 			"usage.trend": "近 30 天",
 			"usage.trend.label": "用量趋势图：{from} 至 {to}，合计 {tokens}",
+			"usage.trend.labelFailed": "用量趋势图：{from} 至 {to}，部分日期加载失败",
 			"usage.range.title": "统计窗口",
 			"usage.range.today": "今日",
 			"usage.range.yesterday": "昨日",
@@ -152,9 +154,9 @@ window.__ModuleLoader__.load({
 			"usage.device.copied": "已复制",
 			"usage.device.none": "只有本机数据",
 			"usage.device.error": "部分文件无法读取：{error}",
-			"usage.ledger.error": "账本读取异常,下面的数字可能不完整：{error}",
+			"usage.ledger.error": "账本读取异常，下面的数字可能不完整：{error}",
 			"usage.ledger.note": "说明：{note}",
-			"usage.stale": "上次刷新失败（{error}）,下面是 {time} 的数据",
+			"usage.stale": "上次刷新失败（{error}），下面是 {time} 的数据",
 			"usage.device.export": "导出本机用量",
 			"usage.device.import": "导入其他设备",
 			"usage.device.importing": "导入中…",
@@ -176,6 +178,7 @@ window.__ModuleLoader__.load({
 			"usage.loading": "Loading usage data…",
 			"usage.error": "Failed to load: {error}",
 			"usage.error.network": "Network request failed. Check the connection to DSH.",
+			"usage.error.status": "Request failed (HTTP {status}). Try again in a moment.",
 			"usage.disabled": "Plugin disabled. Tick \"Enable plugin\" below to resume statistics.",
 			"usage.current": "Current",
 			"usage.today": "Today",
@@ -201,6 +204,7 @@ window.__ModuleLoader__.load({
 			"usage.tokens.cacheHit": "Cache hit",
 			"usage.trend": "Last 30 days",
 			"usage.trend.label": "Usage trend: {from} to {to}, {tokens} in total",
+			"usage.trend.labelFailed": "Usage trend: {from} to {to}, some days failed to load",
 			"usage.range.title": "Time window",
 			"usage.range.today": "Today",
 			"usage.range.yesterday": "Yesterday",
@@ -299,7 +303,7 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 		//#region \0dsh-css:packages/dsh-usage/src/client/usage.module.css.mjs
-		const css = ".cvtkAW_section{color:inherit;--dsw-chart-1:#509fff;--dsw-chart-2:#6d9a73;--dsw-chart-3:#d69159;--dsw-chart-4:#b68cf5;--dsw-chart-5:#e07db2;--dsw-chart-6:#56adad;--dsw-chart-7:#ca7162;--dsw-chart-8:#a2b15d;--dsw-chart-9:#8179de;--dsw-chart-10:#e1bd5d;--dsw-chart-11:#d48ca5;--dsw-chart-12:#90bb75;--dsw-chart-13:#6dbb9d;--dsw-chart-14:#57b6d9;--dsw-chart-15:#c288d9;--dsw-chart-16:#8da2d3;--dsw-chart-other:#9d9d9d;flex-direction:column;gap:16px;display:flex}body[data-ds-dark-theme] .cvtkAW_section{--dsw-chart-1:#5da6ff;--dsw-chart-2:#78a17d;--dsw-chart-3:#d99965;--dsw-chart-4:#bb94f6;--dsw-chart-5:#e286b8;--dsw-chart-6:#62b3b3;--dsw-chart-7:#ce7b6d;--dsw-chart-8:#a9b769;--dsw-chart-9:#8a82e0;--dsw-chart-10:#e3c168;--dsw-chart-11:#d794ab;--dsw-chart-12:#98c07f;--dsw-chart-13:#78c0a4;--dsw-chart-14:#63bbdc;--dsw-chart-15:#c691dc;--dsw-chart-16:#95a9d6;--dsw-chart-other:#a4a4a4}@media (prefers-color-scheme:dark){.cvtkAW_section{--dsw-chart-1:#5da6ff;--dsw-chart-2:#78a17d;--dsw-chart-3:#d99965;--dsw-chart-4:#bb94f6;--dsw-chart-5:#e286b8;--dsw-chart-6:#62b3b3;--dsw-chart-7:#ce7b6d;--dsw-chart-8:#a9b769;--dsw-chart-9:#8a82e0;--dsw-chart-10:#e3c168;--dsw-chart-11:#d794ab;--dsw-chart-12:#98c07f;--dsw-chart-13:#78c0a4;--dsw-chart-14:#63bbdc;--dsw-chart-15:#c691dc;--dsw-chart-16:#95a9d6;--dsw-chart-other:#a4a4a4}}.cvtkAW_header{justify-content:space-between;align-items:center;gap:12px;display:flex}.cvtkAW_currentProvider{opacity:.75;font-size:13px}.cvtkAW_refreshBtn{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.85;background:0 0;border:1px solid;border-radius:8px;padding:4px 12px;font-size:12px;transition:opacity .12s,background-color .12s}.cvtkAW_refreshBtn:hover:not(:disabled){opacity:1;background:color-mix(in srgb, currentColor 8%, transparent)}.cvtkAW_refreshBtn:disabled{cursor:default;opacity:.5}.cvtkAW_refreshBtn:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabs{border-bottom:1px solid color-mix(in srgb, currentColor 14%, transparent);gap:4px;display:flex}.cvtkAW_tab{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.65;background:0 0;border:none;border-bottom:2px solid #0000;margin-bottom:-1px;padding:6px 14px;font-size:13px}.cvtkAW_tab:hover{opacity:.9}.cvtkAW_tab:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabActive{opacity:1;border-bottom-color:currentColor;font-weight:600}.cvtkAW_card{border:1px solid color-mix(in srgb, currentColor 14%, transparent);border-radius:12px;flex-direction:column;gap:10px;padding:14px 16px;display:flex}.cvtkAW_cardTitle{letter-spacing:.04em;text-transform:uppercase;opacity:.6;font-size:12px;font-weight:600}.cvtkAW_dayPicker{align-items:center;gap:8px;display:flex}.cvtkAW_dayPickerLabel{opacity:.6;font-size:11px}.cvtkAW_daySelect{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_daySelect:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_daySelect option,.cvtkAW_settingItem select option{background-color:var(--dsw-alias-bg-multi-select,Canvas);color:var(--dsw-alias-label-primary,CanvasText)}.cvtkAW_statRow{flex-wrap:wrap;gap:18px;display:flex}.cvtkAW_stat{text-align:center;flex-direction:column;align-items:center;gap:2px;display:flex}.cvtkAW_statValue{font-variant-numeric:tabular-nums;font-size:18px;font-weight:600}.cvtkAW_statLabel{opacity:.6;font-size:11px}.cvtkAW_providerRow{border-top:1px solid color-mix(in srgb, currentColor 8%, transparent);flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;font-size:13px;display:flex}.cvtkAW_providerRow:first-of-type{border-top:none}.cvtkAW_providerName{align-items:center;gap:8px;min-width:0;display:flex}.cvtkAW_providerTokens{font-variant-numeric:tabular-nums;opacity:.75;white-space:nowrap}.cvtkAW_providerBalance{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}.cvtkAW_currentBadge{border:1px solid color-mix(in srgb, currentColor 35%, transparent);opacity:.8;border-radius:999px;flex:none;padding:1px 7px;font-size:10px;font-weight:600}.cvtkAW_chart{flex-direction:column;gap:12px;display:flex}.cvtkAW_chartProvider{flex-direction:column;gap:5px;display:flex}.cvtkAW_chartProvider+.cvtkAW_chartProvider{border-top:1px solid color-mix(in srgb, currentColor 7%, transparent);padding-top:10px}.cvtkAW_chartHead{justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;display:flex}.cvtkAW_chartHeadName{letter-spacing:.01em;font-weight:600}.cvtkAW_chartHeadTokens{font-variant-numeric:tabular-nums;opacity:.88;white-space:nowrap;font-size:11.5px;font-weight:600}.cvtkAW_chartTokens{font-variant-numeric:tabular-nums;opacity:.6;white-space:nowrap;font-size:11px}.cvtkAW_chartBar{background:color-mix(in srgb, currentColor 8%, transparent);border-radius:999px;height:8px;display:flex;overflow:hidden}.cvtkAW_chartSeg{flex:none;height:100%;display:block}.cvtkAW_chartModel{opacity:.8;grid-template-columns:minmax(0,180px) minmax(0,1fr) minmax(0,176px);align-items:center;gap:8px;padding-left:14px;font-size:11px;display:grid}.cvtkAW_chartModelName{text-overflow:ellipsis;white-space:nowrap;opacity:.95;overflow:hidden}.cvtkAW_chartModelBar{background:color-mix(in srgb, currentColor 6%, transparent);border-radius:999px;height:4px;display:block;overflow:hidden}.cvtkAW_chartModelFill{background:color-mix(in srgb, currentColor 35%, transparent);border-radius:999px;height:100%;transition:width .3s;display:block}.cvtkAW_trendWrap{flex-direction:column;gap:6px;display:flex}.cvtkAW_trendPlot{gap:6px;height:96px;display:flex}.cvtkAW_trendYLabels{flex:none;width:34px;position:relative}.cvtkAW_trendYLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;right:0;transform:translateY(50%)}.cvtkAW_trendArea{border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);flex:1 1 0;min-width:0;position:relative}.cvtkAW_trendGridline{background:color-mix(in srgb, currentColor 8%, transparent);height:1px;position:absolute;left:0;right:0}.cvtkAW_trendBars{align-items:flex-end;gap:2px;display:flex;position:absolute;inset:0}.cvtkAW_trendBar{border-radius:2px 2px 0 0;flex-direction:column-reverse;flex:1 1 0;min-width:2px;height:100%;display:flex;overflow:hidden}.cvtkAW_trendBar:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_trendSeg{width:100%;display:block}.cvtkAW_trendSegCache{background:color-mix(in srgb, currentColor 70%, transparent)}.cvtkAW_trendSegInput{background:color-mix(in srgb, currentColor 45%, transparent)}.cvtkAW_trendSegOutput{background:color-mix(in srgb, currentColor 22%, transparent)}.cvtkAW_trendBar:hover .cvtkAW_trendSeg{filter:saturate(1.15)brightness(1.06)}.cvtkAW_trendTooltip{z-index:2;border:1px solid color-mix(in srgb, currentColor 18%, transparent);background:var(--dsw-alias-bg-floating,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;box-shadow:0 4px 14px color-mix(in srgb, currentColor 18%, transparent);border-radius:8px;flex-direction:column;gap:2px;padding:6px 9px;font-size:11px;display:flex;position:absolute;transform:translate(-50%,-100%)}.cvtkAW_trendTooltipTitle{font-weight:600}.cvtkAW_trendTooltipLine{opacity:.8}.cvtkAW_trendXLabels{height:14px;margin-left:40px;position:relative}.cvtkAW_trendXLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;transform:translate(-50%)}.cvtkAW_trendLegend{opacity:.65;flex-wrap:wrap;gap:12px;font-size:10px;display:flex}.cvtkAW_trendLegendItem{align-items:center;gap:4px;display:inline-flex}.cvtkAW_trendSwatch{border-radius:2px;width:8px;height:8px;display:inline-block}.cvtkAW_rangeGrid{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;display:grid}.cvtkAW_rangeTile{appearance:none;border:1px solid color-mix(in srgb, currentColor 14%, transparent);color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border-radius:10px;flex-direction:column;gap:2px;padding:8px 10px;transition:background-color .12s,border-color .12s;display:flex}.cvtkAW_rangeTile:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_rangeTile:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_rangeTileActive{border-color:color-mix(in srgb, currentColor 45%, transparent);background:color-mix(in srgb, currentColor 9%, transparent)}.cvtkAW_rangeTileLabel{opacity:.65;font-size:11px}.cvtkAW_rangeTileValue{font-variant-numeric:tabular-nums;font-size:16px;font-weight:600}.cvtkAW_rangeTileMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_rangeControls{flex-wrap:wrap;align-items:center;gap:12px;display:flex}.cvtkAW_dateInput{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_dateInput:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_windowHead{flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_spanLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_modelRows{flex-direction:column;gap:4px;display:flex}.cvtkAW_muted{opacity:.6;font-size:12px}.cvtkAW_voucherPreview canvas{border-radius:8px;width:100%;height:auto;display:block}.cvtkAW_buttonRow{gap:8px;display:flex}.cvtkAW_errorLine{opacity:.75;font-size:12px}.cvtkAW_noteLine{opacity:.6;font-size:11.5px}.cvtkAW_planCard{flex-direction:column;gap:8px;display:flex}.cvtkAW_planHead{justify-content:space-between;align-items:baseline;gap:10px;display:flex}.cvtkAW_planName{font-size:14px;font-weight:600}.cvtkAW_windowRow{flex-direction:column;gap:4px;display:flex}.cvtkAW_windowLabel{opacity:.8;font-variant-numeric:tabular-nums;justify-content:space-between;font-size:12px;display:flex}.cvtkAW_bar{background:color-mix(in srgb, currentColor 10%, transparent);border-radius:999px;height:6px;overflow:hidden}.cvtkAW_barFill{background:color-mix(in srgb, currentColor 55%, transparent);border-radius:999px;height:100%;transition:width .3s}.cvtkAW_barWarn{background:#d97706}.cvtkAW_barLow{background:#dc2626}.cvtkAW_resetLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_settingsGrid{flex-wrap:wrap;align-items:center;gap:16px;display:flex}.cvtkAW_settingItem{align-items:center;gap:8px;font-size:13px;display:flex}.cvtkAW_settingItem input[type=checkbox]{accent-color:currentColor}.cvtkAW_settingItem input[type=number]{border:1px solid color-mix(in srgb, currentColor 25%, transparent);width:90px;color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem select{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem input:focus-visible,.cvtkAW_settingItem select:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footCard{box-sizing:border-box;background:color-mix(in srgb, currentColor 4%, transparent);width:100%;color:inherit;border:none;border-radius:12px;margin:2px 0 4px;transition:background-color .12s;position:relative}.cvtkAW_footCard:hover{background:var(--dsw-alias-interactive-bg-hover)}.cvtkAW_footCardCollapsed{background:0 0}.cvtkAW_footMain{appearance:none;box-sizing:border-box;width:100%;color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border:none;border-radius:12px;flex-direction:column;gap:4px;padding:8px;display:flex}.cvtkAW_footMain:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle{appearance:none;width:20px;height:20px;color:inherit;cursor:pointer;opacity:.55;background:0 0;border:none;border-radius:6px;justify-content:center;align-items:center;padding:0;transition:opacity .12s,background-color .12s;display:inline-flex;position:absolute;top:6px;right:6px}.cvtkAW_footCard:hover .cvtkAW_footToggle{opacity:.8}.cvtkAW_footToggle:hover{opacity:1;background:color-mix(in srgb, currentColor 10%, transparent)}.cvtkAW_footToggle:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle svg{display:block}.cvtkAW_footHead{justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_footTitle{opacity:.65;white-space:nowrap;align-items:center;gap:6px;min-width:0;font-size:12px;display:inline-flex}.cvtkAW_footTitle svg{flex:none;display:block}.cvtkAW_footValue{font-variant-numeric:tabular-nums;white-space:nowrap;margin-right:18px;font-size:15px;font-weight:600}.cvtkAW_footLine{opacity:.7;font-variant-numeric:tabular-nums;text-overflow:ellipsis;white-space:nowrap;font-size:11px;overflow:hidden}.cvtkAW_footMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_footCardCollapsed .cvtkAW_footMain{min-height:36px;padding:7px 8px}.cvtkAW_footStrip{white-space:nowrap;align-items:center;gap:6px;padding-right:20px;font-size:12px;display:flex;overflow:hidden}.cvtkAW_footStrip svg{opacity:.65;flex:none;display:block}.cvtkAW_footStripProvider{text-overflow:ellipsis;flex:none;max-width:38%;font-weight:500;overflow:hidden}.cvtkAW_footStripLabel{opacity:.65;text-overflow:ellipsis;overflow:hidden}.cvtkAW_footStripValue{font-variant-numeric:tabular-nums;margin-left:auto;font-weight:600}[data-dsh-frame][data-sidebar-collapsed] .cvtkAW_footCard,[data-sidebar-collapsed] .cvtkAW_footCard{display:none}.cvtkAW_peakBadge,.cvtkAW_peakLine{font-variant-numeric:tabular-nums;white-space:nowrap;align-items:center;gap:4px;font-size:11px;display:inline-flex}.cvtkAW_peakBadge{flex:none}.cvtkAW_peakLine{gap:6px}.cvtkAW_peakBadge[data-peak=on],.cvtkAW_peakLine[data-peak=on]{color:var(--dsw-alias-state-error-primary,#b42318)}.cvtkAW_peakBadge[data-peak=off],.cvtkAW_peakLine[data-peak=off]{color:var(--dsw-alias-state-success-primary,#067647)}.cvtkAW_peakDot{background:currentColor;border-radius:50%;flex:none;width:6px;height:6px}.cvtkAW_footPeak{white-space:nowrap;align-items:center;gap:5px;font-size:10px;display:flex;overflow:hidden}.cvtkAW_footPeakClock{opacity:.7;font-variant-numeric:tabular-nums}";
+		const css = ".cvtkAW_section{color:inherit;--dsw-chart-1:#509fff;--dsw-chart-2:#6d9a73;--dsw-chart-3:#d69159;--dsw-chart-4:#b68cf5;--dsw-chart-5:#e07db2;--dsw-chart-6:#56adad;--dsw-chart-7:#ca7162;--dsw-chart-8:#a2b15d;--dsw-chart-9:#8179de;--dsw-chart-10:#e1bd5d;--dsw-chart-11:#d48ca5;--dsw-chart-12:#90bb75;--dsw-chart-13:#6dbb9d;--dsw-chart-14:#57b6d9;--dsw-chart-15:#c288d9;--dsw-chart-16:#8da2d3;--dsw-chart-other:#9d9d9d;flex-direction:column;gap:16px;display:flex}body[data-ds-dark-theme] .cvtkAW_section{--dsw-chart-1:#5da6ff;--dsw-chart-2:#78a17d;--dsw-chart-3:#d99965;--dsw-chart-4:#bb94f6;--dsw-chart-5:#e286b8;--dsw-chart-6:#62b3b3;--dsw-chart-7:#ce7b6d;--dsw-chart-8:#a9b769;--dsw-chart-9:#8a82e0;--dsw-chart-10:#e3c168;--dsw-chart-11:#d794ab;--dsw-chart-12:#98c07f;--dsw-chart-13:#78c0a4;--dsw-chart-14:#63bbdc;--dsw-chart-15:#c691dc;--dsw-chart-16:#95a9d6;--dsw-chart-other:#a4a4a4}@media (prefers-color-scheme:dark){.cvtkAW_section{--dsw-chart-1:#5da6ff;--dsw-chart-2:#78a17d;--dsw-chart-3:#d99965;--dsw-chart-4:#bb94f6;--dsw-chart-5:#e286b8;--dsw-chart-6:#62b3b3;--dsw-chart-7:#ce7b6d;--dsw-chart-8:#a9b769;--dsw-chart-9:#8a82e0;--dsw-chart-10:#e3c168;--dsw-chart-11:#d794ab;--dsw-chart-12:#98c07f;--dsw-chart-13:#78c0a4;--dsw-chart-14:#63bbdc;--dsw-chart-15:#c691dc;--dsw-chart-16:#95a9d6;--dsw-chart-other:#a4a4a4}}.cvtkAW_header{justify-content:space-between;align-items:center;gap:12px;display:flex}.cvtkAW_currentProvider{opacity:.75;font-size:13px}.cvtkAW_refreshBtn{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.85;background:0 0;border:1px solid;border-radius:8px;padding:4px 12px;font-size:12px;transition:opacity .12s,background-color .12s}.cvtkAW_refreshBtn:hover:not(:disabled){opacity:1;background:color-mix(in srgb, currentColor 8%, transparent)}.cvtkAW_refreshBtn:disabled{cursor:default;opacity:.5}.cvtkAW_refreshBtn:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabs{border-bottom:1px solid color-mix(in srgb, currentColor 14%, transparent);gap:4px;display:flex}.cvtkAW_tab{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.65;background:0 0;border:none;border-bottom:2px solid #0000;margin-bottom:-1px;padding:6px 14px;font-size:13px}.cvtkAW_tab:hover{opacity:.9}.cvtkAW_tab:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabActive{opacity:1;border-bottom-color:currentColor;font-weight:600}.cvtkAW_panel{flex-direction:column;gap:16px;display:flex}.cvtkAW_card{border:1px solid color-mix(in srgb, currentColor 14%, transparent);border-radius:12px;flex-direction:column;gap:10px;padding:14px 16px;display:flex}.cvtkAW_cardTitle{letter-spacing:.04em;text-transform:uppercase;opacity:.6;font-size:12px;font-weight:600}.cvtkAW_dayPicker{align-items:center;gap:8px;display:flex}.cvtkAW_dayPickerLabel{opacity:.6;font-size:11px}.cvtkAW_daySelect{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_daySelect:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_daySelect option,.cvtkAW_settingItem select option{background-color:var(--dsw-alias-bg-multi-select,Canvas);color:var(--dsw-alias-label-primary,CanvasText)}.cvtkAW_statRow{flex-wrap:wrap;gap:18px;display:flex}.cvtkAW_stat{text-align:center;flex-direction:column;align-items:center;gap:2px;display:flex}.cvtkAW_statValue{font-variant-numeric:tabular-nums;font-size:18px;font-weight:600}.cvtkAW_statLabel{opacity:.6;font-size:11px}.cvtkAW_providerRow{border-top:1px solid color-mix(in srgb, currentColor 8%, transparent);flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;font-size:13px;display:flex}.cvtkAW_providerRow:first-of-type{border-top:none}.cvtkAW_providerName{align-items:center;gap:8px;min-width:0;display:flex}.cvtkAW_providerTokens{font-variant-numeric:tabular-nums;opacity:.75;white-space:nowrap}.cvtkAW_providerBalance{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}.cvtkAW_currentBadge{border:1px solid color-mix(in srgb, currentColor 35%, transparent);opacity:.8;border-radius:999px;flex:none;padding:1px 7px;font-size:10px;font-weight:600}.cvtkAW_chart{flex-direction:column;gap:12px;display:flex}.cvtkAW_chartProvider{flex-direction:column;gap:5px;display:flex}.cvtkAW_chartProvider+.cvtkAW_chartProvider{border-top:1px solid color-mix(in srgb, currentColor 7%, transparent);padding-top:10px}.cvtkAW_chartHead{justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;display:flex}.cvtkAW_chartHeadName{letter-spacing:.01em;font-weight:600}.cvtkAW_chartHeadTokens{font-variant-numeric:tabular-nums;opacity:.88;white-space:nowrap;font-size:11.5px;font-weight:600}.cvtkAW_chartTokens{font-variant-numeric:tabular-nums;opacity:.6;white-space:nowrap;font-size:11px}.cvtkAW_chartBar{background:color-mix(in srgb, currentColor 8%, transparent);border-radius:999px;height:8px;display:flex;overflow:hidden}.cvtkAW_chartSeg{flex:none;height:100%;display:block}.cvtkAW_chartModel{opacity:.8;grid-template-columns:minmax(0,180px) minmax(0,1fr) minmax(0,176px);align-items:center;gap:8px;padding-left:14px;font-size:11px;display:grid}.cvtkAW_chartModelName{text-overflow:ellipsis;white-space:nowrap;opacity:.95;overflow:hidden}.cvtkAW_chartModelBar{background:color-mix(in srgb, currentColor 6%, transparent);border-radius:999px;height:4px;display:block;overflow:hidden}.cvtkAW_chartModelFill{background:color-mix(in srgb, currentColor 35%, transparent);border-radius:999px;height:100%;transition:width .3s;display:block}.cvtkAW_trendWrap{flex-direction:column;gap:6px;display:flex}.cvtkAW_trendPlot{gap:6px;height:96px;display:flex}.cvtkAW_trendYLabels{flex:none;width:34px;position:relative}.cvtkAW_trendYLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;right:0;transform:translateY(50%)}.cvtkAW_trendArea{border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);flex:1 1 0;min-width:0;position:relative}.cvtkAW_trendGridline{background:color-mix(in srgb, currentColor 8%, transparent);height:1px;position:absolute;left:0;right:0}.cvtkAW_trendBars{align-items:flex-end;gap:2px;display:flex;position:absolute;inset:0}.cvtkAW_trendBar{border-radius:2px 2px 0 0;flex-direction:column-reverse;flex:1 1 0;min-width:2px;height:100%;display:flex;overflow:hidden}.cvtkAW_trendBar:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_trendBar[data-failed=true]{outline:1px dashed color-mix(in srgb, currentColor 45%, transparent);outline-offset:-1px;background-image:repeating-linear-gradient(135deg, color-mix(in srgb, currentColor 12%, transparent) 0 2px, transparent 2px 5px)}.cvtkAW_trendSeg{width:100%;display:block}.cvtkAW_trendSegCache{background:color-mix(in srgb, currentColor 70%, transparent)}.cvtkAW_trendSegInput{background:color-mix(in srgb, currentColor 45%, transparent)}.cvtkAW_trendSegOutput{background:color-mix(in srgb, currentColor 22%, transparent)}.cvtkAW_trendBar:hover .cvtkAW_trendSeg{filter:saturate(1.15)brightness(1.06)}.cvtkAW_trendTooltip{z-index:2;border:1px solid color-mix(in srgb, currentColor 18%, transparent);background:var(--dsw-alias-bg-floating,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;box-shadow:0 4px 14px color-mix(in srgb, currentColor 18%, transparent);border-radius:8px;flex-direction:column;gap:2px;padding:6px 9px;font-size:11px;display:flex;position:absolute;transform:translate(-50%,-100%)}.cvtkAW_trendTooltipTitle{font-weight:600}.cvtkAW_trendTooltipLine{opacity:.8}.cvtkAW_trendXLabels{height:14px;margin-left:40px;position:relative}.cvtkAW_trendXLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;transform:translate(-50%)}.cvtkAW_trendLegend{opacity:.65;flex-wrap:wrap;gap:12px;font-size:10px;display:flex}.cvtkAW_trendLegendItem{align-items:center;gap:4px;display:inline-flex}.cvtkAW_trendSwatch{border-radius:2px;width:8px;height:8px;display:inline-block}.cvtkAW_rangeGrid{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;display:grid}.cvtkAW_rangeTile{appearance:none;border:1px solid color-mix(in srgb, currentColor 14%, transparent);color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border-radius:10px;flex-direction:column;gap:2px;padding:8px 10px;transition:background-color .12s,border-color .12s;display:flex}.cvtkAW_rangeTile:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_rangeTile:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_rangeTileActive{border-color:color-mix(in srgb, currentColor 45%, transparent);background:color-mix(in srgb, currentColor 9%, transparent)}.cvtkAW_rangeTileLabel{opacity:.65;font-size:11px}.cvtkAW_rangeTileValue{font-variant-numeric:tabular-nums;font-size:16px;font-weight:600}.cvtkAW_rangeTileMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_rangeControls{flex-wrap:wrap;align-items:center;gap:12px;display:flex}.cvtkAW_dateInput{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_dateInput:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_windowHead{flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_spanLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_modelRows{flex-direction:column;gap:4px;display:flex}.cvtkAW_muted{opacity:.6;font-size:12px}.cvtkAW_voucherPreview canvas{border-radius:8px;width:100%;height:auto;display:block}.cvtkAW_buttonRow{gap:8px;display:flex}.cvtkAW_errorLine{opacity:.75;font-size:12px}.cvtkAW_noteLine{opacity:.6;font-size:11.5px}.cvtkAW_planCard{flex-direction:column;gap:8px;display:flex}.cvtkAW_planHead{justify-content:space-between;align-items:baseline;gap:10px;display:flex}.cvtkAW_planName{font-size:14px;font-weight:600}.cvtkAW_windowRow{flex-direction:column;gap:4px;display:flex}.cvtkAW_windowLabel{opacity:.8;font-variant-numeric:tabular-nums;justify-content:space-between;font-size:12px;display:flex}.cvtkAW_bar{background:color-mix(in srgb, currentColor 10%, transparent);border-radius:999px;height:6px;overflow:hidden}.cvtkAW_barFill{background:color-mix(in srgb, currentColor 55%, transparent);border-radius:999px;height:100%;transition:width .3s}.cvtkAW_barWarn{background:#d97706}.cvtkAW_barLow{background:#dc2626}.cvtkAW_resetLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_settingsGrid{flex-wrap:wrap;align-items:center;gap:16px;display:flex}.cvtkAW_settingItem{align-items:center;gap:8px;font-size:13px;display:flex}.cvtkAW_settingItem input[type=checkbox]{accent-color:currentColor}.cvtkAW_settingItem input[type=number]{border:1px solid color-mix(in srgb, currentColor 25%, transparent);width:90px;color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem select{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem input:focus-visible,.cvtkAW_settingItem select:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footCard{box-sizing:border-box;background:color-mix(in srgb, currentColor 4%, transparent);width:100%;color:inherit;border:none;border-radius:12px;margin:2px 0 4px;transition:background-color .12s;position:relative}.cvtkAW_footCard:hover{background:var(--dsw-alias-interactive-bg-hover)}.cvtkAW_footCardCollapsed{background:0 0}.cvtkAW_footMain{appearance:none;box-sizing:border-box;width:100%;color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border:none;border-radius:12px;flex-direction:column;gap:4px;padding:8px;display:flex}.cvtkAW_footMain:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle{appearance:none;width:20px;height:20px;color:inherit;cursor:pointer;opacity:.55;background:0 0;border:none;border-radius:6px;justify-content:center;align-items:center;padding:0;transition:opacity .12s,background-color .12s;display:inline-flex;position:absolute;top:6px;right:6px}.cvtkAW_footCard:hover .cvtkAW_footToggle{opacity:.8}.cvtkAW_footToggle:hover{opacity:1;background:color-mix(in srgb, currentColor 10%, transparent)}.cvtkAW_footToggle:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle svg{display:block}.cvtkAW_footHead{justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_footTitle{opacity:.65;white-space:nowrap;align-items:center;gap:6px;min-width:0;font-size:12px;display:inline-flex}.cvtkAW_footTitle svg{flex:none;display:block}.cvtkAW_footValue{font-variant-numeric:tabular-nums;white-space:nowrap;margin-right:18px;font-size:15px;font-weight:600}.cvtkAW_footLine{opacity:.7;font-variant-numeric:tabular-nums;text-overflow:ellipsis;white-space:nowrap;font-size:11px;overflow:hidden}.cvtkAW_footMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_footCardCollapsed .cvtkAW_footMain{min-height:36px;padding:7px 8px}.cvtkAW_footStrip{white-space:nowrap;align-items:center;gap:6px;padding-right:20px;font-size:12px;display:flex;overflow:hidden}.cvtkAW_footStrip svg{opacity:.65;flex:none;display:block}.cvtkAW_footStripProvider{text-overflow:ellipsis;flex:none;max-width:38%;font-weight:500;overflow:hidden}.cvtkAW_footStripLabel{opacity:.65;text-overflow:ellipsis;overflow:hidden}.cvtkAW_footStripValue{font-variant-numeric:tabular-nums;margin-left:auto;font-weight:600}[data-dsh-frame][data-sidebar-collapsed] .cvtkAW_footCard,[data-sidebar-collapsed] .cvtkAW_footCard{display:none}.cvtkAW_peakBadge,.cvtkAW_peakLine{font-variant-numeric:tabular-nums;white-space:nowrap;align-items:center;gap:4px;font-size:11px;display:inline-flex}.cvtkAW_peakBadge{flex:none}.cvtkAW_peakLine{gap:6px}.cvtkAW_peakBadge[data-peak=on],.cvtkAW_peakLine[data-peak=on]{color:var(--dsw-alias-state-error-primary,#b42318)}.cvtkAW_peakBadge[data-peak=off],.cvtkAW_peakLine[data-peak=off]{color:var(--dsw-alias-state-success-primary,#067647)}.cvtkAW_peakDot{background:currentColor;border-radius:50%;flex:none;width:6px;height:6px}.cvtkAW_footPeak{white-space:nowrap;align-items:center;gap:5px;font-size:10px;display:flex;overflow:hidden}.cvtkAW_footPeakClock{opacity:.7;font-variant-numeric:tabular-nums}";
 		const tagId = "@linxin666/dsh-usage/packages/dsh-usage/src/client/usage.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -354,6 +358,7 @@ window.__ModuleLoader__.load({
 			"modelRows": "cvtkAW_modelRows",
 			"muted": "cvtkAW_muted",
 			"noteLine": "cvtkAW_noteLine",
+			"panel": "cvtkAW_panel",
 			"peakBadge": "cvtkAW_peakBadge",
 			"peakDot": "cvtkAW_peakDot",
 			"peakLine": "cvtkAW_peakLine",
@@ -507,20 +512,41 @@ window.__ModuleLoader__.load({
 			}
 			return hash >>> 0;
 		}
+		/** Lowest share of the slot hue a shade keeps, in percent. */
+		const SHADE_MIN_PERCENT = 58;
+		/** Shades a slot can carry: the hue itself plus white and black at every step. */
+		const SHADE_COUNT = 71;
+		/**
+		* One slot in one shade: shade 0 is the slot's own hue (`--dsw-chart-N`), every
+		* other shade mixes that hue toward white or black, walking 58 % … 92 % of the
+		* hue. A shade therefore reads as the same hue in a lighter or darker tone —
+		* apart from its slot neighbour, but never so far that it leaves the light/dark
+		* skin the palette defines.
+		*/
+		function slotColor(slot, shade) {
+			const hue = `var(--dsw-chart-${slot + 1})`;
+			if (shade === 0) return hue;
+			return `color-mix(in srgb, ${hue} ${SHADE_MIN_PERCENT + Math.ceil(shade / 2) - 1}%, ${shade % 2 === 1 ? "white" : "black"})`;
+		}
 		/**
 		* Assign one palette color per normalized model name.
 		*
-		* The slot is `hash(name) % paletteSize` and nothing else — deliberately not
+		* The hue slot is `hash(name) % paletteSize` and nothing else — deliberately not
 		* "the next free slot", which made a name's hue depend on which other names
 		* happened to be in the same window: two models took chart-1 and chart-2, and a
 		* window showing only the second recolored it to chart-1. Stability is the whole
 		* promise of this table (the trend bars, the channel bars and the model rows
 		* share it, and the user learns the colors), so a collision between two of the
-		* sixteen hues is accepted rather than resolved by shifting someone else's hue.
+		* sixteen hues is resolved by the shade axis instead of by shifting someone
+		* else's hue: the bits above the slot pick a white/black mix of that same hue,
+		* which keeps the pair apart without letting any other name move.
 		*/
 		function assignModelColors(models) {
 			const colors = /* @__PURE__ */ new Map();
-			for (const name of new Set(models)) colors.set(name, `var(--dsw-chart-${hashOf(name) % 16 + 1})`);
+			for (const name of new Set(models)) {
+				const hash = hashOf(name);
+				colors.set(name, slotColor(hash % 16, Math.floor(hash / 16) % SHADE_COUNT));
+			}
 			return colors;
 		}
 		/**
@@ -755,18 +781,25 @@ window.__ModuleLoader__.load({
 					label: t("usage.tokens.output")
 				}
 			];
+			const anyFailed = buckets.some((bucket) => bucket.failed);
+			const chartFrom = buckets[0].from;
+			const chartTo = buckets[buckets.length - 1].to;
+			const chartTotal = buckets.reduce((sum, bucket) => sum + totalOf$1(bucket.totals), 0);
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: usage_module_css_default.trendWrap,
 				"data-dsh-part": "trend-chart",
-				role: "img",
-				"aria-label": t("usage.trend.label", {
-					from: buckets[0].from,
-					to: buckets[buckets.length - 1].to,
-					tokens: formatTokens(buckets.reduce((sum, bucket) => sum + totalOf$1(bucket.totals), 0))
-				}),
 				children: [
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: usage_module_css_default.trendPlot,
+						role: "img",
+						"aria-label": anyFailed ? t("usage.trend.labelFailed", {
+							from: chartFrom,
+							to: chartTo
+						}) : t("usage.trend.label", {
+							from: chartFrom,
+							to: chartTo,
+							tokens: formatTokens(chartTotal)
+						}),
 						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 							className: usage_module_css_default.trendYLabels,
 							"aria-hidden": "true",
@@ -883,6 +916,7 @@ window.__ModuleLoader__.load({
 					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 						className: usage_module_css_default.trendLegend,
+						"data-dsh-part": "trend-legend",
 						children: legendEntries.map((entry) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 							className: usage_module_css_default.trendLegendItem,
 							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
@@ -2021,7 +2055,11 @@ window.__ModuleLoader__.load({
 		* value rather than a date, so it can never collide with a day key.
 		*/
 		const BANK_ALL_DAYS = "all";
-		/** Longest span the render walk will enumerate (the host's own retention limit). */
+		/**
+		* Longest span the render walk will enumerate (the host's own retention limit).
+		* This is the only cap on a window: the picker clamps its ends to the recorded
+		* days instead, so a pair can describe the whole ledger.
+		*/
 		const TREND_MAX_DAYS = 731;
 		/**
 		* The trend chart needs at least two columns to say anything: a single-day
@@ -2034,6 +2072,14 @@ window.__ModuleLoader__.load({
 		const WINDOW_MODEL_CAP = 12;
 		/** Per-day requests one window may keep in flight. */
 		const DAY_FETCH_CONCURRENCY = 6;
+		/**
+		* Retries one failed day or window gets before the panel leaves it alone. A
+		* dropped request is worth another try; an endpoint that keeps answering 500 is
+		* not, and the refresh button stays the user's way to ask again.
+		*/
+		const RETRY_MAX_ATTEMPTS = 5;
+		/** Ceiling of the retry backoff, so a dead endpoint never spins a fast timer. */
+		const RETRY_BACKOFF_MAX_MS = 6e4;
 		function formatTime(ms) {
 			try {
 				return new Date(ms).toLocaleTimeString();
@@ -2109,9 +2155,17 @@ window.__ModuleLoader__.load({
 		* A transport error as the panel states it: the wire's own words ("Failed to
 		* fetch", "ECONNREFUSED", a timeout) are diagnostics, not something a user can
 		* act on, so the network-shaped ones read as one localized sentence instead.
+		*
+		* A non-2xx answer arrives as `usage api/… failed: 500` — the internal route and
+		* a bare status code, which used to be printed verbatim next to the translated
+		* sentence around it. The status is the one part worth repeating, so it gets its
+		* own sentence; anything else still falls through unchanged (callers keep the
+		* raw text in a title attribute, so the diagnostic is never lost).
 		*/
 		function describeError(error) {
-			return /failed to fetch|networkerror|network error|econnrefused|econnreset|enotfound|socket hang up|load failed|timeout|timed out/i.test(error) ? t("usage.error.network") : error;
+			if (/failed to fetch|networkerror|network error|econnrefused|econnreset|enotfound|socket hang up|load failed|timeout|timed out/i.test(error)) return t("usage.error.network");
+			const status = /failed: (\d{3})\b/.exec(error);
+			return status === null ? error : t("usage.error.status", { status: status[1] });
 		}
 		/** Units for plan-window keys the dictionary does not name (`7_day`, `12_hour`). */
 		const PLAN_WINDOW_UNIT_KEYS = {
@@ -2226,7 +2280,7 @@ window.__ModuleLoader__.load({
 					return;
 				}
 				let cancelled = false;
-				setLoad({
+				setLoad((previous) => previous.status === "ready" ? previous : {
 					status: "loading",
 					days,
 					failedDates
@@ -2236,11 +2290,12 @@ window.__ModuleLoader__.load({
 				mapPool(missing, DAY_FETCH_CONCURRENCY, async (date) => {
 					try {
 						days[date] = await requestDay(loadDay, date, cache);
-						if (!cancelled) setLoad({
-							status: "loading",
+						if (!cancelled) setLoad((previous) => ({
+							status: previous.status === "ready" ? "ready" : "loading",
 							days: { ...days },
-							failedDates: [...failedDates]
-						});
+							failedDates: [...failedDates],
+							...previous.status === "ready" && previous.error !== void 0 ? { error: previous.error } : {}
+						}));
 					} catch (error) {
 						failed += 1;
 						failedDates.push(date);
@@ -2314,15 +2369,30 @@ window.__ModuleLoader__.load({
 			rangeResults.clear();
 		}
 		/**
-		* Fetch one window's aggregate. An empty or absent window stays idle (the
-		* untouched custom range fetches nothing), a cached range resolves
-		* immediately, and a superseded window never lands because the effect
-		* cancels. `epoch` invalidates the cache the same way the day cache's does.
+		* Fetch one window's aggregate. An absent window stays idle (the untouched
+		* custom range fetches nothing), a cached range resolves immediately, and a
+		* superseded window never lands because the effect cancels. `epoch`
+		* invalidates the cache the same way the day cache's does.
+		*
+		* A window that exists but has nothing to fetch — one whose whole span is
+		* today, so `fetchSpanOf` returns nothing — is a loaded window, not a pending
+		* one, and resolves to an empty ready series. Staying idle left the 全部 tile
+		* at "…" forever on a ledger whose oldest day is today: the tile treats idle as
+		* pending, and nothing was ever going to move it.
 		*/
-		function useRangeData(loadRange, window, epoch, retry) {
-			const key = window === void 0 || window.from === "" || window.to === "" ? "" : `${window.from}:${window.to}`;
+		function useRangeData(loadRange, window, today, epoch, retry) {
+			const span = window === void 0 ? void 0 : fetchSpanOf(window, today);
+			const empty = window !== void 0 && span === void 0;
+			const key = span === void 0 ? "" : `${span.from}:${span.to}`;
 			const [load, setLoad] = (0, react.useState)({ status: "idle" });
 			(0, react.useEffect)(() => {
+				if (empty) {
+					setLoad((previous) => previous.status === "ready" && previous.series?.length === 0 ? previous : {
+						status: "ready",
+						series: []
+					});
+					return;
+				}
 				if (key === "") {
 					setLoad((previous) => previous.status === "idle" ? previous : { status: "idle" });
 					return;
@@ -2337,7 +2407,7 @@ window.__ModuleLoader__.load({
 					return;
 				}
 				let cancelled = false;
-				setLoad({ status: "loading" });
+				setLoad((previous) => previous.status === "ready" || previous.status === "error" ? previous : { status: "loading" });
 				requestRange(loadRange, key.slice(0, 10), key.slice(11)).then((response) => {
 					if (cancelled) return;
 					const stored = rangeResults.get(key);
@@ -2360,6 +2430,7 @@ window.__ModuleLoader__.load({
 				};
 			}, [
 				key,
+				empty,
 				loadRange,
 				epoch,
 				retry
@@ -2741,7 +2812,7 @@ window.__ModuleLoader__.load({
 		* four standard windows can be compared at a glance without switching.
 		*/
 		function RangeStrip(props) {
-			const { rangeKey, onSelect, tiles, custom, onCustomFrom, onCustomTo, today } = props;
+			const { rangeKey, onSelect, tiles, custom, onCustomFrom, onCustomTo, today, min } = props;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: usage_module_css_default.card,
 				"data-dsh-part": "range-card",
@@ -2785,6 +2856,7 @@ window.__ModuleLoader__.load({
 								type: "date",
 								className: usage_module_css_default.dateInput,
 								value: custom.from,
+								min,
 								max: custom.to === "" || custom.to > today ? today : custom.to,
 								onChange: (event) => {
 									onCustomFrom(event.target.value === "" ? void 0 : event.target.value);
@@ -2922,6 +2994,18 @@ window.__ModuleLoader__.load({
 				})
 			});
 		}
+		/** The three panels, in tab order; the tablist's roving focus walks this list. */
+		const TABS = [
+			"usage",
+			"plans",
+			"bank"
+		];
+		/** Label key per tab, so the tablist renders from `TABS` instead of three copies. */
+		const TAB_LABEL_KEYS = {
+			usage: "usage.tab.usage",
+			plans: "usage.tab.plans",
+			bank: "usage.tab.bank"
+		};
 		/** The section component; the slot merges the face into these props. */
 		function UsageSectionCard(props) {
 			const { store, poll, refresh, loadDay, loadRange, settings, deviceSync } = props;
@@ -2942,6 +3026,19 @@ window.__ModuleLoader__.load({
 			}
 			const [cacheEpoch, setCacheEpoch] = (0, react.useState)(0);
 			const [retryTick, setRetryTick] = (0, react.useState)(0);
+			const tabRefs = (0, react.useRef)({
+				usage: null,
+				plans: null,
+				bank: null
+			});
+			const onTabKeyDown = (event) => {
+				const at = TABS.indexOf(tab);
+				const next = event.key === "ArrowRight" ? TABS[(at + 1) % TABS.length] : event.key === "ArrowLeft" ? TABS[(at + TABS.length - 1) % TABS.length] : event.key === "Home" ? TABS[0] : event.key === "End" ? TABS[TABS.length - 1] : void 0;
+				if (next === void 0) return;
+				event.preventDefault();
+				setTab(next);
+				tabRefs.current[next]?.focus();
+			};
 			const [, bumpSettings] = (0, react.useState)(0);
 			(0, react.useEffect)(() => settings.subscribe(() => bumpSettings((count) => count + 1)), [settings]);
 			const enabled = settingsValue.enabled ?? true;
@@ -3019,9 +3116,9 @@ window.__ModuleLoader__.load({
 			const customIsRange = (customPicked ? dateKeysBetween(customWindow.from, customWindow.to).length : 0) > RANGE_FETCH_MAX_DAYS;
 			const last30Days = useWindowDays(loadDay, recordedIn(last30Window, recorded, todayDate), cache, cacheEpoch, retryTick);
 			const customDays = useWindowDays(loadDay, customPicked && !customIsRange ? recordedIn(customWindow, recorded, todayDate) : [], cache, cacheEpoch, retryTick);
-			const last180Load = useRangeData(loadRange, fetchSpanOf(last180Window, todayDate), cacheEpoch, retryTick);
-			const allLoad = useRangeData(loadRange, fetchSpanOf(allWindow, todayDate), cacheEpoch, retryTick);
-			const customRangeLoad = useRangeData(loadRange, customPicked && customIsRange ? fetchSpanOf(customWindow, todayDate) : void 0, cacheEpoch, retryTick);
+			const last180Load = useRangeData(loadRange, last180Window, todayDate, cacheEpoch, retryTick);
+			const allLoad = useRangeData(loadRange, allWindow, todayDate, cacheEpoch, retryTick);
+			const customRangeLoad = useRangeData(loadRange, customPicked && customIsRange ? customWindow : void 0, todayDate, cacheEpoch, retryTick);
 			/** One range-kind window as the panel states it: the fetched aggregate plus the live day. */
 			const rangeSummaryOf = (window, load) => withLiveToday({
 				from: window.from,
@@ -3032,11 +3129,24 @@ window.__ModuleLoader__.load({
 				}
 			}, window, todayView);
 			const loadsFailed = last30Days.error !== void 0 || customDays.error !== void 0 || last180Load.status === "error" || allLoad.status === "error" || customRangeLoad.status === "error";
+			const retryAttempts = (0, react.useRef)(0);
 			(0, react.useEffect)(() => {
-				if (!loadsFailed) return void 0;
-				const timer = window.setInterval(() => setRetryTick((tick) => tick + 1), pollIntervalMs);
-				return () => window.clearInterval(timer);
-			}, [loadsFailed, pollIntervalMs]);
+				if (!loadsFailed) {
+					retryAttempts.current = 0;
+					return;
+				}
+				if (retryAttempts.current >= RETRY_MAX_ATTEMPTS) return void 0;
+				const delay = Math.min(pollIntervalMs * 2 ** retryAttempts.current, RETRY_BACKOFF_MAX_MS);
+				const timer = window.setTimeout(() => {
+					retryAttempts.current += 1;
+					setRetryTick((tick) => tick + 1);
+				}, delay);
+				return () => window.clearTimeout(timer);
+			}, [
+				loadsFailed,
+				pollIntervalMs,
+				retryTick
+			]);
 			const dayOptions = snapshot === null ? [] : [...new Set([todayDate, ...snapshot.usage.availableDays ?? []].filter((date) => date !== void 0 && date !== ""))].sort().reverse();
 			const bankSelection = bankDay !== void 0 && dayOptions.includes(bankDay) ? bankDay : void 0;
 			const bankDayLoad = useDayView(loadDay, bankSelection, todayDate, cache, cacheEpoch, retryTick);
@@ -3064,7 +3174,8 @@ window.__ModuleLoader__.load({
 				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 					className: usage_module_css_default.muted,
 					"data-dsh-part": "status-line",
-					children: !enabled ? t("usage.disabled") : ui.status === "error" ? t("usage.error", { error: ui.error ?? "" }) : t("usage.loading")
+					title: ui.status === "error" ? ui.error ?? "" : void 0,
+					children: !enabled ? t("usage.disabled") : ui.status === "error" ? t("usage.error", { error: describeError(ui.error ?? "") }) : t("usage.loading")
 				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(SettingsRow, {
 					settings,
 					snapshot: settingsSnapshot.status === "ready" ? settingsSnapshot : void 0,
@@ -3156,6 +3267,7 @@ window.__ModuleLoader__.load({
 			const seriesByDate = activeSlice.kind === "range" && activeSlice.load.series !== void 0 ? new Map(activeSlice.load.series.map((row) => [row.date, row])) : void 0;
 			const daysByDate = activeSlice.kind === "days" ? activeSlice.load.days : void 0;
 			const failedDates = activeSlice.kind === "days" ? new Set(activeSlice.load.failedDates) : void 0;
+			const rangeFailed = activeSlice.kind === "range" && activeSlice.load.status === "error";
 			const trendRowsRaw = rangeKey === "custom" && !customPicked ? [] : dateKeysBetween(activeWindow.from, activeWindow.to).map((date) => {
 				if (todayView !== void 0 && date === todayView.date) return {
 					date,
@@ -3179,7 +3291,7 @@ window.__ModuleLoader__.load({
 				} : {
 					date,
 					totals: emptyTotals(),
-					...failedDates?.has(date) === true ? { failed: true } : {}
+					...failedDates?.has(date) === true || rangeFailed ? { failed: true } : {}
 				};
 			});
 			const modelBuckets = normalizeModelRows([...summaryRaw.providers.flatMap((row) => row.models.map((model) => ({
@@ -3231,6 +3343,7 @@ window.__ModuleLoader__.load({
 						className: usage_module_css_default.errorLine,
 						role: "status",
 						"data-dsh-part": "stale-line",
+						title: ui.error ?? "",
 						children: t("usage.stale", {
 							error: describeError(ui.error ?? ""),
 							time: formatTime(snapshot.updatedAt)
@@ -3248,194 +3361,205 @@ window.__ModuleLoader__.load({
 						"data-dsh-part": "ledger-note",
 						children: t("usage.ledger.note", { note: snapshot.usage.ledgerNote })
 					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 						className: usage_module_css_default.tabs,
 						role: "tablist",
 						"data-dsh-part": "tabs",
-						children: [
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-								type: "button",
-								role: "tab",
-								"aria-selected": tab === "usage",
-								className: tab === "usage" ? `${usage_module_css_default.tab} ${usage_module_css_default.tabActive}` : usage_module_css_default.tab,
-								onClick: () => setTab("usage"),
-								children: t("usage.tab.usage")
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-								type: "button",
-								role: "tab",
-								"aria-selected": tab === "plans",
-								className: tab === "plans" ? `${usage_module_css_default.tab} ${usage_module_css_default.tabActive}` : usage_module_css_default.tab,
-								onClick: () => setTab("plans"),
-								children: t("usage.tab.plans")
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-								type: "button",
-								role: "tab",
-								"aria-selected": tab === "bank",
-								className: tab === "bank" ? `${usage_module_css_default.tab} ${usage_module_css_default.tabActive}` : usage_module_css_default.tab,
-								onClick: () => setTab("bank"),
-								children: t("usage.tab.bank")
-							})
-						]
+						children: TABS.map((key) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+							type: "button",
+							role: "tab",
+							id: "dsh-usage-tab-" + key,
+							"aria-controls": "dsh-usage-panel-" + key,
+							"aria-selected": tab === key,
+							tabIndex: tab === key ? 0 : -1,
+							ref: (element) => {
+								tabRefs.current[key] = element;
+							},
+							className: tab === key ? `${usage_module_css_default.tab} ${usage_module_css_default.tabActive}` : usage_module_css_default.tab,
+							onClick: () => {
+								setTab(key);
+							},
+							onKeyDown: onTabKeyDown,
+							children: t(TAB_LABEL_KEYS[key])
+						}, key))
 					}),
-					tab === "usage" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)(RangeStrip, {
-							rangeKey,
-							onSelect: setRangeKey,
-							tiles,
-							custom: customPicked ? customWindow : {
-								from: "",
-								to: ""
-							},
-							onCustomFrom: (value) => {
-								setCustomFrom(value !== void 0 && todayDate !== "" && value > todayDate ? todayDate : value);
-							},
-							onCustomTo: (value) => {
-								setCustomTo(value !== void 0 && todayDate !== "" && value > todayDate ? todayDate : value);
-							},
-							today: todayDate
-						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-							className: usage_module_css_default.card,
-							"data-dsh-part": "window-card",
-							children: [
-								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-									className: usage_module_css_default.windowHead,
-									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-										className: usage_module_css_default.cardTitle,
-										children: t("usage.range.detail", { label: t(RANGE_LABEL_KEYS[rangeKey]) })
-									}), (rangeKey !== "custom" || customPicked) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-										className: usage_module_css_default.spanLine,
-										children: t("usage.range.span", {
-											from: activeWindow.from,
-											to: activeWindow.to
-										})
-									})]
-								}),
-								deepseekVisible && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(PeakBadge, {
-									peak: deepseekPeriod.peak,
-									boundaryMs: deepseekPeriod.boundaryMs,
-									variant: "full"
-								}),
-								activeError !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-									className: usage_module_css_default.errorLine,
-									role: "status",
-									children: t("usage.range.error", { error: describeError(activeError) })
-								}),
-								rangeKey === "custom" && !customPicked ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-									className: usage_module_css_default.muted,
-									"data-dsh-part": "custom-prompt",
-									children: t("usage.range.customPrompt")
-								}) : slicePending(activeSlice, rangeKey) ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-									className: usage_module_css_default.muted,
-									children: t("usage.range.loading")
-								}) : activeError !== void 0 ? trendRows.length >= TREND_CHART_MIN_DAYS && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TrendChart, {
-									rows: trendRows,
-									colors: modelColors,
-									labels: modelLabels
-								}) : isEmptyTotals(summary.totals) && summary.providers.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-									className: usage_module_css_default.muted,
-									children: t("usage.range.empty")
-								}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(TotalsRow, { totals: summary.totals }),
-									summary.totals.cost > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-										className: usage_module_css_default.providerRow,
-										"data-dsh-part": "window-cost",
+					tab === "usage" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						className: usage_module_css_default.panel,
+						role: "tabpanel",
+						id: "dsh-usage-panel-usage",
+						"aria-labelledby": "dsh-usage-tab-usage",
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(RangeStrip, {
+								rangeKey,
+								onSelect: setRangeKey,
+								tiles,
+								custom: customPicked ? customWindow : {
+									from: "",
+									to: ""
+								},
+								onCustomFrom: (value) => {
+									setCustomFrom(value !== void 0 && todayDate !== "" && value > todayDate ? todayDate : value);
+								},
+								onCustomTo: (value) => {
+									setCustomTo(value !== void 0 && todayDate !== "" && value > todayDate ? todayDate : value);
+								},
+								today: todayDate,
+								min: recorded.length > 0 ? recorded[0] : void 0
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								className: usage_module_css_default.card,
+								"data-dsh-part": "window-card",
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+										className: usage_module_css_default.windowHead,
 										children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-											className: usage_module_css_default.providerName,
-											children: t("usage.range.cost")
-										}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-											className: usage_module_css_default.providerTokens,
-											children: formatCost(summary.totals.cost)
+											className: usage_module_css_default.cardTitle,
+											children: t("usage.range.detail", { label: t(RANGE_LABEL_KEYS[rangeKey]) })
+										}), (rangeKey !== "custom" || customPicked) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+											className: usage_module_css_default.spanLine,
+											children: t("usage.range.span", {
+												from: activeWindow.from,
+												to: activeWindow.to
+											})
 										})]
 									}),
-									trendRows.length >= TREND_CHART_MIN_DAYS && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TrendChart, {
+									deepseekVisible && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(PeakBadge, {
+										peak: deepseekPeriod.peak,
+										boundaryMs: deepseekPeriod.boundaryMs,
+										variant: "full"
+									}),
+									activeError !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: usage_module_css_default.errorLine,
+										role: "status",
+										title: activeError,
+										children: t("usage.range.error", { error: describeError(activeError) })
+									}),
+									rangeKey === "custom" && !customPicked ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: usage_module_css_default.muted,
+										"data-dsh-part": "custom-prompt",
+										children: t("usage.range.customPrompt")
+									}) : slicePending(activeSlice, rangeKey) ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: usage_module_css_default.muted,
+										children: t("usage.range.loading")
+									}) : activeError !== void 0 ? trendRows.length >= TREND_CHART_MIN_DAYS && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TrendChart, {
 										rows: trendRows,
 										colors: modelColors,
 										labels: modelLabels
-									}),
+									}) : isEmptyTotals(summary.totals) && summary.providers.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: usage_module_css_default.muted,
+										children: t("usage.range.empty")
+									}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)(TotalsRow, { totals: summary.totals }),
+										summary.totals.cost > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+											className: usage_module_css_default.providerRow,
+											"data-dsh-part": "window-cost",
+											children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+												className: usage_module_css_default.providerName,
+												children: t("usage.range.cost")
+											}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+												className: usage_module_css_default.providerTokens,
+												children: formatCost(summary.totals.cost)
+											})]
+										}),
+										trendRows.length >= TREND_CHART_MIN_DAYS && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TrendChart, {
+											rows: trendRows,
+											colors: modelColors,
+											labels: modelLabels
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+											className: usage_module_css_default.cardTitle,
+											children: t("usage.range.channels")
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ChannelBreakdown, {
+											summary,
+											providers: snapshot.providers,
+											currentProvider: current.provider,
+											modelColors,
+											modelLabels
+										})
+									] })
+								]
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								className: usage_module_css_default.card,
+								"data-dsh-part": "balance-card",
+								children: [
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: usage_module_css_default.cardTitle,
-										children: t("usage.range.channels")
+										children: t("usage.balance")
 									}),
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ChannelBreakdown, {
-										summary,
-										providers: snapshot.providers,
-										currentProvider: current.provider,
-										modelColors,
-										modelLabels
+									(() => {
+										const configured = snapshot.providers.filter(isConfigured);
+										const rows = configured.filter((provider) => provider.balanceSupported === true || provider.balanceSupported === false || provider.balanceSupported === void 0 && provider.supported);
+										if (rows.length === 0) return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+											className: usage_module_css_default.muted,
+											children: configured.length === 0 ? t("usage.balance.noneConfigured") : t("usage.balance.unsupported")
+										});
+										return rows.map((provider) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ProviderRow, {
+											provider,
+											current: current.provider
+										}, provider.provider));
+									})(),
+									snapshot.providers.some((provider) => isConfigured(provider) && provider.error !== void 0) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: usage_module_css_default.errorLine,
+										children: snapshot.providers.filter((provider) => isConfigured(provider) && provider.error !== void 0).map((provider) => `${provider.displayName}: ${t("usage.provider.error", { error: provider.error ?? "" })}`).join(t("usage.errorListSeparator"))
 									})
-								] })
-							]
-						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								]
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(DeviceSyncCard, {
+								deviceId: snapshot.usage.deviceId,
+								devices: snapshot.usage.devices,
+								devicesError: snapshot.usage.devicesError,
+								api: deviceSync,
+								onChanged: onRefresh
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(SettingsRow, {
+								settings,
+								snapshot: settingsSnapshot.status === "ready" ? settingsSnapshot : void 0,
+								value: settingsValue
+							})
+						]
+					}),
+					tab === "plans" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						className: usage_module_css_default.panel,
+						role: "tabpanel",
+						id: "dsh-usage-panel-plans",
+						"aria-labelledby": "dsh-usage-tab-plans",
+						children: planProviders.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 							className: usage_module_css_default.card,
-							"data-dsh-part": "balance-card",
-							children: [
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-									className: usage_module_css_default.cardTitle,
-									children: t("usage.balance")
-								}),
-								(() => {
-									const configured = snapshot.providers.filter(isConfigured);
-									const rows = configured.filter((provider) => provider.balanceSupported === true || provider.balanceSupported === false || provider.balanceSupported === void 0 && provider.supported);
-									if (rows.length === 0) return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-										className: usage_module_css_default.muted,
-										children: configured.length === 0 ? t("usage.balance.noneConfigured") : t("usage.balance.unsupported")
-									});
-									return rows.map((provider) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ProviderRow, {
-										provider,
-										current: current.provider
-									}, provider.provider));
-								})(),
-								snapshot.providers.some((provider) => isConfigured(provider) && provider.error !== void 0) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-									className: usage_module_css_default.errorLine,
-									children: snapshot.providers.filter((provider) => isConfigured(provider) && provider.error !== void 0).map((provider) => `${provider.displayName}: ${t("usage.provider.error", { error: provider.error ?? "" })}`).join(t("usage.errorListSeparator"))
-								})
-							]
-						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)(DeviceSyncCard, {
-							deviceId: snapshot.usage.deviceId,
-							devices: snapshot.usage.devices,
-							devicesError: snapshot.usage.devicesError,
-							api: deviceSync,
-							onChanged: onRefresh
-						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)(SettingsRow, {
-							settings,
-							snapshot: settingsSnapshot.status === "ready" ? settingsSnapshot : void 0,
-							value: settingsValue
-						})
-					] }),
-					tab === "plans" && (planProviders.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-						className: usage_module_css_default.card,
-						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-							className: usage_module_css_default.muted,
-							children: t("usage.plan.noneConfigured")
-						})
-					}) : planProviders.map((provider) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(PlanCard, {
-						provider,
-						current: current.provider
-					}, provider.provider))),
-					tab === "bank" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(DayPicker, {
-						part: "bank",
-						value: bankSelection ?? BANK_ALL_DAYS,
-						options: dayOptions,
-						today: todayDate,
-						leading: {
-							value: BANK_ALL_DAYS,
-							label: t("usage.bank.windowAll")
-						},
-						onSelect: (date) => {
-							setBankDay(date === BANK_ALL_DAYS ? void 0 : date);
-						}
-					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(VoucherCard, {
-						window: bankWindow,
-						observedSpend: bankSelection === void 0 ? snapshot.usage.observedSpend : void 0,
-						loading: bankSelection !== void 0 && bankDayLoad?.status === "loading",
-						...bankDayLoad?.status === "error" ? { error: describeError(bankDayLoad.error ?? "") } : {}
-					})] })
+							children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+								className: usage_module_css_default.muted,
+								children: t("usage.plan.noneConfigured")
+							})
+						}) : planProviders.map((provider) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(PlanCard, {
+							provider,
+							current: current.provider
+						}, provider.provider))
+					}),
+					tab === "bank" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						className: usage_module_css_default.panel,
+						role: "tabpanel",
+						id: "dsh-usage-panel-bank",
+						"aria-labelledby": "dsh-usage-tab-bank",
+						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(DayPicker, {
+							part: "bank",
+							value: bankSelection ?? BANK_ALL_DAYS,
+							options: dayOptions,
+							today: todayDate,
+							leading: {
+								value: BANK_ALL_DAYS,
+								label: t("usage.bank.windowAll")
+							},
+							onSelect: (date) => {
+								setBankDay(date === BANK_ALL_DAYS ? void 0 : date);
+							}
+						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(VoucherCard, {
+							window: bankWindow,
+							observedSpend: bankSelection === void 0 ? snapshot.usage.observedSpend : void 0,
+							loading: bankSelection !== void 0 && bankDayLoad?.status === "loading",
+							...bankDayLoad?.status === "error" ? { error: bankDayLoad.error ?? "" } : {}
+						})]
+					})
 				]
 			});
 		}
@@ -3511,7 +3635,8 @@ window.__ModuleLoader__.load({
 					children: t("usage.bank.title")
 				}), error !== void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 					className: usage_module_css_default.errorLine,
-					children: t("usage.day.error", { error })
+					title: error,
+					children: t("usage.day.error", { error: describeError(error) })
 				}) : loading === true ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 					className: usage_module_css_default.muted,
 					children: t("usage.day.loading")

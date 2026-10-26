@@ -264,6 +264,14 @@ export interface UsageLedgerExport {
   schema: 'dsh-usage-ledger'
   version: 1
   deviceId: string
+  /**
+   * The machine that produced the export.
+   *
+   * A device id is a file name; two names on one machine are still one machine,
+   * so the importing side needs this to avoid counting a copy of its own history
+   * as a second device.
+   */
+  machine?: string
   exportedAt: string
   ledger: UsageLedgerDocument
 }

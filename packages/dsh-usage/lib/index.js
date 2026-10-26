@@ -1,10 +1,10 @@
 import z from "@deepseek-ai/schemastery";
-import { mkdir, open, readFile, readdir, rename, stat, unlink } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import "@deepseek-ai/cordis";
 import { homedir, hostname, platform, userInfo } from "node:os";
 import { isAbsolute as isAbsolute$1, join as join$1 } from "node:path/posix";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { zstdDecompressSync } from "node:zlib";
 //#region src/mount-once.ts
 /**
@@ -1428,7 +1428,7 @@ function ledgerDayKeys(doc) {
 /** Local-date key of the oldest day `retainDays` keeps. */
 function pruneCutoffKey(todayKey, retainDays) {
 	const cutoff = /* @__PURE__ */ new Date(todayKey + "T00:00:00");
-	cutoff.setDate(cutoff.getDate() - retainDays);
+	cutoff.setDate(cutoff.getDate() - Math.max(0, retainDays - 1));
 	return localDateKey(cutoff.getTime());
 }
 /**
@@ -1555,17 +1555,52 @@ function localDeviceId() {
 	return `${machineSlug()}-${machineDigest().slice(0, 6)}`;
 }
 /**
-* Full digest of this machine's identity, written into every ledger file.
+* Full digest of this machine's identity, derived from host, platform and user.
 *
-* The device id is that digest truncated, so a hostname rename (or a change of
-* user) mints a NEW id while the old file keeps the old one — and the old file
-* then looks like a peer device holding a copy of this machine's own history.
-* The untruncated digest is what lets a reader recognise that copy: two files
-* with the same `machine` are one machine, whatever their ids say.
+* Only a fallback: the authoritative machine id is the random one this plugin
+* persists (`ensureMachineId`), because a digest that follows the host name
+* changes when the machine is renamed — and then the file written under the old
+* name looks like a peer holding a copy of this machine's own history.
 */
 function localMachineId() {
 	return machineDigest();
 }
+/** Name of the file that pins this machine's identity inside the persist dir. */
+const MACHINE_ID_FILE = "machine-id.json";
+/**
+* The machine id this profile has already minted, creating one on first run.
+*
+* Random rather than derived, and written once: it has to survive a host rename,
+* a user rename, and a reinstall of the plugin, because it is what tells "this
+* machine, renamed" apart from "a second machine". A digest of the host name
+* cannot do that — it changes exactly when the rename happens.
+*/
+async function ensureMachineId(dir) {
+	const path = join(dir, MACHINE_ID_FILE);
+	const read = async () => {
+		try {
+			const id = JSON.parse(await readFile(path, "utf8"))?.machineId;
+			return typeof id === "string" && MACHINE_ID_PATTERN.test(id) ? id : void 0;
+		} catch {
+			return;
+		}
+	};
+	const known = await read();
+	if (known !== void 0) return known;
+	const minted = randomUUID().replace(/-/g, "");
+	try {
+		await mkdir(dir, { recursive: true });
+		await writeFile(path, `${JSON.stringify({
+			version: 1,
+			machineId: minted
+		}, null, 2)}\n`, "utf8");
+	} catch {
+		return localMachineId();
+	}
+	return minted;
+}
+/** 32 lowercase hex characters: what `ensureMachineId` mints and accepts. */
+const MACHINE_ID_PATTERN = /^[0-9a-f]{32}$/;
 /** The slug half of the device id (host name, made filename-safe). */
 function machineSlug() {
 	return readHost().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "dsh";
@@ -1617,7 +1652,7 @@ function ledgerFileDocument(doc, extra) {
 	return {
 		...doc,
 		deviceId: localDeviceId(),
-		machine: localMachineId(),
+		machine: extra?.machine ?? localMachineId(),
 		...extra?.repairedAt !== void 0 ? { repairedAt: extra.repairedAt } : {}
 	};
 }
@@ -2162,10 +2197,35 @@ var UsageService = class {
 	* short by the per-start cap, or a file that turned out to belong to another
 	* device. Shown next to `ledgerError`, because a silently shortened history
 	* reads exactly like a complete one.
+	*
+	* Keyed by kind, so a condition that repeats every flush states itself once
+	* instead of growing a sentence longer on every write.
 	*/
-	ledgerNote;
-	/** Timestamp of the last duplicate repair written by this process. */
-	repairedAt;
+	notes = /* @__PURE__ */ new Map();
+	/** The document as it was before the first load absorb, so a retry starts clean. */
+	loadBaseline;
+	/** True once the persisted document has been folded into memory this boot. */
+	loadAbsorbed = false;
+	/**
+	* The smallest retention this process has seen applied.
+	*
+	* A lower setting than this means the user shrank the window on purpose, which
+	* the "clock jumped" guard in `pruneForWrite` must not veto.
+	*/
+	retentionSeen;
+	/**
+	* This machine's identity as recorded in every file it writes.
+	*
+	* Pinned in `machine-id.json` on first run rather than derived from the host
+	* name: a rename must not make this machine look like a second device.
+	*/
+	machine = localMachineId();
+	/**
+	* The deduped replay of this boot, kept so a flush that must not max-merge
+	* (a file another process repaired) can still add the buckets only the replay
+	* recovers — those are not expressible as growth since our last write.
+	*/
+	replayDoc;
 	ledger = createLedgerDocument();
 	/**
 	* The document this process last wrote to disk. Another process on this
@@ -2209,6 +2269,7 @@ var UsageService = class {
 		this.deviceId = localDeviceId();
 		this.ledgerPath = join(this.persistDir, ledgerFileName(this.deviceId));
 		this.snapshotsPath = join(this.persistDir, "provider-snapshots.json");
+		this.retentionSeen = options.retainDays;
 	}
 	/** Start the listeners, load persisted state, and arm the first poll. */
 	start() {
@@ -2255,6 +2316,7 @@ var UsageService = class {
 			schema: LEDGER_EXPORT_SCHEMA,
 			version: 1,
 			deviceId: this.deviceId,
+			machine: this.machine,
 			exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
 			ledger: this.ledger
 		};
@@ -2291,6 +2353,7 @@ var UsageService = class {
 			schema: LEDGER_EXPORT_SCHEMA,
 			version: 1,
 			deviceId: claimedId,
+			...doc.machine === void 0 ? {} : { machine: doc.machine },
 			exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
 			ledger: doc.doc
 		});
@@ -2364,7 +2427,7 @@ var UsageService = class {
 				deviceId: this.deviceId,
 				...this.peersError !== void 0 ? { devicesError: this.peersError } : {},
 				...this.ledgerError !== void 0 ? { ledgerError: this.ledgerError } : {},
-				...this.ledgerNote !== void 0 ? { ledgerNote: this.ledgerNote } : {}
+				...this.ledgerNoteText() !== void 0 ? { ledgerNote: this.ledgerNoteText() } : {}
 			}
 		};
 	}
@@ -2672,14 +2735,20 @@ var UsageService = class {
 	}
 	async loadPersisted() {
 		try {
+			if (this.loadBaseline === void 0) this.loadBaseline = structuredClone(this.ledger);
+			else if (!this.loadAbsorbed) this.ledger = structuredClone(this.loadBaseline);
 			await this.loadPersistedOnce();
+			if (this.loaded) this.loadBaseline = void 0;
 		} catch (error) {
 			this.ledgerError = `ledger load failed (${error instanceof Error ? error.message : String(error)})`;
 			this.scheduleLoadRetry();
 		}
 	}
 	async loadPersistedOnce() {
+		this.machine = await ensureMachineId(this.persistDir);
 		let read = await this.readLedgerFile();
+		/** True when this boot starts without the history the ledger used to hold. */
+		let lostHistory = false;
 		if (read.kind === "unreadable") {
 			this.ledgerError = `ledger unreadable (${read.error})`;
 			this.scheduleLoadRetry();
@@ -2691,10 +2760,10 @@ var UsageService = class {
 			const taken = target === void 0 ? true : await stat(target).then(() => true, () => false);
 			if (target !== void 0 && !taken) {
 				if (await rename(this.ledgerPath, target).then(() => true, () => false)) {
-					this.note(`ledger named device ${foreign}; adopted as ${basename(target)}`);
+					this.note(`adopted:${foreign}`, `ledger named device ${foreign}; adopted as ${basename(target)}`);
 					read = { kind: "missing" };
 				}
-			} else if (target !== void 0) this.note(`ledger named device ${foreign}, whose file is already present`);
+			} else if (target !== void 0) this.note(`adopted:${foreign}`, `ledger named device ${foreign}, whose file is already present`);
 			if (read.kind === "corrupt") {
 				const kept = `${this.ledgerPath}.corrupt-${Date.now()}.json`;
 				const renamed = await rename(this.ledgerPath, kept).then(() => true, () => false);
@@ -2703,16 +2772,22 @@ var UsageService = class {
 					this.scheduleLoadRetry();
 					return;
 				}
+				lostHistory = true;
 			}
 		}
 		if (read.kind === "ok") {
-			this.absorb(this.ledger, read.doc);
+			if (!this.loadAbsorbed) {
+				this.absorb(this.ledger, read.doc);
+				this.loadAbsorbed = true;
+			}
 			this.seenRepairedAt = read.repairedAt ?? 0;
 		} else if (read.kind === "missing") await this.adoptLegacyLedger();
+		if (lostHistory) await this.restoreMigratedHistory();
 		await this.refreshPeers();
 		await this.loadSnapshots();
 		const replay = await this.replaySessionLogs();
-		if (replay.skipped > 0) this.note(`${replay.skipped} older transcripts beyond the replay cap of ${replay.files} were not replayed`);
+		this.replayDoc = replay.doc;
+		if (replay.skipped > 0) this.note("replay-cap", `${replay.skipped} older transcripts beyond the replay cap of ${replay.files} were not replayed`);
 		const prior = await this.readRepairRecord();
 		const repaired = await this.repairDuplicatedReplay(replay, prior);
 		this.lastPrune = void 0;
@@ -2736,9 +2811,24 @@ var UsageService = class {
 		}
 		this.scheduleFlush();
 	}
-	/** Append a non-fatal note to the one the panel shows beside the numbers. */
-	note(text) {
-		this.ledgerNote = this.ledgerNote === void 0 ? text : `${this.ledgerNote}; ${text}`;
+	/**
+	* Record a non-fatal note the panel shows beside the numbers.
+	*
+	* Notes are keyed: a condition that holds on every flush ("retention
+	* skipped …") must not append itself again and again, or the line the user
+	* reads grows for as long as the process runs.
+	*/
+	note(kind, text) {
+		this.notes.set(kind, text);
+	}
+	/** Drop a note whose condition no longer holds. */
+	clearNote(kind) {
+		this.notes.delete(kind);
+	}
+	/** The notes as one line, oldest first, capped so the panel stays readable. */
+	ledgerNoteText() {
+		const texts = [...this.notes.values()].slice(-3);
+		return texts.length === 0 ? void 0 : texts.join("; ");
 	}
 	/** Retry a ledger read that failed for a transient reason (lock, sharing). */
 	scheduleLoadRetry() {
@@ -2947,6 +3037,33 @@ var UsageService = class {
 	* this device's file is deleted or damaged. Re-adopting it is safe — the fold
 	* is a merge, and the buckets it restores are the ones the file states.
 	*/
+	/**
+	* Fold the pre-migration history back in after the ledger was lost.
+	*
+	* The oldest days predate the session transcripts this build replays, so the
+	* ledger file is their only copy. When a corrupt file is quarantined the fresh
+	* document starts empty and that history would be gone for good; the legacy
+	* file (or its `.migrated` sibling) still states it, and the merge is a max —
+	* it can only restore days the new document does not have.
+	*/
+	async restoreMigratedHistory() {
+		const legacyPath = join(this.persistDir, LEGACY_LEDGER_FILE);
+		let restored = 0;
+		for (const path of [legacyPath, `${legacyPath}.migrated`]) {
+			const raw = await readFile(path, "utf8").catch(() => void 0);
+			if (raw === void 0) continue;
+			try {
+				const doc = deserializeLedger(JSON.parse(raw));
+				const days = Object.keys(doc.days).length;
+				if (days === 0) continue;
+				mergeLedgerMax(this.ledger, doc);
+				restored += days;
+			} catch {}
+		}
+		if (restored === 0) return;
+		pruneLedger(this.ledger, localDateKey(Date.now()), this.options.retainDays);
+		this.note("legacy-restore", "the quarantined ledger was rebuilt from the pre-migration file");
+	}
 	async adoptLegacyLedger() {
 		const legacyPath = join(this.persistDir, LEGACY_LEDGER_FILE);
 		const migratedPath = `${legacyPath}.migrated`;
@@ -2995,7 +3112,7 @@ var UsageService = class {
 		}
 		const peers = [];
 		const failures = [];
-		const localMachine = localMachineId();
+		const localMachine = this.machine;
 		for (const name of names) {
 			const deviceId = deviceIdOfFile(basename(name));
 			if (deviceId === void 0) continue;
@@ -3016,8 +3133,13 @@ var UsageService = class {
 					failures.push(`${name}: names device ${parsed.deviceId}`);
 					continue;
 				}
+				if (parsed.machine === void 0) {
+					failures.push(`${name}: no machine id in the document, not summed`);
+					continue;
+				}
 				if (parsed.machine !== void 0 && parsed.machine === localMachine) {
-					failures.push(`${name}: written by this machine, not summed`);
+					mergeLedgerMax(this.ledger, parsed.doc);
+					this.note(`renamed:${deviceId}`, `${name}: this machine under an older name, folded in rather than summed`);
 					continue;
 				}
 				peers.push({
@@ -3066,6 +3188,10 @@ var UsageService = class {
 				if (stamp > this.seenRepairedAt) {
 					this.seenRepairedAt = stamp;
 					if (this.ledgerWritten !== void 0) mergeLedgerDelta(target, this.ledger, this.ledgerWritten);
+					if (this.replayDoc !== void 0) mergeLedgerMax(target, this.replayDoc);
+				} else if (this.seenRepairedAt > 0 && disk.repairedAt === void 0) {
+					this.note("stale-writer", "a build without ledger identity rewrote the file; its inflated buckets were not re-adopted");
+					if (this.ledgerWritten !== void 0) mergeLedgerDelta(target, this.ledger, this.ledgerWritten);
 				} else {
 					if (this.ledgerWritten !== void 0) mergeLedgerDelta(target, this.ledger, this.ledgerWritten);
 					mergeLedgerMax(target, this.ledger);
@@ -3097,10 +3223,13 @@ var UsageService = class {
 		const todayKey = localDateKey(Date.now());
 		const days = Object.keys(doc.days).length;
 		const prunable = countPrunable(doc, todayKey, this.options.retainDays);
-		if (days >= 4 && prunable > days * .3) {
-			this.note(`retention skipped: the clock would drop ${prunable} of ${days} recorded days`);
+		const shrank = this.options.retainDays < this.retentionSeen;
+		this.retentionSeen = Math.min(this.retentionSeen, this.options.retainDays);
+		if (!shrank && days >= 4 && prunable === days) {
+			this.note("retention", `retention skipped: the clock would drop all ${days} recorded days`);
 			return 0;
 		}
+		if (prunable === 0) this.clearNote("retention");
 		return pruneLedger(doc, todayKey, this.options.retainDays);
 	}
 	/** The ledger file as another writer left it: absent, parsed, or unreadable. */
@@ -3160,8 +3289,15 @@ var UsageService = class {
 				removedTokens += totalTokens(entry.totals);
 			}
 			this.pruneForWrite(target);
-			if (corrected.size > 0) this.seenRepairedAt = Date.now();
-			await writeJsonAtomic(this.ledgerPath, ledgerFileDocument(target, this.seenRepairedAt > 0 ? { repairedAt: this.seenRepairedAt } : void 0));
+			if (corrected.size === 0) return {
+				corrected,
+				removedTokens: 0
+			};
+			this.seenRepairedAt = Math.max(this.seenRepairedAt, Date.now());
+			await writeJsonAtomic(this.ledgerPath, ledgerFileDocument(target, {
+				machine: this.machine,
+				repairedAt: this.seenRepairedAt
+			}));
 			this.ledgerWritten = structuredClone(target);
 			this.ledgerError = void 0;
 			return {
@@ -3209,7 +3345,7 @@ var UsageService = class {
 				...watch !== void 0 ? { spendWatch: watch } : {}
 			});
 		} catch (error) {
-			this.note(`snapshot write failed (${error instanceof Error ? error.message : String(error)})`);
+			this.note("snapshots", `snapshot write failed (${error instanceof Error ? error.message : String(error)})`);
 		}
 	}
 	rearmPoll(delayMs) {

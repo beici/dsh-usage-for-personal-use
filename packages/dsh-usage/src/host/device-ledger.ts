@@ -22,8 +22,10 @@
  * @module @linxin666/dsh-usage/host/device-ledger
  */
 
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { hostname, platform, userInfo } from 'node:os'
+import { join } from 'node:path'
 import { deserializeLedger } from '../core/ledger.ts'
 import type { UsageLedgerDocument } from '../core/types.ts'
 
@@ -66,17 +68,55 @@ export function localDeviceId(): string {
 }
 
 /**
- * Full digest of this machine's identity, written into every ledger file.
+ * Full digest of this machine's identity, derived from host, platform and user.
  *
- * The device id is that digest truncated, so a hostname rename (or a change of
- * user) mints a NEW id while the old file keeps the old one — and the old file
- * then looks like a peer device holding a copy of this machine's own history.
- * The untruncated digest is what lets a reader recognise that copy: two files
- * with the same `machine` are one machine, whatever their ids say.
+ * Only a fallback: the authoritative machine id is the random one this plugin
+ * persists (`ensureMachineId`), because a digest that follows the host name
+ * changes when the machine is renamed — and then the file written under the old
+ * name looks like a peer holding a copy of this machine's own history.
  */
 export function localMachineId(): string {
   return machineDigest()
 }
+
+/** Name of the file that pins this machine's identity inside the persist dir. */
+export const MACHINE_ID_FILE = 'machine-id.json'
+
+/**
+ * The machine id this profile has already minted, creating one on first run.
+ *
+ * Random rather than derived, and written once: it has to survive a host rename,
+ * a user rename, and a reinstall of the plugin, because it is what tells "this
+ * machine, renamed" apart from "a second machine". A digest of the host name
+ * cannot do that — it changes exactly when the rename happens.
+ */
+export async function ensureMachineId(dir: string): Promise<string> {
+  const path = join(dir, MACHINE_ID_FILE)
+  const read = async (): Promise<string | undefined> => {
+    try {
+      const parsed: unknown = JSON.parse(await readFile(path, 'utf8'))
+      const id = (parsed as { machineId?: unknown } | null)?.machineId
+      return typeof id === 'string' && MACHINE_ID_PATTERN.test(id) ? id : undefined
+    } catch {
+      return undefined
+    }
+  }
+  const known = await read()
+  if (known !== undefined) return known
+  const minted = randomUUID().replace(/-/g, '')
+  try {
+    await mkdir(dir, { recursive: true })
+    await writeFile(path, `${JSON.stringify({ version: 1, machineId: minted }, null, 2)}\n`, 'utf8')
+  } catch {
+    // A read-only profile cannot pin the id: the digest still names this machine
+    // well enough for one run, and the next writable start mints the real one.
+    return localMachineId()
+  }
+  return minted
+}
+
+/** 32 lowercase hex characters: what `ensureMachineId` mints and accepts. */
+const MACHINE_ID_PATTERN = /^[0-9a-f]{32}$/
 
 /** The slug half of the device id (host name, made filename-safe). */
 function machineSlug(): string {
@@ -146,12 +186,12 @@ export interface LoadedLedgerFile {
  */
 export function ledgerFileDocument(
   doc: Readonly<UsageLedgerDocument>,
-  extra?: { repairedAt?: number },
+  extra?: { repairedAt?: number; machine?: string },
 ): UsageLedgerDocument & { deviceId: string; machine: string; repairedAt?: number } {
   return {
     ...doc,
     deviceId: localDeviceId(),
-    machine: localMachineId(),
+    machine: extra?.machine ?? localMachineId(),
     ...(extra?.repairedAt !== undefined ? { repairedAt: extra.repairedAt } : {}),
   }
 }

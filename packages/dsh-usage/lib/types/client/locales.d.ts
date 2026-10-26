@@ -17,6 +17,7 @@ export declare const zh: {
     'usage.loading': string;
     'usage.error': string;
     'usage.error.network': string;
+    'usage.error.status': string;
     'usage.disabled': string;
     'usage.current': string;
     'usage.today': string;
@@ -42,6 +43,7 @@ export declare const zh: {
     'usage.tokens.cacheHit': string;
     'usage.trend': string;
     'usage.trend.label': string;
+    'usage.trend.labelFailed': string;
     'usage.range.title': string;
     'usage.range.today': string;
     'usage.range.yesterday': string;

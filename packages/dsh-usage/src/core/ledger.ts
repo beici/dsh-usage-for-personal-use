@@ -258,7 +258,11 @@ export function ledgerDayKeys(doc: Readonly<UsageLedgerDocument>): string[] {
 /** Local-date key of the oldest day `retainDays` keeps. */
 function pruneCutoffKey(todayKey: string, retainDays: number): string {
   const cutoff = new Date(todayKey + 'T00:00:00')
-  cutoff.setDate(cutoff.getDate() - retainDays)
+  // Keep exactly the days the widest window shows: `last180` runs from
+  // today-179 to today, so retaining `retainDays` days means dropping anything
+  // older than today-(retainDays-1). Using today-retainDays kept one extra day,
+  // which made "all" exceed "last 180 days" by a day once the history filled up.
+  cutoff.setDate(cutoff.getDate() - Math.max(0, retainDays - 1))
   return localDateKey(cutoff.getTime())
 }
 

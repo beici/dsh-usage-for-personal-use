@@ -19,6 +19,9 @@ export const zh = {
   'usage.loading': '正在加载用量数据…',
   'usage.error': '加载失败：{error}',
   'usage.error.network': '网络请求失败，请检查与 DSH 的连接',
+  // A transport error carries the route and the status code; the code is the
+  // only part a user can act on, so it gets a sentence of its own.
+  'usage.error.status': '请求失败（HTTP {status}），请稍后再试',
   'usage.disabled': '插件已停用：勾选下方「启用插件」即可恢复统计。',
   'usage.current': '当前',
   'usage.today': '今日用量',
@@ -44,6 +47,9 @@ export const zh = {
   'usage.tokens.cacheHit': '缓存命中',
   'usage.trend': '近 30 天',
   'usage.trend.label': '用量趋势图：{from} 至 {to}，合计 {tokens}',
+  // A failed aggregate leaves the total unmeasured: the label states the span
+  // and the failure instead of a number nothing backs.
+  'usage.trend.labelFailed': '用量趋势图：{from} 至 {to}，部分日期加载失败',
   'usage.range.title': '统计窗口',
   'usage.range.today': '今日',
   'usage.range.yesterday': '昨日',
@@ -114,9 +120,11 @@ export const zh = {
   'usage.device.copied': '已复制',
   'usage.device.none': '只有本机数据',
   'usage.device.error': '部分文件无法读取：{error}',
-  'usage.ledger.error': '账本读取异常,下面的数字可能不完整：{error}',
+  'usage.ledger.error': '账本读取异常，下面的数字可能不完整：{error}',
   'usage.ledger.note': '说明：{note}',
-  'usage.stale': '上次刷新失败（{error}）,下面是 {time} 的数据',
+  // Full-width comma: the sentence is Chinese prose, so a half-width mark reads
+  // as a typo between two CJK characters.
+  'usage.stale': '上次刷新失败（{error}），下面是 {time} 的数据',
   'usage.device.export': '导出本机用量',
   'usage.device.import': '导入其他设备',
   'usage.device.importing': '导入中…',
@@ -139,6 +147,7 @@ export const en: Record<UsageKey, string> = {
   'usage.loading': 'Loading usage data…',
   'usage.error': 'Failed to load: {error}',
   'usage.error.network': 'Network request failed. Check the connection to DSH.',
+  'usage.error.status': 'Request failed (HTTP {status}). Try again in a moment.',
   'usage.disabled': 'Plugin disabled. Tick "Enable plugin" below to resume statistics.',
   'usage.current': 'Current',
   'usage.today': 'Today',
@@ -164,6 +173,7 @@ export const en: Record<UsageKey, string> = {
   'usage.tokens.cacheHit': 'Cache hit',
   'usage.trend': 'Last 30 days',
   'usage.trend.label': 'Usage trend: {from} to {to}, {tokens} in total',
+  'usage.trend.labelFailed': 'Usage trend: {from} to {to}, some days failed to load',
   'usage.range.title': 'Time window',
   'usage.range.today': 'Today',
   'usage.range.yesterday': 'Yesterday',

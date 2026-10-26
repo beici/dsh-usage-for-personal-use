@@ -66,10 +66,35 @@ export declare class UsageService {
      * short by the per-start cap, or a file that turned out to belong to another
      * device. Shown next to `ledgerError`, because a silently shortened history
      * reads exactly like a complete one.
+     *
+     * Keyed by kind, so a condition that repeats every flush states itself once
+     * instead of growing a sentence longer on every write.
      */
-    private ledgerNote;
-    /** Timestamp of the last duplicate repair written by this process. */
-    private repairedAt;
+    private readonly notes;
+    /** The document as it was before the first load absorb, so a retry starts clean. */
+    private loadBaseline;
+    /** True once the persisted document has been folded into memory this boot. */
+    private loadAbsorbed;
+    /**
+     * The smallest retention this process has seen applied.
+     *
+     * A lower setting than this means the user shrank the window on purpose, which
+     * the "clock jumped" guard in `pruneForWrite` must not veto.
+     */
+    private retentionSeen;
+    /**
+     * This machine's identity as recorded in every file it writes.
+     *
+     * Pinned in `machine-id.json` on first run rather than derived from the host
+     * name: a rename must not make this machine look like a second device.
+     */
+    private machine;
+    /**
+     * The deduped replay of this boot, kept so a flush that must not max-merge
+     * (a file another process repaired) can still add the buckets only the replay
+     * recovers — those are not expressible as growth since our last write.
+     */
+    private replayDoc;
     private ledger;
     /**
      * The document this process last wrote to disk. Another process on this
@@ -242,8 +267,18 @@ export declare class UsageService {
     private ledgerFromJson;
     private loadPersisted;
     private loadPersistedOnce;
-    /** Append a non-fatal note to the one the panel shows beside the numbers. */
+    /**
+     * Record a non-fatal note the panel shows beside the numbers.
+     *
+     * Notes are keyed: a condition that holds on every flush ("retention
+     * skipped …") must not append itself again and again, or the line the user
+     * reads grows for as long as the process runs.
+     */
     private note;
+    /** Drop a note whose condition no longer holds. */
+    private clearNote;
+    /** The notes as one line, oldest first, capped so the panel stays readable. */
+    private ledgerNoteText;
     /** Retry a ledger read that failed for a transient reason (lock, sharing). */
     private scheduleLoadRetry;
     /** Revive the probe cache and the spend watch; both are best-effort. */
@@ -323,6 +358,16 @@ export declare class UsageService {
      * this device's file is deleted or damaged. Re-adopting it is safe — the fold
      * is a merge, and the buckets it restores are the ones the file states.
      */
+    /**
+     * Fold the pre-migration history back in after the ledger was lost.
+     *
+     * The oldest days predate the session transcripts this build replays, so the
+     * ledger file is their only copy. When a corrupt file is quarantined the fresh
+     * document starts empty and that history would be gone for good; the legacy
+     * file (or its `.migrated` sibling) still states it, and the merge is a max —
+     * it can only restore days the new document does not have.
+     */
+    private restoreMigratedHistory;
     private adoptLegacyLedger;
     /**
      * Re-read every peer ledger file in the persist directory.

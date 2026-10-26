@@ -9,14 +9,21 @@
  * stacked segment, one legend row. The display name keeps the heaviest raw
  * spelling of the group (see normalizeModelRows).
  *
- * Palette slots are assigned by a stable hash of the normalized name with
- * linear probing past taken slots — NOT by usage rank. Rank assignment pinned
+ * Palette slots are assigned by a stable hash of the normalized name — NOT by
+ * usage rank, and not by "the next free slot" either. Rank assignment pinned
  * chart-1 (blue) onto whatever model leads the current window, so the
  * dominant model was blue in every window and the whole table reshuffled
  * whenever the tile changed; hashing keeps a model's hue constant across
  * windows and independent of how much it ran. The hues themselves live in
  * usage.module.css as CSS variables with a light and a dark variant, so the
  * colors ride the theme instead of being baked in here.
+ *
+ * A slot is only sixteen hues wide, so two names do collide in it — and the
+ * slot used to be the whole color, which painted the second model of a channel
+ * exactly like the first. A name's color now has a second axis: a shade of its
+ * slot mixed toward white or black. Both axes come from the name, so a model
+ * keeps its color in every window and the order the names arrive in never
+ * matters; only a full hash coincidence in both axes can repeat a color.
  * @module @linxin666/dsh-usage/client/model-colors
  */
 /** Fill for models past the palette (the collapsed tail). */
@@ -28,13 +35,15 @@ export declare function normalizeModelName(model: string): string;
 /**
  * Assign one palette color per normalized model name.
  *
- * The slot is `hash(name) % paletteSize` and nothing else — deliberately not
+ * The hue slot is `hash(name) % paletteSize` and nothing else — deliberately not
  * "the next free slot", which made a name's hue depend on which other names
  * happened to be in the same window: two models took chart-1 and chart-2, and a
  * window showing only the second recolored it to chart-1. Stability is the whole
  * promise of this table (the trend bars, the channel bars and the model rows
  * share it, and the user learns the colors), so a collision between two of the
- * sixteen hues is accepted rather than resolved by shifting someone else's hue.
+ * sixteen hues is resolved by the shade axis instead of by shifting someone
+ * else's hue: the bits above the slot pick a white/black mix of that same hue,
+ * which keeps the pair apart without letting any other name move.
  */
 export declare function assignModelColors(models: Iterable<string>): Map<string, string>;
 /**

@@ -76,8 +76,12 @@ days, not a calendar window, and the host offers no arbitrary-range route.
   `end - 6` (`to` missing), so a half-picked pair still renders a real window.
 - An inverted pair is swapped rather than rejected.
 - Both ends feed `<input type="date">` with `min`/`max` cross-constraints.
-- `dateKeysBetween()` caps a window at `CUSTOM_MAX_DAYS = 366` so a malformed
-  pair cannot walk off the calendar.
+- `dateKeysBetween()` caps a window at `TREND_MAX_DAYS = 731` (two years) so a
+  malformed pair cannot walk off the calendar; the trend chart buckets by the
+  same constant, which is what keeps "the widest window" and "the chart" from
+  disagreeing about how far back they look.
+- The from-date input carries `min = recorded[0]` once the ledger has any day at
+  all, so the picker cannot open a window that starts before the first record.
 
 ## Components (`src/client/UsageSectionCard.tsx`)
 
@@ -159,24 +163,39 @@ overwrite would drop them. The written document carries `repairedAt`; a second
 process that loaded the inflated copy sees the newer stamp on disk and adopts the
 corrected document whole, instead of max-merging its own stale totals back in.
 
-Retention is guarded the same way: a flush that would drop more than 30 % of the
-recorded days (with at least four days on file) is refused and reported as a note,
-so a clock jump cannot erase the history.
+Retention is guarded the same way, but the guard has to tell a jumped clock from
+a setting the user lowered on purpose: a clock jump puts *every* recorded day
+outside the window at once, while a shrink keeps the recent days and drops the
+rest. So a prune that would delete all of them (with at least four days on file)
+is refused and reported as a note; a shrink is honoured, once, and the threshold
+applies again afterwards. Keeping `retainDays` days also means dropping anything
+older than `today-(retainDays-1)`, so the widest window and "all" agree instead
+of the history keeping one extra day.
 
 Two more things the ledger file must survive, because both end in a silent wipe:
 
-- A `/export` envelope (`{schema, version, deviceId, exportedAt, ledger}`) is a
-  legitimate way to restore a backup, and `importPeer` refuses this device's own
-  export. `ledgerFromJson` unwraps the envelope; a file naming *another* device is
-  adopted under that device's name as a peer, and a document without a top-level
-  `days` object is quarantined instead of being read as an empty ledger.
+- A `/export` envelope (`{schema, version, deviceId, machine, exportedAt,
+  ledger}`) is a legitimate way to restore a backup, and `importPeer` refuses
+  this device's own export. `ledgerFromJson` unwraps the envelope; a file naming
+  *another* device is adopted under that device's name as a peer, and a document
+  without a top-level `days` object is quarantined instead of being read as an
+  empty ledger. `machine` travels through the round trip: an import that dropped
+  it would leave a file the peer scan can no longer attribute.
 - `usage-ledger.<id>.bak.json` is a copy, not a second machine. Device ids never
   contain a dot, so peer discovery skips any name carrying this device's prefix
-  (and any `.corrupt-` quarantine), and a peer document is trusted only when the
-  `deviceId` inside it matches its file name and its `machine` differs from this
-  machine's id. Every written document carries both fields, so renaming the host no
-  longer makes one machine look like two — the id is a host slug plus a digest of
-  host, platform and user.
+  (and any `.corrupt-` quarantine). A peer document is trusted only when the
+  `deviceId` inside it matches its file name **and** it names a machine id that
+  differs from this machine's. Two consequences follow, both of them the point:
+  a document with no `machine` at all is reported and left out of the totals
+  (counting an unverifiable file is how one machine's own history gets summed
+  twice), and a document naming *this* machine under another device name is
+  merged in (`mergeLedgerMax`) rather than added as a second device.
+- The machine id is minted once and pinned in `machine-id.json` inside the
+  persist dir. It has to survive a host rename, a user rename and a plugin
+  reinstall — exactly the events that change a derived identity — because it is
+  what tells "this machine, renamed" apart from "a second machine". The host
+  slug plus a digest of host, platform and user is only the fallback for a
+  read-only profile that cannot pin one.
 
 The pre-rename `usage-ledger.json` is read when this device's file is missing,
 and so is the `.migrated` sibling a successful migration leaves behind: that
@@ -289,10 +308,46 @@ account-menu path (open menu → click its 设置 item) remains as the silent
 fallback for hosts without the shortcuts service; an already-open dialog is
 only ever nav-picked, never re-opened.
 
+## Failure honesty
+
+A panel that reports numbers has to be honest about the ones it could not get.
+The rules, all of them visible in the UI rather than in the console:
+
+- A **failed day** keeps its bar slot but is drawn as a hatch with a dashed
+  outline (`.trendBar[data-failed='true']`) and says so on hover — before this,
+  the attribute was set and no rule read it, so a lost day looked like a day
+  with no usage.
+- A **failed aggregate** (the range path) marks every fallback row `failed`,
+  labels the chart as a failure with no total, and never claims "no records"
+  for days it simply could not fetch.
+- A **transport error** is stated in the user's language
+  (`usage.error.status`, "请求失败（HTTP {status}）…"), with the raw text — which
+  contains internal routes — kept in `title` instead of the sentence.
+- **Retries** back off (`pollIntervalMs * 2^n`, capped at 60 s) and stop after
+  `RETRY_MAX_ATTEMPTS = 5`; while retrying, tiles keep their last settled value
+  and the window ends at "—" rather than spinning forever.
+- A **window with nothing to fetch** (a ledger that only holds today, so 全部
+  spans today alone) reports its total instead of an idle spinner.
+- The **role="img"** label describes the plot only: the x labels and the legend
+  are siblings of the image role, so screen readers hear a description of the
+  bars and can still read the legend.
+
+Colours stay a pure function of the model name: `assignModelColors` picks
+`slot = hash % 16` and then a shade from a second axis
+(`floor(hash / 16) % 71`), mixing the palette colour toward white or black. Two
+names in one slot therefore differ in shade unless both axes coincide; the
+alternative — probing for a free slot — made a model's colour depend on which
+models happened to be present, which is exactly what made a tile switch
+repaint the whole chart.
+
+The three tabs are a real tablist: each tab carries `id`/`aria-controls`, only
+the selected one is in the tab order, arrow keys/Home/End move focus and
+selection together, and each panel is a `role="tabpanel"` labelled by its tab.
+
 ## Verification
 
 - `node harness/render-test.mjs` — jsdom, real bundle, saved live fixtures,
-  **76/76 checks**: eight tiles with correct labels/values/`aria-pressed`
+  **99/99 checks**: eight tiles with correct labels/values/`aria-pressed`
   (近 3 天 sums 今日 + 10-19; 近 6 个月 / 全部 read the range aggregate, which the
   stub answers only up to yesterday — 49.2 M / 584 calls — so their 135 M / 1251
   tiles prove the panel folded the live today in itself, and no range fetch may
@@ -316,12 +371,22 @@ only ever nav-picked, never re-opened.
   stating no total at all (and printing no totals row either), three equal
   models in one channel whose rows add up to exactly 100 %, a typed future
   custom date clamped back to today, and a refresh that refetches days it had
-  cached.
-- `node --experimental-strip-types harness/host-test.mjs` — 151 checks: range
+  cached. Round-6 additions: the failed-day hatch exists in the stylesheet and
+  paints on the bar, a failed aggregate states no total in its aria label, a
+  transport error is localized while the raw text stays in `title`, a retry
+  keeps the previous total and gives up after five attempts, a today-only
+  ledger sends no range request, the tablist keyboard contract (ArrowRight,
+  Home, End), the from-date `min`, and the legend readable outside the image
+  role.
+- `node --experimental-strip-types harness/host-test.mjs` — 162 checks: range
   aggregate + per-model series, route guards, device ledger, loopback fence,
   peak clock, the record-carried route of the live fold, transcript dedupe and
-  the judged repair, ledger quarantine and unreadable-file protection, and the
-  delta merge between two processes.
+  the judged repair, ledger quarantine and unreadable-file protection, the
+  delta merge between two processes, the pinned machine id (a renamed host is
+  the same machine), a peer document without a machine id being refused, the
+  retention guard telling a clock jump from a lowered `retainDays`, the note
+  registry not growing per poll, and legacy history being restored after a
+  quarantine.
 - Live bundle serving was proven against the running host:
   `GET /plugins/events` (loopback-exempt) lists the plugin row's `rev`, and
   `GET /plugins/??@linxin666/dsh-usage/client.js&rev=<rev>` returns the new

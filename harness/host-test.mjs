@@ -108,7 +108,8 @@ async function writeTranscript(home, lines, session = 'sess1') {
   const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
   await svc.loadPersisted()
   // The dedupe marker is a sidecar, not a ledger: only ledger files matter here.
-  const ledgerFiles = async () => (await readdir(join(home, 'dsh-usage'))).filter((name) => name !== 'usage-dedupe-marker.json')
+  const sidecars = new Set(['usage-dedupe-marker.json', 'machine-id.json'])
+  const ledgerFiles = async () => (await readdir(join(home, 'dsh-usage'))).filter((name) => !sidecars.has(name))
   check('starts with one local file', (await ledgerFiles()).length === 0, 'no file before a fold')
 
   // The overview's `today` follows the wall clock, so this section folds into
@@ -128,6 +129,7 @@ async function writeTranscript(home, lines, session = 'sess1') {
     schema: 'dsh-usage-ledger',
     version: 1,
     deviceId: 'laptop-4f7b21',
+    machine: 'machine-laptop',
     exportedAt: new Date().toISOString(),
     ledger: { version: 1, days: { [todayKey]: { buddy: { m1: { inputTokens: 500, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 1, cost: 0 } } } } },
   }
@@ -618,7 +620,7 @@ async function writeTranscript(home, lines, session = 'sess1') {
   const { UsageService } = await load('host/usage-service.ts')
   const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
   await writeFile(ledgerPath, JSON.stringify({
-    schema: 'dsh-usage-ledger', version: 1, deviceId: 'laptop-4f7b21', exportedAt: '2026-10-16T00:00:00.000Z',
+    schema: 'dsh-usage-ledger', version: 1, deviceId: 'laptop-4f7b21', machine: 'machine-laptop', exportedAt: '2026-10-16T00:00:00.000Z',
     ledger: { version: 1, days: { '2026-10-16': { buddy: { m1: { inputTokens: 500, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 5, cost: 0 } } } } },
   }))
   const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
@@ -632,7 +634,7 @@ async function writeTranscript(home, lines, session = 'sess1') {
   check('the adopted export still counts, as its own device',
     all.calls === 5 && all.inputTokens === 500, `${all.calls}/${all.inputTokens}`)
   check('the panel says where the file went',
-    String(svc.ledgerNote ?? '').includes('laptop-4f7b21'), String(svc.ledgerNote))
+    String(svc.overview().usage.ledgerNote ?? '').includes('laptop-4f7b21'), String(svc.overview().usage.ledgerNote))
   await svc.stop()
 }
 
@@ -885,7 +887,7 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await svc.stop()
 
   // A peer whose document agrees with its file name is still summed in.
-  await writeFile(join(home, 'dsh-usage', 'usage-ledger.laptop-abc123.json'), JSON.stringify({ deviceId: 'laptop-abc123', ledger: { version: 1, days: { '2026-10-13': { buddy: { m1: bucket } } } } }))
+  await writeFile(join(home, 'dsh-usage', 'usage-ledger.laptop-abc123.json'), JSON.stringify({ deviceId: 'laptop-abc123', machine: 'machine-laptop', ledger: { version: 1, days: { '2026-10-13': { buddy: { m1: bucket } } } } }))
   const third = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
   await third.loadPersisted()
   check('a matching peer is summed in', third.overview().usage.days.find((row) => row.date === '2026-10-13')?.totals.calls === 9, JSON.stringify(third.overview().usage.days).slice(0, 160))
@@ -1082,6 +1084,117 @@ async function writeTranscript(home, lines, session = 'sess1') {
   check('a field-wise merge keeps reasoning tokens', merged.reasoningTokens === 500, JSON.stringify(merged))
   check('a field-wise merge keeps the larger call count', merged.calls === 2, JSON.stringify(merged))
   check('a field-wise merge keeps the larger value of every field', totalTokens(merged) === 3000, String(totalTokens(merged)))
+}
+
+// ---- a peer must prove which machine wrote it ---------------------------
+// Counting an unverifiable file as a second device is how one machine's own
+// history gets summed twice, so a document without a machine id is reported and
+// left out of the totals.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const todayKey = localDateKey(Date.now())
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), JSON.stringify({ version: 1, days: { [todayKey]: { buddy: { m1: bucket(1000, 10) } } } }))
+  await writeFile(join(dir, 'usage-ledger.peerone.json'), JSON.stringify({ version: 1, deviceId: 'peerone', days: { [todayKey]: { peer: { p1: bucket(700, 7) } } } }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  check('a peer without a machine id is not summed', svc.overview().usage.all.totals.calls === 10, String(svc.overview().usage.all.totals.calls))
+  check('the unverified peer is reported', String(svc.overview().usage.devicesError ?? '').includes('no machine id'), String(svc.overview().usage.devicesError))
+  await svc.stop()
+}
+
+// ---- this machine under another name is the same machine ----------------
+// The machine id is minted once and kept in machine-id.json precisely so that a
+// rename, or a file copied under a different device name, is recognised as this
+// machine instead of being added on top of it.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const todayKey = localDateKey(Date.now())
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), JSON.stringify({ version: 1, days: { [todayKey]: { buddy: { m1: bucket(1000, 10) } } } }))
+  const first = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await first.loadPersisted()
+  await first.stop()
+  const pinned = JSON.parse(await readFile(join(dir, 'machine-id.json'), 'utf8')).machineId
+  // The same history, copied out under the old host name, and slightly larger.
+  await writeFile(join(dir, 'usage-ledger.oldhost-abc123.json'), JSON.stringify({
+    version: 1, deviceId: 'oldhost-abc123', machine: pinned,
+    days: { [todayKey]: { buddy: { m1: bucket(1200, 12) } } },
+  }))
+  const second = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await second.loadPersisted()
+  const totals = second.overview().usage.all.totals
+  check('a renamed copy of this machine is not a second device', second.overview().usage.devices.length === 1, JSON.stringify(second.overview().usage.devices))
+  check('a renamed copy merges instead of summing', totals.calls === 12 && totals.inputTokens === 1200, JSON.stringify(totals))
+  check('the merge is reported', String(second.overview().usage.ledgerNote ?? '').includes('oldhost-abc123'), String(second.overview().usage.ledgerNote))
+  await second.stop()
+}
+
+// ---- retention: a shrink is honoured, a clock jump is refused -----------
+// The guard exists for a jumped clock, which makes every recorded day fall
+// outside the window at once. A user who lowers the setting keeps the recent
+// days, so the same guard must not veto the shrink.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const days = {}
+  for (let back = 0; back < 30; back += 1) {
+    const at = Date.now() - back * 86_400_000
+    days[localDateKey(at)] = { buddy: { m1: bucket(100, 1) } }
+  }
+  await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), JSON.stringify({ version: 1, days }))
+  const shrunk = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 7 })
+  await shrunk.loadPersisted()
+  const kept = Object.keys(shrunk.ledger.days).length
+  check('a lower retention drops the older days', kept === 7, String(kept))
+  await shrunk.stop()
+
+  // Every recorded day outside the window: the clock moved, not the setting.
+  const jumpedHome = await freshHome()
+  const jumpedDir = join(jumpedHome, 'dsh-usage')
+  const old = {}
+  for (let back = 400; back < 430; back += 1) {
+    const at = Date.now() - back * 86_400_000
+    old[localDateKey(at)] = { buddy: { m1: bucket(100, 1) } }
+  }
+  await writeFile(join(jumpedDir, 'usage-ledger.' + localDeviceId() + '.json'), JSON.stringify({ version: 1, days: old }))
+  const jumped = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await jumped.loadPersisted()
+  check('a jumped clock keeps the history', Object.keys(jumped.ledger.days).length === 30, String(Object.keys(jumped.ledger.days).length))
+  check('the refused prune is reported', String(jumped.overview().usage.ledgerNote ?? '').includes('retention skipped'), String(jumped.overview().usage.ledgerNote))
+  await jumped.stop()
+}
+
+// ---- a quarantined ledger is rebuilt from the pre-migration file --------
+// The oldest days predate the transcripts this build can replay, so the ledger
+// file is their only copy. Quarantining a corrupt one must not take them with it.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  await writeFile(join(dir, 'usage-ledger.json.migrated'), JSON.stringify({ version: 1, days: { '2026-09-21': { buddy: { m1: bucket(4000, 3) } } } }))
+  await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), '{"version":1,"days":{"2026-10-20":')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const restored = svc.overview().usage.days.find((row) => row.date === '2026-09-21')
+  check('the pre-migration history survives a corrupt ledger', restored?.totals.calls === 3, JSON.stringify(svc.overview().usage.days.map((row) => row.date)))
+  check('the rebuild is reported', String(svc.overview().usage.ledgerNote ?? '').includes('pre-migration'), String(svc.overview().usage.ledgerNote))
+  check('the corrupt file is still quarantined', String(svc.overview().usage.ledgerError ?? '').includes('corrupt'), String(svc.overview().usage.ledgerError))
+  await svc.stop()
 }
 
 const failed = report.filter((row) => !row.ok)

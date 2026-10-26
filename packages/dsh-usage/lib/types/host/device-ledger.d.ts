@@ -48,15 +48,25 @@ export declare function isDeviceId(value: string): boolean;
  */
 export declare function localDeviceId(): string;
 /**
- * Full digest of this machine's identity, written into every ledger file.
+ * Full digest of this machine's identity, derived from host, platform and user.
  *
- * The device id is that digest truncated, so a hostname rename (or a change of
- * user) mints a NEW id while the old file keeps the old one — and the old file
- * then looks like a peer device holding a copy of this machine's own history.
- * The untruncated digest is what lets a reader recognise that copy: two files
- * with the same `machine` are one machine, whatever their ids say.
+ * Only a fallback: the authoritative machine id is the random one this plugin
+ * persists (`ensureMachineId`), because a digest that follows the host name
+ * changes when the machine is renamed — and then the file written under the old
+ * name looks like a peer holding a copy of this machine's own history.
  */
 export declare function localMachineId(): string;
+/** Name of the file that pins this machine's identity inside the persist dir. */
+export declare const MACHINE_ID_FILE = "machine-id.json";
+/**
+ * The machine id this profile has already minted, creating one on first run.
+ *
+ * Random rather than derived, and written once: it has to survive a host rename,
+ * a user rename, and a reinstall of the plugin, because it is what tells "this
+ * machine, renamed" apart from "a second machine". A digest of the host name
+ * cannot do that — it changes exactly when the rename happens.
+ */
+export declare function ensureMachineId(dir: string): Promise<string>;
 /** File name a device's ledger lives under. */
 export declare function ledgerFileName(deviceId: string): string;
 /**
@@ -86,6 +96,7 @@ export interface LoadedLedgerFile {
  */
 export declare function ledgerFileDocument(doc: Readonly<UsageLedgerDocument>, extra?: {
     repairedAt?: number;
+    machine?: string;
 }): UsageLedgerDocument & {
     deviceId: string;
     machine: string;

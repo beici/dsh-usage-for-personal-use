@@ -20,7 +20,7 @@ import type { BalanceParse, PlanParse } from '../core/adapters.ts'
 import { foldAliasRoutes } from '../core/provider-routes.ts'
 import { deepseekModelSpend } from '../core/pricing.ts'
 import { countPrunable, createLedgerDocument, deserializeLedger, foldUsage, ledgerDayKeys, localDateKey, maxTotals, mergeLedgerDelta, mergeLedgerMax, mergeLedgerSum, pruneLedger, subtractTotals, summarizeDays, totalTokens } from '../core/ledger.ts'
-import { deviceIdOfFile, isDeviceId, ledgerFileDocument, LEGACY_LEDGER_FILE, ledgerFileName, localDeviceId, localMachineId, parsePeerLedger } from './device-ledger.ts'
+import { deviceIdOfFile, ensureMachineId, isDeviceId, ledgerFileDocument, LEGACY_LEDGER_FILE, ledgerFileName, localDeviceId, localMachineId, parsePeerLedger } from './device-ledger.ts'
 import type { LoadedLedgerFile } from './device-ledger.ts'
 import { collectSessionLogUsage } from './session-log-backfill.ts'
 import type { BalanceView, CredentialKind, DeviceLedgerEntryView, ObservedSpendView, PlanView, ProviderSnapshotState, ProviderSnapshotView, UsageDayView, UsageLedgerDocument, UsageLedgerExport, UsageOverviewView, UsageRangeResponse, UsageTokenTotals } from '../core/types.ts'
@@ -426,10 +426,35 @@ export class UsageService {
    * short by the per-start cap, or a file that turned out to belong to another
    * device. Shown next to `ledgerError`, because a silently shortened history
    * reads exactly like a complete one.
+   *
+   * Keyed by kind, so a condition that repeats every flush states itself once
+   * instead of growing a sentence longer on every write.
    */
-  private ledgerNote: string | undefined
-  /** Timestamp of the last duplicate repair written by this process. */
-  private repairedAt: number | undefined
+  private readonly notes = new Map<string, string>()
+  /** The document as it was before the first load absorb, so a retry starts clean. */
+  private loadBaseline: UsageLedgerDocument | undefined
+  /** True once the persisted document has been folded into memory this boot. */
+  private loadAbsorbed = false
+  /**
+   * The smallest retention this process has seen applied.
+   *
+   * A lower setting than this means the user shrank the window on purpose, which
+   * the "clock jumped" guard in `pruneForWrite` must not veto.
+   */
+  private retentionSeen: number
+  /**
+   * This machine's identity as recorded in every file it writes.
+   *
+   * Pinned in `machine-id.json` on first run rather than derived from the host
+   * name: a rename must not make this machine look like a second device.
+   */
+  private machine = localMachineId()
+  /**
+   * The deduped replay of this boot, kept so a flush that must not max-merge
+   * (a file another process repaired) can still add the buckets only the replay
+   * recovers — those are not expressible as growth since our last write.
+   */
+  private replayDoc: UsageLedgerDocument | undefined
 
   private ledger: UsageLedgerDocument = createLedgerDocument()
   /**
@@ -476,6 +501,7 @@ export class UsageService {
     this.deviceId = localDeviceId()
     this.ledgerPath = join(this.persistDir, ledgerFileName(this.deviceId))
     this.snapshotsPath = join(this.persistDir, 'provider-snapshots.json')
+    this.retentionSeen = options.retainDays
   }
 
   /** Start the listeners, load persisted state, and arm the first poll. */
@@ -528,6 +554,9 @@ export class UsageService {
       schema: LEDGER_EXPORT_SCHEMA,
       version: 1,
       deviceId: this.deviceId,
+      // The machine travels with the export: the receiving side needs it to tell
+      // a real second machine from a copy of its own history.
+      machine: this.machine,
       exportedAt: new Date().toISOString(),
       ledger: this.ledger,
     }
@@ -569,6 +598,10 @@ export class UsageService {
       schema: LEDGER_EXPORT_SCHEMA,
       version: 1,
       deviceId: claimedId,
+      // Carry the exporting machine's id through the round trip: without it the
+      // file can no longer prove where it came from, and the peer scan refuses
+      // to count a document it cannot attribute.
+      ...(doc.machine === undefined ? {} : { machine: doc.machine }),
       exportedAt: new Date().toISOString(),
       ledger: doc.doc,
     })
@@ -651,7 +684,7 @@ export class UsageService {
         deviceId: this.deviceId,
         ...(this.peersError !== undefined ? { devicesError: this.peersError } : {}),
         ...(this.ledgerError !== undefined ? { ledgerError: this.ledgerError } : {}),
-        ...(this.ledgerNote !== undefined ? { ledgerNote: this.ledgerNote } : {}),
+        ...(this.ledgerNoteText() !== undefined ? { ledgerNote: this.ledgerNoteText() } : {}),
       },
     }
   }
@@ -948,7 +981,15 @@ export class UsageService {
 
   private async loadPersisted(): Promise<void> {
     try {
+      // The persisted document is folded in with `absorb`, which ADDS. A retry
+      // after a failure that happened past the absorb would therefore add the
+      // same history again — and again on every retry, up to 2^6 times. The
+      // baseline restores the pre-absorb document first, so a retry sees exactly
+      // what the first attempt saw.
+      if (this.loadBaseline === undefined) this.loadBaseline = structuredClone(this.ledger)
+      else if (!this.loadAbsorbed) this.ledger = structuredClone(this.loadBaseline)
       await this.loadPersistedOnce()
+      if (this.loaded) this.loadBaseline = undefined
     } catch (error) {
       // Nothing below may reject out of the loader: it is started without an
       // await, and an unhandled rejection ends the host process.
@@ -958,7 +999,10 @@ export class UsageService {
   }
 
   private async loadPersistedOnce(): Promise<void> {
+    this.machine = await ensureMachineId(this.persistDir)
     let read = await this.readLedgerFile()
+    /** True when this boot starts without the history the ledger used to hold. */
+    let lostHistory = false
     if (read.kind === 'unreadable') {
       // Keep the write guard armed: nothing may replace a file we could not read.
       this.ledgerError = `ledger unreadable (${read.error})`
@@ -976,11 +1020,11 @@ export class UsageService {
       if (target !== undefined && !taken) {
         const moved = await rename(this.ledgerPath, target).then(() => true, () => false)
         if (moved) {
-          this.note(`ledger named device ${foreign}; adopted as ${basename(target)}`)
+          this.note(`adopted:${foreign}`, `ledger named device ${foreign}; adopted as ${basename(target)}`)
           read = { kind: 'missing' }
         }
       } else if (target !== undefined) {
-        this.note(`ledger named device ${foreign}, whose file is already present`)
+        this.note(`adopted:${foreign}`, `ledger named device ${foreign}, whose file is already present`)
       }
       if (read.kind === 'corrupt') {
         // Quarantine rather than discard: the bytes may still be salvageable by
@@ -995,22 +1039,33 @@ export class UsageService {
           this.scheduleLoadRetry()
           return
         }
+        lostHistory = true
       }
     }
     if (read.kind === 'ok') {
-      this.absorb(this.ledger, read.doc)
+      // `absorb` adds, so it may run only once per process: a retry after a later
+      // failure would otherwise fold the same file in a second time.
+      if (!this.loadAbsorbed) {
+        this.absorb(this.ledger, read.doc)
+        this.loadAbsorbed = true
+      }
       // Remember which correction this file already carries, so a flush from
       // another process can be recognised as newer than what we loaded.
       this.seenRepairedAt = read.repairedAt ?? 0
     } else if (read.kind === 'missing') await this.adoptLegacyLedger()
+    // The oldest days have no transcripts: the ledger is the only copy, and a
+    // corrupt file takes them with it. The pre-migration file still holds them,
+    // so a boot that just lost its ledger folds that history back in.
+    if (lostHistory) await this.restoreMigratedHistory()
     await this.refreshPeers()
     await this.loadSnapshots()
     // One replay pass serves both the backfill and the repair.
     const replay = await this.replaySessionLogs()
+    this.replayDoc = replay.doc
     if (replay.skipped > 0) {
       // Say it out loud: a replay cut short by the per-start cap would otherwise
       // read as "the transcripts hold nothing older", i.e. as lost history.
-      this.note(`${replay.skipped} older transcripts beyond the replay cap of ${replay.files} were not replayed`)
+      this.note('replay-cap', `${replay.skipped} older transcripts beyond the replay cap of ${replay.files} were not replayed`)
     }
     // The repair subtracts from the buckets as written, judged against the
     // deduped replay of the same pass and against what an earlier start already
@@ -1063,9 +1118,26 @@ export class UsageService {
     this.scheduleFlush()
   }
 
-  /** Append a non-fatal note to the one the panel shows beside the numbers. */
-  private note(text: string): void {
-    this.ledgerNote = this.ledgerNote === undefined ? text : `${this.ledgerNote}; ${text}`
+  /**
+   * Record a non-fatal note the panel shows beside the numbers.
+   *
+   * Notes are keyed: a condition that holds on every flush ("retention
+   * skipped …") must not append itself again and again, or the line the user
+   * reads grows for as long as the process runs.
+   */
+  private note(kind: string, text: string): void {
+    this.notes.set(kind, text)
+  }
+
+  /** Drop a note whose condition no longer holds. */
+  private clearNote(kind: string): void {
+    this.notes.delete(kind)
+  }
+
+  /** The notes as one line, oldest first, capped so the panel stays readable. */
+  private ledgerNoteText(): string | undefined {
+    const texts = [...this.notes.values()].slice(-3)
+    return texts.length === 0 ? undefined : texts.join('; ')
   }
 
   /** Retry a ledger read that failed for a transient reason (lock, sharing). */
@@ -1298,6 +1370,40 @@ export class UsageService {
    * this device's file is deleted or damaged. Re-adopting it is safe — the fold
    * is a merge, and the buckets it restores are the ones the file states.
    */
+  /**
+   * Fold the pre-migration history back in after the ledger was lost.
+   *
+   * The oldest days predate the session transcripts this build replays, so the
+   * ledger file is their only copy. When a corrupt file is quarantined the fresh
+   * document starts empty and that history would be gone for good; the legacy
+   * file (or its `.migrated` sibling) still states it, and the merge is a max —
+   * it can only restore days the new document does not have.
+   */
+  private async restoreMigratedHistory(): Promise<void> {
+    const legacyPath = join(this.persistDir, LEGACY_LEDGER_FILE)
+    let restored = 0
+    for (const path of [legacyPath, `${legacyPath}.migrated`]) {
+      const raw = await readFile(path, 'utf8').catch(() => undefined)
+      if (raw === undefined) continue
+      try {
+        const doc = deserializeLedger(JSON.parse(raw))
+        const days = Object.keys(doc.days).length
+        if (days === 0) continue
+        mergeLedgerMax(this.ledger, doc)
+        restored += days
+      } catch {
+        // Unparseable: leave it alone, the quarantine note already says the
+        // current file was unreadable.
+      }
+    }
+    if (restored === 0) return
+    // The restored days are as old as the history gets: apply retention to them
+    // the same way a normal load would, or the merge would resurrect days the
+    // user already let go.
+    pruneLedger(this.ledger, localDateKey(Date.now()), this.options.retainDays)
+    this.note('legacy-restore', 'the quarantined ledger was rebuilt from the pre-migration file')
+  }
+
   private async adoptLegacyLedger(): Promise<void> {
     const legacyPath = join(this.persistDir, LEGACY_LEDGER_FILE)
     const migratedPath = `${legacyPath}.migrated`
@@ -1355,7 +1461,7 @@ export class UsageService {
     }
     const peers: LoadedLedgerFile[] = []
     const failures: string[] = []
-    const localMachine = localMachineId()
+    const localMachine = this.machine
     for (const name of names) {
       const file = basename(name)
       const deviceId = deviceIdOfFile(file)
@@ -1383,8 +1489,23 @@ export class UsageService {
           failures.push(`${name}: names device ${parsed.deviceId}`)
           continue
         }
+        if (parsed.machine === undefined) {
+          // Written before this build stamped its machine, or placed by hand: it
+          // cannot prove which machine it came from. Counting it as a device is
+          // how one machine's own history gets summed twice, so it is reported
+          // and left out until it is re-exported by a build that stamps identity.
+          failures.push(`${name}: no machine id in the document, not summed`)
+          continue
+        }
         if (parsed.machine !== undefined && parsed.machine === localMachine) {
-          failures.push(`${name}: written by this machine, not summed`)
+          // This machine under an older name: the host was renamed, so a new
+          // device id was minted while this file kept the old one. Its calls are
+          // this machine's own, so they are folded in (max merge: the same days
+          // are also replayed from the transcripts) instead of being summed as a
+          // second device — and the file itself is left where it is, because a
+          // peer may still be reading it.
+          mergeLedgerMax(this.ledger, parsed.doc)
+          this.note(`renamed:${deviceId}`, `${name}: this machine under an older name, folded in rather than summed`)
           continue
         }
         // The file name is authoritative for which device it is: a renamed
@@ -1447,6 +1568,17 @@ export class UsageService {
           // our last write.
           this.seenRepairedAt = stamp
           if (this.ledgerWritten !== undefined) mergeLedgerDelta(target, this.ledger, this.ledgerWritten)
+          // A replay recovers buckets the file never held; a delta cannot carry
+          // them, so they are merged in explicitly (max: never lowers a bucket).
+          if (this.replayDoc !== undefined) mergeLedgerMax(target, this.replayDoc)
+        } else if (this.seenRepairedAt > 0 && disk.repairedAt === undefined) {
+          // We know this file was corrected, but the copy on disk carries no
+          // stamp: a process running the previous build rewrote it whole. Its
+          // document holds the inflated buckets we already repaired, so a max
+          // merge would undo the repair; take our own growth only and stamp the
+          // file again below.
+          this.note('stale-writer', 'a build without ledger identity rewrote the file; its inflated buckets were not re-adopted')
+          if (this.ledgerWritten !== undefined) mergeLedgerDelta(target, this.ledger, this.ledgerWritten)
         } else {
           if (this.ledgerWritten !== undefined) mergeLedgerDelta(target, this.ledger, this.ledgerWritten)
           // A replay recovers buckets the file never held: that is not
@@ -1488,10 +1620,18 @@ export class UsageService {
     const todayKey = localDateKey(Date.now())
     const days = Object.keys(doc.days).length
     const prunable = countPrunable(doc, todayKey, this.options.retainDays)
-    if (days >= 4 && prunable > days * 0.3) {
-      this.note(`retention skipped: the clock would drop ${prunable} of ${days} recorded days`)
+    // A user who lowers retention is asking for exactly this prune, so one shrink
+    // is honoured (the threshold exists for a clock that jumped, not for a
+    // settings change). A jump looks different from a shrink: it makes *every*
+    // recorded day fall outside the window at once, while a shrink keeps the
+    // recent days and drops the rest.
+    const shrank = this.options.retainDays < this.retentionSeen
+    this.retentionSeen = Math.min(this.retentionSeen, this.options.retainDays)
+    if (!shrank && days >= 4 && prunable === days) {
+      this.note('retention', `retention skipped: the clock would drop all ${days} recorded days`)
       return 0
     }
+    if (prunable === 0) this.clearNote('retention')
     return pruneLedger(doc, todayKey, this.options.retainDays)
   }
 
@@ -1557,12 +1697,17 @@ export class UsageService {
       // pruned; writing it back unchanged would resurrect them for one flush
       // cycle (and forever, if the process dies in between).
       this.pruneForWrite(target)
+      // Nothing was corrected: do not touch the file. Rewriting it here would
+      // drop the stamp another process left (this one may have loaded before the
+      // correction), and the next flush of that other process would then max-merge
+      // the inflated totals straight back in.
+      if (corrected.size === 0) return { corrected, removedTokens: 0 }
       // The stamp tells every other process holding a stale copy that this file
       // is now corrected, so their next flush adopts it instead of max-merging
-      // the inflated totals back in. Only a real correction moves it: stamping a
-      // file nothing was written to would claim a repair that never happened.
-      if (corrected.size > 0) this.seenRepairedAt = Date.now()
-      await writeJsonAtomic(this.ledgerPath, ledgerFileDocument(target, this.seenRepairedAt > 0 ? { repairedAt: this.seenRepairedAt } : undefined))
+      // the inflated totals back in. It only moves forward: a clock that steps
+      // back must not lower a stamp another process already recorded.
+      this.seenRepairedAt = Math.max(this.seenRepairedAt, Date.now())
+      await writeJsonAtomic(this.ledgerPath, ledgerFileDocument(target, { machine: this.machine, repairedAt: this.seenRepairedAt }))
       // Our own growth is measured against what is now on disk; the buckets the
       // replay recovered but this document lacks are added by the next flush.
       this.ledgerWritten = structuredClone(target)
@@ -1616,7 +1761,7 @@ export class UsageService {
     } catch (error) {
       // Counting is unaffected; the voucher's observed spend is what will not
       // survive a restart, so the panel says so.
-      this.note(`snapshot write failed (${error instanceof Error ? error.message : String(error)})`)
+      this.note('snapshots', `snapshot write failed (${error instanceof Error ? error.message : String(error)})`)
     }
   }
 

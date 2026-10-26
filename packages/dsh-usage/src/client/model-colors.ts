@@ -9,14 +9,21 @@
  * stacked segment, one legend row. The display name keeps the heaviest raw
  * spelling of the group (see normalizeModelRows).
  *
- * Palette slots are assigned by a stable hash of the normalized name with
- * linear probing past taken slots — NOT by usage rank. Rank assignment pinned
+ * Palette slots are assigned by a stable hash of the normalized name — NOT by
+ * usage rank, and not by "the next free slot" either. Rank assignment pinned
  * chart-1 (blue) onto whatever model leads the current window, so the
  * dominant model was blue in every window and the whole table reshuffled
  * whenever the tile changed; hashing keeps a model's hue constant across
  * windows and independent of how much it ran. The hues themselves live in
  * usage.module.css as CSS variables with a light and a dark variant, so the
  * colors ride the theme instead of being baked in here.
+ *
+ * A slot is only sixteen hues wide, so two names do collide in it — and the
+ * slot used to be the whole color, which painted the second model of a channel
+ * exactly like the first. A name's color now has a second axis: a shade of its
+ * slot mixed toward white or black. Both axes come from the name, so a model
+ * keeps its color in every window and the order the names arrive in never
+ * matters; only a full hash coincidence in both axes can repeat a color.
  * @module @linxin666/dsh-usage/client/model-colors
  */
 
@@ -42,21 +49,47 @@ function hashOf(name: string): number {
   return hash >>> 0
 }
 
+/** Lowest share of the slot hue a shade keeps, in percent. */
+const SHADE_MIN_PERCENT = 58
+
+/** Percent steps a shade walks above the minimum (58 % … 92 %). */
+const SHADE_SPAN = 35
+
+/** Shades a slot can carry: the hue itself plus white and black at every step. */
+const SHADE_COUNT = SHADE_SPAN * 2 + 1
+
+/**
+ * One slot in one shade: shade 0 is the slot's own hue (`--dsw-chart-N`), every
+ * other shade mixes that hue toward white or black, walking 58 % … 92 % of the
+ * hue. A shade therefore reads as the same hue in a lighter or darker tone —
+ * apart from its slot neighbour, but never so far that it leaves the light/dark
+ * skin the palette defines.
+ */
+function slotColor(slot: number, shade: number): string {
+  const hue = `var(--dsw-chart-${slot + 1})`
+  if (shade === 0) return hue
+  const percent = SHADE_MIN_PERCENT + Math.ceil(shade / 2) - 1
+  return `color-mix(in srgb, ${hue} ${percent}%, ${shade % 2 === 1 ? 'white' : 'black'})`
+}
+
 /**
  * Assign one palette color per normalized model name.
  *
- * The slot is `hash(name) % paletteSize` and nothing else — deliberately not
+ * The hue slot is `hash(name) % paletteSize` and nothing else — deliberately not
  * "the next free slot", which made a name's hue depend on which other names
  * happened to be in the same window: two models took chart-1 and chart-2, and a
  * window showing only the second recolored it to chart-1. Stability is the whole
  * promise of this table (the trend bars, the channel bars and the model rows
  * share it, and the user learns the colors), so a collision between two of the
- * sixteen hues is accepted rather than resolved by shifting someone else's hue.
+ * sixteen hues is resolved by the shade axis instead of by shifting someone
+ * else's hue: the bits above the slot pick a white/black mix of that same hue,
+ * which keeps the pair apart without letting any other name move.
  */
 export function assignModelColors(models: Iterable<string>): Map<string, string> {
   const colors = new Map<string, string>()
   for (const name of new Set(models)) {
-    colors.set(name, `var(--dsw-chart-${(hashOf(name) % MODEL_PALETTE_SIZE) + 1})`)
+    const hash = hashOf(name)
+    colors.set(name, slotColor(hash % MODEL_PALETTE_SIZE, Math.floor(hash / MODEL_PALETTE_SIZE) % SHADE_COUNT))
   }
   return colors
 }

@@ -189,6 +189,12 @@ function check(name, ok, detail) {
   console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail === undefined ? '' : ' :: ' + detail))
 }
 
+// jsdom does not apply the stylesheet (the bundle carries class names, not
+// rules), so the two checks that are about CSS read the source instead: a marker
+// nobody can see and a rule nobody shipped look the same from the DOM.
+const CLIENT_SRC = join(ROOT, 'packages/dsh-usage/src/client')
+function readClient(name) { return readFileSync(join(CLIENT_SRC, name), 'utf8') }
+
 // ---- assertions ---------------------------------------------------------
 const tiles = qa('[data-dsh-part="range-tiles"] button')
 check('eight range tiles', tiles.length === 8, 'got ' + tiles.length)
@@ -714,12 +720,39 @@ console.log('   plans tab text:', text(container).slice(0, 200))
     card === null ? 'no card' : text(card).slice(0, 120))
   // The trend chart must not paint a failed request as an empty day: those are
   // different facts and the tooltip has to say which one it is.
-  const chart = host.querySelector('[data-dsh-part="trend-chart"]')
+  // The plot is the image; the legend is a sibling, so the label lives on the
+  // element that carries role="img" and describes only the chart.
+  const figure = host.querySelector('[data-dsh-part="trend-chart"] [role="img"]')
   check('the trend chart names itself for screen readers',
-    chart !== null && (chart.getAttribute('aria-label') ?? '').includes('用量趋势'),
-    chart === null ? 'no chart' : String(chart.getAttribute('aria-label')))
+    figure !== null && (figure.getAttribute('aria-label') ?? '').includes('用量趋势'),
+    figure === null ? 'no figure' : String(figure.getAttribute('aria-label')))
+  // Inside role="img" the legend's text is replaced by the label and lost; it
+  // has to stay outside so each series keeps its name.
+  const legend = host.querySelector('[data-dsh-part="trend-legend"]')
+  check('the legend stays readable outside the image role',
+    legend !== null && figure !== null && !figure.contains(legend) && text(legend).length > 0,
+    legend === null ? 'no legend' : text(legend).slice(0, 60))
   const failedBars = [...host.querySelectorAll('[data-dsh-part="trend-bar"][data-failed="true"]')]
   check('a day that failed to load is marked failed, not empty', failedBars.length > 0, String(failedBars.length))
+  // The marker has to be visible: a failed bar has no segments to paint, so the
+  // stylesheet gives that state an outline and a hatch instead of a fill.
+  const failedRule = /\.trendBar\[data-failed=['"]true['"]\]\s*\{([^}]*)\}/.exec(readClient('usage.module.css'))
+  check('the failed-day marker is visible in the stylesheet',
+    failedRule !== null && /outline:/.test(failedRule[1]) && /background-image:/.test(failedRule[1]),
+    failedRule === null ? 'no rule' : failedRule[1].replace(/\s+/g, ' ').trim().slice(0, 80))
+  // jsdom ships no stylesheet (the bundle carries class names, not rules), so
+  // the shipped declarations are replayed against the rendered bar: a marker
+  // that does not paint is the same as no marker.
+  if (failedRule === null || failedBars.length === 0) {
+    check('the failed-day marker paints on the bar', false, 'no rule or no failed bar')
+  } else {
+    const probe = window.document.createElement('style')
+    probe.textContent = `.${failedBars[0].className}[data-failed='true'] {${failedRule[1]}}`
+    window.document.head.appendChild(probe)
+    const painted = window.getComputedStyle(failedBars[0]).backgroundImage
+    probe.remove()
+    check('the failed-day marker paints on the bar', painted !== '' && painted !== 'none', painted.slice(0, 60))
+  }
   await act(async () => {
     failedBars[0]?.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }))
     await new Promise((r) => setTimeout(r, 40))
@@ -968,6 +1001,376 @@ console.log('   plans tab text:', text(container).slice(0, 200))
   const today = snapshot.usage.today.date
   check('a typed future date clamps to today', inputs[1]?.value === today && inputs[0]?.value <= today,
     `from=${inputs[0]?.value} to=${inputs[1]?.value} today=${today}`)
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- a window with nothing to fetch is loaded, not loading --------------
+// A ledger that only holds today gives the 全部 window a span ending before it
+// starts: there is nothing to ask the host for. That window is empty, not
+// pending — a pending tile shows "…" forever, which is what it used to do.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const todayOnly = {
+    ...snapshot,
+    usage: { ...snapshot.usage, availableDays: [snapshot.usage.today.date] },
+  }
+  const state = { snapshot: todayOnly, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  const asked = []
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange: (from, to) => { asked.push(from + ':' + to); return loadRange(from, to) },
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+  const tileOf = (label) => {
+    const tile = [...host.querySelectorAll('[data-dsh-part="range-tiles"] button')].find((button) => text(button).includes(label))
+    return tile === undefined ? 'missing' : text(tile)
+  }
+  const allTile = tileOf('全部')
+  check('a window with nothing to fetch states a total, not a spinner',
+    !allTile.includes('…') && /\d/.test(allTile), allTile)
+  // The span ends before it starts, so there is no request to make: the tile
+  // reads the live day and the window is done.
+  const degenerate = snapshot.usage.today.date + ':' + snapshot.usage.today.date
+  check('a today-only ledger sends no range request for 全部', !asked.includes(degenerate), JSON.stringify(asked))
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- a failed aggregate paints no empty days and states no total --------
+// One failed range request used to paint a full row of "no records" bars while
+// the aria label still claimed a total, and the card echoed the internal route
+// (`usage api/dsh-usage/range?from=… failed: 500`) at the user.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const rawError = 'usage api/dsh-usage/range?from=2026-04-25&to=2026-10-19 failed: 500'
+  const state = { snapshot, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange: async () => { throw new Error(rawError) },
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+  const halfYear = [...host.querySelectorAll('[data-dsh-part="range-tiles"] button')]
+    .find((button) => text(button).includes('近 6 个月'))
+  await act(async () => {
+    halfYear?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 150))
+  })
+
+  const bars = [...host.querySelectorAll('[data-dsh-part="trend-bar"]')]
+  // A bar with neither a recorded total nor a failure is the "no usage
+  // recorded" lie this window must not tell: every drawn day is either known to
+  // have usage or known to have failed.
+  const lies = bars.filter((bar) => bar.getAttribute('data-failed') !== 'true' && bar.getAttribute('data-recorded') !== 'true')
+  check('a failed aggregate draws no confident empty day', bars.length > 1 && lies.length === 0,
+    'bars=' + bars.length + ' empty=' + lies.length)
+  const figure = host.querySelector('[data-dsh-part="trend-chart"] [role="img"]')
+  const label = String(figure?.getAttribute('aria-label') ?? '')
+  check('a failed aggregate states no total in the aria label',
+    figure !== null && label.includes('部分日期加载失败') && !label.includes('合计'), label)
+  const card = host.querySelector('[data-dsh-part="window-card"]')
+  const notice = card === null ? null : card.querySelector('[role="status"]')
+  check('a transport error is stated in the user\'s language',
+    notice !== null && text(notice).includes('请求失败（HTTP 500）') && !text(notice).includes('usage api'),
+    notice === null ? 'no notice' : text(notice))
+  // The route and the code still have to be reachable for a bug report — they
+  // live in the title, not in the sentence.
+  check('the raw transport text stays in the title',
+    notice !== null && String(notice.getAttribute('title') ?? '').includes('failed: 500'),
+    notice === null ? 'no notice' : String(notice.getAttribute('title')))
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- a retry keeps the numbers it already has ---------------------------
+// Refreshing a window whose refetch fails used to blank every tile back to "…"
+// for the duration, though the numbers on screen were still the best answer.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const state = { snapshot, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  let gated = false
+  const pending = []
+  const gatedDay = (date) => {
+    if (!gated) return loadDay(date)
+    return new Promise((resolve, reject) => { pending.push(reject) })
+  }
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay: gatedDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+  const tileOf = (label) => {
+    const tile = [...host.querySelectorAll('[data-dsh-part="range-tiles"] button')].find((button) => text(button).includes(label))
+    return tile === undefined ? 'missing' : text(tile)
+  }
+  const before = tileOf('近 7 天')
+  check('the tile states a total before the refresh', !before.includes('…') && /\d/.test(before), before)
+
+  gated = true
+  const button = host.querySelector('[data-dsh-part="header"] button')
+  await act(async () => {
+    button?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 80))
+  })
+  const during = tileOf('近 7 天')
+  check('a retry keeps the previous total instead of resetting to "…"',
+    !during.includes('…') && during === before, `${before} -> ${during}`)
+
+  await act(async () => {
+    for (const reject of pending) reject(new Error('day fetch failed'))
+    await new Promise((r) => setTimeout(r, 150))
+  })
+  const after = tileOf('近 7 天')
+  check('a failed retry ends at "—" and says why', after.includes('—'), after)
+  // A dead endpoint must not be hammered forever: the delay doubles between
+  // tries and the attempt count is capped. The timer is minutes long, so this
+  // is a source guard rather than a wall-clock one.
+  const cardSource = readClient('UsageSectionCard.tsx')
+  check('the retry loop backs off and gives up',
+    /RETRY_MAX_ATTEMPTS = 5\b/.test(cardSource) && /2 \*\* retryAttempts\.current/.test(cardSource) && /RETRY_BACKOFF_MAX_MS/.test(cardSource),
+    'cap=' + (/RETRY_MAX_ATTEMPTS = (\d+)/.exec(cardSource)?.[1] ?? 'missing'))
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- the tablist follows the pattern assistive tech expects -------------
+// ids, aria-controls, one tabpanel per tab, a roving tabindex and arrow keys:
+// the panel used to be three buttons with aria-selected and nothing else.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const state = { snapshot, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+
+  const tabs = [...host.querySelectorAll('[role="tab"]')]
+  const selected = () => tabs.find((tab) => tab.getAttribute('aria-selected') === 'true')
+  const panel = () => host.querySelector('[role="tabpanel"]')
+  check('every tab names the panel it opens',
+    tabs.length === 3 && tabs.every((tab) => tab.id !== '' && (tab.getAttribute('aria-controls') ?? '') !== ''),
+    tabs.map((tab) => tab.id + '->' + tab.getAttribute('aria-controls')).join(', '))
+  check('the open panel is labelled by its tab',
+    panel() !== null && panel().getAttribute('aria-labelledby') === selected()?.id && panel().id === selected()?.getAttribute('aria-controls'),
+    panel() === null ? 'no panel' : String(panel().getAttribute('aria-labelledby')))
+  check('only the selected tab is in the tab order',
+    tabs.every((tab) => tab.getAttribute('tabindex') === (tab === selected() ? '0' : '-1')),
+    tabs.map((tab) => tab.getAttribute('tabindex')).join(','))
+
+  await act(async () => {
+    selected()?.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    await new Promise((r) => setTimeout(r, 80))
+  })
+  check('ArrowRight moves focus and selection together',
+    selected() === tabs[1] && window.document.activeElement === tabs[1],
+    'selected=' + text(selected()) + ' focused=' + text(window.document.activeElement))
+  await act(async () => {
+    selected()?.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'End', bubbles: true }))
+    await new Promise((r) => setTimeout(r, 80))
+  })
+  check('End jumps to the last tab', selected() === tabs[2], text(selected()))
+  await act(async () => {
+    selected()?.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
+    await new Promise((r) => setTimeout(r, 80))
+  })
+  check('Home jumps back to the first tab', selected() === tabs[0], text(selected()))
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- the custom picker cannot start before the ledger does --------------
+// The `max` stopped a future day, but nothing stopped a date the ledger has no
+// records for, so the window counted days the host never recorded.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const state = { snapshot, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
+  const customTile = [...host.querySelectorAll('[data-dsh-part="range-tiles"] button')]
+    .find((button) => text(button).includes('自定义'))
+  await act(async () => {
+    customTile?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 120))
+  })
+  const inputs = [...host.querySelectorAll('[data-dsh-part="custom-range"] input[type="date"]')]
+  const oldest = snapshot.usage.availableDays[0]
+  check('the from-date input starts at the oldest recorded day',
+    inputs[0]?.getAttribute('min') === oldest, `min=${inputs[0]?.getAttribute('min')} oldest=${oldest}`)
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- the ledger note is the host's text, once ---------------------------
+// The host owns the note; the panel only prints it, so a note that arrives
+// again with the next snapshot must not be concatenated into itself.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const note = '首次导入：2026-09-21；补录：2026-09-22'
+  const withNote = (text) => ({ ...snapshot, usage: { ...snapshot.usage, ledgerNote: text } })
+  const state = { snapshot: withNote(note), status: 'ready', error: null }
+  const listeners = new Set()
+  const localStore = {
+    getSnapshot: () => state,
+    subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn) },
+  }
+  const localRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
+  const noteLine = () => host.querySelector('[data-dsh-part="ledger-note"]')
+  check('the ledger note prints the host text once', text(noteLine()) === '说明：' + note, text(noteLine()))
+  await act(async () => {
+    state.snapshot = withNote(note)
+    for (const fn of listeners) fn()
+    await new Promise((r) => setTimeout(r, 80))
+  })
+  check('a republished note does not accumulate', text(noteLine()) === '说明：' + note, text(noteLine()))
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- two models in one palette slot stay distinguishable ----------------
+// Sixteen hues are not enough for every name: two names that hash to the same
+// slot used to share a color exactly, so two sub-bars of one channel looked
+// like one. The shade axis keeps them apart without moving anyone else.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  // The slot function is reimplemented here so the fixture is not a magic pair:
+  // the test finds two names that really do land in one slot.
+  const fnv = (name) => {
+    let hash = 0x811c9dc5
+    for (let at = 0; at < name.length; at += 1) {
+      hash ^= name.charCodeAt(at)
+      hash = Math.imul(hash, 0x01000193)
+    }
+    return hash >>> 0
+  }
+  const bySlot = new Map()
+  let pair
+  for (let index = 0; index < 400 && pair === undefined; index += 1) {
+    const name = 'slotprobe-' + index + '.'
+    const slot = fnv(name) % 16
+    const taken = bySlot.get(slot)
+    if (taken === undefined) bySlot.set(slot, name)
+    else pair = [taken, name]
+  }
+  const bucket = (calls, input) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const models = pair === undefined ? [] : pair.map((model) => ({ model, totals: bucket(1, 100) }))
+  const collided = {
+    ...snapshot,
+    usage: {
+      ...snapshot.usage,
+      today: {
+        date: snapshot.usage.today.date,
+        totals: bucket(2, 200),
+        providers: [{ provider: 'buddy', totals: bucket(2, 200), models }],
+      },
+    },
+  }
+  const state = { snapshot: collided, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+  const fillOf = (model) => {
+    const row = [...host.querySelectorAll('[data-dsh-part="model-rows"] [title]')].find((node) => text(node).includes(model))
+    const fill = row?.querySelector('[class*="chartModelFill"]')
+    return fill === undefined || fill === null ? 'missing' : String(fill.getAttribute('style'))
+  }
+  const first = pair === undefined ? 'missing' : fillOf(pair[0])
+  const second = pair === undefined ? 'missing' : fillOf(pair[1])
+  check('two names in one palette slot get different colors',
+    first !== 'missing' && second !== 'missing' && first !== second,
+    `${pair?.[0] ?? '?'}=${first} | ${pair?.[1] ?? '?'}=${second}`)
 
   await act(async () => { localRoot.unmount() })
   host.remove()

@@ -233,20 +233,25 @@ export function TrendChart(props: { rows: ReadonlyArray<TrendRow>; colors?: Map<
         { key: 'output', className: styles.trendSegOutput, label: t('usage.tokens.output') },
       ]
 
+  // A failed bucket makes the sum meaningless: the label states the span and the
+  // failure instead of a total nothing measured.
+  const anyFailed = buckets.some((bucket) => bucket.failed)
+  const chartFrom = buckets[0].from
+  const chartTo = buckets[buckets.length - 1].to
+  const chartTotal = buckets.reduce((sum, bucket) => sum + totalOf(bucket.totals), 0)
+
   return (
-    <div
-      className={styles.trendWrap}
-      data-dsh-part="trend-chart"
-      role="img"
-      // The bars and axis labels are decoration to a screen reader; the one
-      // thing it can use is what the chart covers and what it adds up to.
-      aria-label={t('usage.trend.label', {
-        from: buckets[0].from,
-        to: buckets[buckets.length - 1].to,
-        tokens: formatTokens(buckets.reduce((sum, bucket) => sum + totalOf(bucket.totals), 0)),
-      })}
-    >
-      <div className={styles.trendPlot}>
+    <div className={styles.trendWrap} data-dsh-part="trend-chart">
+      {/* The plot is one image to a screen reader, so it carries the role and the
+          label. role="img" makes its whole subtree presentational, so the legend
+          stays a sibling: wrapping it made the model names unreadable. */}
+      <div
+        className={styles.trendPlot}
+        role="img"
+        aria-label={anyFailed
+          ? t('usage.trend.labelFailed', { from: chartFrom, to: chartTo })
+          : t('usage.trend.label', { from: chartFrom, to: chartTo, tokens: formatTokens(chartTotal) })}
+      >
         <div className={styles.trendYLabels} aria-hidden="true">
           {GRIDLINE_FRACTIONS.map((fraction) => (
             <span key={fraction} className={styles.trendYLabel} style={{ bottom: `${fraction * 100}%` }}>
@@ -336,7 +341,7 @@ export function TrendChart(props: { rows: ReadonlyArray<TrendRow>; colors?: Map<
           </span>
         ))}
       </div>
-      <div className={styles.trendLegend}>
+      <div className={styles.trendLegend} data-dsh-part="trend-legend">
         {legendEntries.map((entry) => (
           <span key={entry.key} className={styles.trendLegendItem}>
             <span
