@@ -1275,6 +1275,86 @@ function totalTokens(totals) {
 	return totals.inputTokens + totals.cacheReadTokens + totals.cacheWriteTokens + totals.outputTokens;
 }
 /**
+* Merge `source` into `target`, keeping the larger total of each bucket.
+*
+* The right rule when two processes on ONE machine write the same ledger file:
+* both observe a subset of the same calls, so a bucket sum would count the
+* calls both of them saw twice, while the larger bucket is the more complete
+* view of that day. (Peer devices are the opposite case — see mergeLedgerSum.)
+*/
+function mergeLedgerMax(target, source) {
+	for (const [dayKey, providers] of Object.entries(source.days)) {
+		if (!isLedgerDateKey(dayKey)) continue;
+		if (typeof providers !== "object" || providers === null) continue;
+		for (const [provider, models] of Object.entries(providers)) {
+			if (!isSafeBucketKey(provider) || typeof models !== "object" || models === null) continue;
+			for (const [model, totals] of Object.entries(models)) {
+				if (!isSafeBucketKey(model) || typeof totals !== "object" || totals === null) continue;
+				const bucket = target.days[dayKey]?.[provider]?.[model];
+				if (bucket !== void 0 && totalTokens(bucket) >= totalTokens(totals)) continue;
+				const day = target.days[dayKey] ?? (target.days[dayKey] = {});
+				const route = day[provider] ?? (day[provider] = {});
+				route[model] = { ...totals };
+			}
+		}
+	}
+}
+/**
+* `bucket` minus `extra`, floored at zero per field.
+*
+* Only used by the one-time duplicate-replay repair, where `extra` is a copy
+* that was folded twice. `cost` comes back as 0 because the caller reprices
+* the shrunken bucket from its tokens — a stored cost cannot be split.
+*/
+function subtractTotals(bucket, extra) {
+	const cut = (value, by) => Math.max(0, value - by);
+	return {
+		inputTokens: cut(bucket.inputTokens, extra.inputTokens),
+		outputTokens: cut(bucket.outputTokens, extra.outputTokens),
+		cacheReadTokens: cut(bucket.cacheReadTokens, extra.cacheReadTokens),
+		cacheWriteTokens: cut(bucket.cacheWriteTokens, extra.cacheWriteTokens),
+		reasoningTokens: cut(bucket.reasoningTokens, extra.reasoningTokens),
+		calls: cut(bucket.calls, extra.calls),
+		cost: 0
+	};
+}
+/**
+* Add `current`'s growth since `baseline` onto `target`, per bucket.
+*
+* The write path of one process that shares its ledger file with another: the
+* file already holds what both of them counted up to their last writes, so only
+* the calls folded since our own last write may be added. Growth is floored at
+* zero, so a bucket that shrank (a repair, a prune) never subtracts from the
+* other process's numbers.
+*/
+function mergeLedgerDelta(target, current, baseline) {
+	for (const [dayKey, providers] of Object.entries(current.days)) {
+		if (!isLedgerDateKey(dayKey)) continue;
+		if (typeof providers !== "object" || providers === null) continue;
+		for (const [provider, models] of Object.entries(providers)) {
+			if (!isSafeBucketKey(provider) || typeof models !== "object" || models === null) continue;
+			for (const [model, totals] of Object.entries(models)) {
+				if (!isSafeBucketKey(model) || typeof totals !== "object" || totals === null) continue;
+				const base = baseline.days[dayKey]?.[provider]?.[model];
+				const grow = (now, then) => Math.max(0, now - then);
+				const delta = {
+					inputTokens: grow(totals.inputTokens, base?.inputTokens ?? 0),
+					outputTokens: grow(totals.outputTokens, base?.outputTokens ?? 0),
+					cacheReadTokens: grow(totals.cacheReadTokens, base?.cacheReadTokens ?? 0),
+					cacheWriteTokens: grow(totals.cacheWriteTokens, base?.cacheWriteTokens ?? 0),
+					reasoningTokens: grow(totals.reasoningTokens, base?.reasoningTokens ?? 0),
+					calls: grow(totals.calls, base?.calls ?? 0),
+					cost: grow(totals.cost, base?.cost ?? 0)
+				};
+				if (delta.calls === 0 && totalTokens(delta) === 0 && delta.cost === 0) continue;
+				const atMs = (/* @__PURE__ */ new Date(dayKey + "T12:00:00")).getTime();
+				if (!Number.isFinite(atMs)) continue;
+				foldUsage(target, atMs, provider, model, delta);
+			}
+		}
+	}
+}
+/**
 * Aggregate whole per-day maps (each `provider -> model -> totals`) into the
 * per-provider/per-model summary the overview serves for one day or a range:
 * disjoint bucket sums per provider, per-model rows heaviest first, and the
@@ -1501,7 +1581,9 @@ function hasDayMap(value) {
 *
 * A transcript is a concatenation of independent zstd frames (one per append
 * batch) and `zstdDecompressSync` decodes only the leading frame, so the frame
-* walk below is required, not defensive.
+* walk below is required, not defensive. A seeded subagent's transcript opens
+* with a verbatim copy of its parent's messages, so one pass dedupes the whole
+* run by message id before folding.
 * @module @linxin666/dsh-usage/host/session-log-backfill
 */
 /** zstd frame magic number, little-endian. */
@@ -1604,8 +1686,14 @@ function transcriptTotals(usage) {
 * Fold every billed model call in one decoded transcript into `doc`. Records
 * without a provider route are skipped: the live fold cannot attribute them
 * either, and inventing a bucket would only distort the totals.
+*
+* A seeded subagent's transcript opens with a verbatim copy of its parent's
+* assistant messages (same message id, time and usage), so a replay that folds
+* every file double-counts them. `seen` carries the message ids of the whole
+* run: the first copy folds, later ones are reported to `onDuplicate` and
+* dropped. Pass the same set for every transcript of one pass.
 */
-function foldTranscript(text, doc) {
+function foldTranscript(text, doc, seen, onDuplicate) {
 	for (const line of text.split("\n")) {
 		if (line === "" || line[0] !== "{") continue;
 		let record;
@@ -1621,7 +1709,17 @@ function foldTranscript(text, doc) {
 		const source = rec.data?.message?.source;
 		if (typeof source?.provider !== "string" || source.provider === "") continue;
 		const model = typeof source.model === "string" && source.model !== "" ? source.model : "unknown";
-		foldUsage(doc, typeof rec.time === "number" && Number.isFinite(rec.time) ? rec.time : Date.now(), source.provider, model, transcriptTotals(usage));
+		const atMs = typeof rec.time === "number" && Number.isFinite(rec.time) ? rec.time : Date.now();
+		const totals = transcriptTotals(usage);
+		const id = rec.data?.message?.id;
+		if (seen !== void 0 && typeof id === "string" && id !== "") {
+			if (seen.has(id)) {
+				onDuplicate?.(localDateKey(atMs), source.provider, model, totals);
+				continue;
+			}
+			seen.add(id);
+		}
+		foldUsage(doc, atMs, source.provider, model, totals);
 	}
 }
 /** Every transcript path under `<dshHome>/sessions`, two directory levels deep. */
@@ -1659,24 +1757,32 @@ async function listSessionLogs(root) {
 }
 /**
 * Replay the session transcripts into a fresh ledger-shaped document and hand it
-* to `merge`. Returns how many transcripts actually contributed.
+* to `merge`. Returns how many transcripts actually contributed, and how many
+* records were dropped as copies of a call another transcript already carried.
 */
-async function collectSessionLogUsage(root, merge) {
+async function collectSessionLogUsage(root, merge, onDuplicate) {
 	const files = await listSessionLogs(root);
 	const doc = createLedgerDocument();
+	const seen = /* @__PURE__ */ new Set();
 	let replayed = 0;
+	let duplicates = 0;
+	const reportDuplicate = (dayKey, provider, model, totals) => {
+		duplicates += 1;
+		onDuplicate?.(dayKey, provider, model, totals);
+	};
 	for (const file of files) try {
 		const info = await stat(file);
 		if (!info.isFile() || info.size <= 0 || info.size > SESSION_LOG_MAX_BYTES) continue;
 		const text = zstdDecodeAll(await readFile(file));
 		if (text === "") continue;
-		foldTranscript(text, doc);
+		foldTranscript(text, doc, seen, reportDuplicate);
 		replayed += 1;
 	} catch {}
 	merge(doc);
 	return {
 		files: files.length,
-		replayed
+		replayed,
+		duplicates
 	};
 }
 //#endregion
@@ -1693,6 +1799,16 @@ async function collectSessionLogUsage(root, merge) {
 const PROBE_TIMEOUT_MS = 1e4;
 /** Ledger flush debounce. */
 const FLUSH_DEBOUNCE_MS = 3e3;
+/**
+* Sidecar marker for the one-time duplicate-replay repair. Its presence means
+* the correction ran on this machine; the repair subtracts exactly the extra
+* copies, so running it twice would take real calls away.
+*/
+const DEDUPE_MARKER_FILE = "usage-dedupe-marker.json";
+/** How long a failed ledger read waits before trying again. */
+const LOAD_RETRY_MS = 2e4;
+/** How many times a failed ledger read is retried before the boot gives up on persisting. */
+const LOAD_RETRY_MAX = 5;
 /** `schema` tag carried by an export envelope, so an import can tell it apart from a bare ledger. */
 const LEDGER_EXPORT_SCHEMA = "dsh-usage-ledger";
 /** Largest import body accepted; a ledger of one device's history stays far below this. */
@@ -1826,7 +1942,19 @@ var UsageService = class {
 	peers = [];
 	/** Last peer scan failure, surfaced in the overview so a silent empty merge is visible. */
 	peersError;
+	/**
+	* Last ledger load failure, surfaced in the overview. A file that could not be
+	* read is never overwritten, so this is the only trace of why the totals are
+	* empty this boot.
+	*/
+	ledgerError;
 	ledger = createLedgerDocument();
+	/**
+	* The document this process last wrote to disk. Another process on this
+	* machine writes the same file, so a flush adds only what we folded since
+	* this snapshot — adding the whole document would count its calls twice.
+	*/
+	ledgerWritten;
 	snapshots = /* @__PURE__ */ new Map();
 	/** The official DeepSeek family's real-spend watch (see SpendWatch). */
 	spendWatch;
@@ -1844,6 +1972,9 @@ var UsageService = class {
 	flushChain = Promise.resolve();
 	/** True once loadPersisted finished; nothing may overwrite the files before that. */
 	loaded = false;
+	/** Retry bookkeeping for a ledger file that could not be read this boot. */
+	loadRetries = 0;
+	loadRetryTimer;
 	disposed = false;
 	/** Last prune guard: once per local day, and whenever retention shrinks. */
 	lastPrune;
@@ -1871,6 +2002,7 @@ var UsageService = class {
 		this.disposed = true;
 		if (this.pollTimer !== void 0) clearTimeout(this.pollTimer);
 		if (this.flushTimer !== void 0) clearTimeout(this.flushTimer);
+		if (this.loadRetryTimer !== void 0) clearTimeout(this.loadRetryTimer);
 		this.sessionListenerDisposer?.();
 		return this.flushLedger();
 	}
@@ -2006,7 +2138,8 @@ var UsageService = class {
 				} } : {},
 				devices: this.deviceEntries(),
 				deviceId: this.deviceId,
-				...this.peersError !== void 0 ? { devicesError: this.peersError } : {}
+				...this.peersError !== void 0 ? { devicesError: this.peersError } : {},
+				...this.ledgerError !== void 0 ? { ledgerError: this.ledgerError } : {}
 			}
 		};
 	}
@@ -2203,11 +2336,17 @@ var UsageService = class {
 					};
 				}
 			} else if (event.type === "assistant/message") {
-				const usage = event.data.usage;
+				const data = event.data;
+				const usage = data.usage;
 				if (usage === void 0) return;
-				const route = this.sessionRoutes.get(session);
+				const source = data.message?.source;
+				const route = typeof source?.provider === "string" && source.provider !== "" ? {
+					provider: source.provider,
+					model: source.model ?? ""
+				} : this.sessionRoutes.get(session);
 				if (route === void 0 || route.provider === "") return;
-				foldUsage(this.ledger, Date.now(), route.provider, route.model || "unknown", this.totalsFrom(usage, route.provider, route.model || "unknown", Date.now()));
+				const atMs = typeof event.time === "number" ? event.time : Date.now();
+				foldUsage(this.ledger, atMs, route.provider, route.model || "unknown", this.totalsFrom(usage, route.provider, route.model || "unknown", atMs));
 				this.scheduleFlush();
 			}
 		} catch {}
@@ -2228,35 +2367,103 @@ var UsageService = class {
 		if (isDeepSeekProviderRoute(provider)) totals.cost = deepseekModelSpend(model, totals, atMs);
 		return totals;
 	}
-	async loadPersisted() {
+	/**
+	* Read this device's ledger file, telling the three failures apart: absent,
+	* unreadable (locked or permission-denied — the data may still be there), and
+	* corrupt (present but unparseable). Only "absent" may start a fresh file;
+	* treating either failure as "no history" would let the next flush replace a
+	* real ledger with an empty one.
+	*/
+	async readLedgerFile() {
+		let raw;
 		try {
-			const [rawLedger, rawSnapshots] = await Promise.all([readFile(this.ledgerPath, "utf8").catch(() => void 0), readFile(this.snapshotsPath, "utf8").catch(() => void 0)]);
-			if (rawLedger !== void 0) {
-				this.absorb(this.ledger, deserializeLedger(JSON.parse(rawLedger)));
-				pruneLedger(this.ledger, localDateKey(Date.now()), this.options.retainDays);
-				this.lastPrune = {
-					dayKey: localDateKey(Date.now()),
-					retainDays: this.options.retainDays
-				};
-			} else await this.adoptLegacyLedger();
-			await this.refreshPeers();
-			if (rawSnapshots !== void 0) {
-				const parsed = JSON.parse(rawSnapshots);
-				if (typeof parsed === "object" && parsed !== null && typeof parsed.providers === "object" && parsed.providers !== null) {
-					for (const [provider, snapshot] of Object.entries(parsed.providers)) if (typeof snapshot === "object" && snapshot !== null && typeof snapshot.provider === "string") this.snapshots.set(provider, snapshot);
-				}
-				const watch = parsed.spendWatch;
-				if (typeof watch === "object" && watch !== null && typeof watch.accruedCny === "number" && Number.isFinite(watch.accruedCny) && watch.accruedCny >= 0 && typeof watch.since === "number" && Number.isFinite(watch.since) && watch.since > 0) this.spendWatch = {
-					accruedCny: watch.accruedCny,
-					since: watch.since,
-					...typeof watch.lastBalanceCny === "number" && Number.isFinite(watch.lastBalanceCny) ? { lastBalanceCny: watch.lastBalanceCny } : {}
-				};
-			}
-		} catch {} finally {
-			await this.backfillSessionLogs();
-			this.loaded = true;
-			this.scheduleFlush();
+			raw = await readFile(this.ledgerPath, "utf8");
+		} catch (error) {
+			const code = error.code;
+			return code === "ENOENT" ? { kind: "missing" } : {
+				kind: "unreadable",
+				error: String(code ?? error)
+			};
 		}
+		try {
+			return {
+				kind: "ok",
+				doc: deserializeLedger(JSON.parse(raw))
+			};
+		} catch (error) {
+			return {
+				kind: "corrupt",
+				error: error instanceof Error ? error.message : String(error)
+			};
+		}
+	}
+	async loadPersisted() {
+		const read = await this.readLedgerFile();
+		if (read.kind === "unreadable") {
+			this.ledgerError = `ledger unreadable (${read.error})`;
+			this.scheduleLoadRetry();
+			return;
+		}
+		if (read.kind === "corrupt") {
+			const kept = `${this.ledgerPath}.corrupt-${Date.now()}.json`;
+			const renamed = await rename(this.ledgerPath, kept).then(() => true, () => false);
+			this.ledgerError = renamed ? `ledger corrupt (${read.error}); kept as ${basename(kept)}` : `ledger corrupt (${read.error}); left in place`;
+			if (!renamed) {
+				this.scheduleLoadRetry();
+				return;
+			}
+		}
+		if (read.kind === "ok") this.absorb(this.ledger, read.doc);
+		else if (read.kind === "missing") await this.adoptLegacyLedger();
+		await this.refreshPeers();
+		await this.loadSnapshots();
+		const repaired = await this.repairDuplicatedReplay();
+		await this.backfillSessionLogs();
+		this.lastPrune = void 0;
+		this.pruneIfNeeded();
+		this.loaded = true;
+		this.ledgerWritten = structuredClone(this.ledger);
+		if (read.kind !== "corrupt") this.ledgerError = void 0;
+		if (repaired !== void 0) {
+			if (repaired.buckets === 0 || await this.writeLedgerVerbatim()) await writeJsonAtomic(join(this.persistDir, DEDUPE_MARKER_FILE), {
+				version: 1,
+				appliedAt: Date.now(),
+				buckets: repaired.buckets,
+				removedTokens: repaired.removedTokens
+			}).catch(() => void 0);
+		}
+		this.scheduleFlush();
+	}
+	/** Retry a ledger read that failed for a transient reason (lock, sharing). */
+	scheduleLoadRetry() {
+		if (this.disposed || this.loadRetryTimer !== void 0) return;
+		if (this.loadRetries >= LOAD_RETRY_MAX) return;
+		this.loadRetries += 1;
+		this.loadRetryTimer = setTimeout(() => {
+			this.loadRetryTimer = void 0;
+			this.loadPersisted();
+		}, LOAD_RETRY_MS);
+	}
+	/** Revive the probe cache and the spend watch; both are best-effort. */
+	async loadSnapshots() {
+		let raw;
+		try {
+			raw = await readFile(this.snapshotsPath, "utf8");
+		} catch {
+			return;
+		}
+		try {
+			const parsed = JSON.parse(raw);
+			if (typeof parsed === "object" && parsed !== null && typeof parsed.providers === "object" && parsed.providers !== null) {
+				for (const [provider, snapshot] of Object.entries(parsed.providers)) if (typeof snapshot === "object" && snapshot !== null && typeof snapshot.provider === "string") this.snapshots.set(provider, snapshot);
+			}
+			const watch = parsed.spendWatch;
+			if (typeof watch === "object" && watch !== null && typeof watch.accruedCny === "number" && Number.isFinite(watch.accruedCny) && watch.accruedCny >= 0 && typeof watch.since === "number" && Number.isFinite(watch.since) && watch.since > 0) this.spendWatch = {
+				accruedCny: watch.accruedCny,
+				since: watch.since,
+				...typeof watch.lastBalanceCny === "number" && Number.isFinite(watch.lastBalanceCny) ? { lastBalanceCny: watch.lastBalanceCny } : {}
+			};
+		} catch {}
 	}
 	/**
 	* Fold the session transcripts back into the ledger.
@@ -2288,6 +2495,49 @@ var UsageService = class {
 				}
 			});
 		} catch {}
+	}
+	/**
+	* One-time correction for the seeded-subagent duplicate.
+	*
+	* A seeded subagent's transcript opens with a verbatim copy of its parent's
+	* assistant messages (same id, time and usage), and the replay used to fold
+	* both copies into the same bucket. Deduping the replay stops new inflation
+	* but cannot undo what is already written — the merge rule keeps the larger
+	* total, so an inflated bucket would never come back down. The extra copies
+	* are therefore subtracted once, exactly, and a sidecar marker records it:
+	* subtracting twice would take real calls away.
+	*/
+	async repairDuplicatedReplay() {
+		const markerPath = join(this.persistDir, DEDUPE_MARKER_FILE);
+		try {
+			await stat(markerPath);
+			return;
+		} catch {}
+		let buckets = 0;
+		let removedTokens = 0;
+		try {
+			await collectSessionLogUsage(join(dshHome(), "sessions"), () => {}, (dayKey, provider, model, totals) => {
+				const bucket = this.ledger.days[dayKey]?.[provider]?.[model];
+				if (bucket === void 0) return;
+				const next = subtractTotals(bucket, totals);
+				const dropped = totalTokens(bucket) - totalTokens(next);
+				if (dropped <= 0) return;
+				const atMs = (/* @__PURE__ */ new Date(dayKey + "T12:00:00")).getTime();
+				const repriced = isDeepSeekProviderRoute(provider) && Number.isFinite(atMs) ? {
+					...next,
+					cost: deepseekModelSpend(model, next, atMs)
+				} : next;
+				this.ledger.days[dayKey][provider][model] = repriced;
+				buckets += 1;
+				removedTokens += dropped;
+			});
+		} catch {
+			return;
+		}
+		return {
+			buckets,
+			removedTokens
+		};
 	}
 	/**
 	* Fold a parsed document into a target ledger.
@@ -2359,6 +2609,10 @@ var UsageService = class {
 					failures.push(`${name}: not a usage ledger`);
 					continue;
 				}
+				if (parsed.deviceId !== "" && parsed.deviceId !== deviceId) {
+					failures.push(`${name}: names device ${parsed.deviceId}`);
+					continue;
+				}
 				peers.push({
 					deviceId,
 					doc: parsed.doc,
@@ -2393,8 +2647,42 @@ var UsageService = class {
 		if (!this.loaded) return;
 		try {
 			await mkdir(dirname(this.ledgerPath), { recursive: true });
+			const disk = await this.readDiskLedger();
+			if (disk !== void 0) {
+				if (this.ledgerWritten !== void 0) mergeLedgerDelta(disk, this.ledger, this.ledgerWritten);
+				else mergeLedgerMax(disk, this.ledger);
+				this.ledger = disk;
+			}
 			await writeJsonAtomic(this.ledgerPath, this.ledger);
+			this.ledgerWritten = structuredClone(this.ledger);
 		} catch {}
+	}
+	/** The ledger file as another writer left it, or undefined when absent/unreadable. */
+	async readDiskLedger() {
+		try {
+			const raw = await readFile(this.ledgerPath, "utf8");
+			return deserializeLedger(JSON.parse(raw));
+		} catch {
+			return;
+		}
+	}
+	/**
+	* Write this process's document over the file, ignoring what is there.
+	*
+	* The normal flush merges the file's growth in and keeps the larger total of
+	* each bucket — right for adding calls, wrong for a correction, which has to
+	* replace the number the old replay wrote. Only the duplicate repair uses it.
+	*/
+	async writeLedgerVerbatim() {
+		try {
+			await mkdir(dirname(this.ledgerPath), { recursive: true });
+			await writeJsonAtomic(this.ledgerPath, this.ledger);
+			this.ledgerWritten = structuredClone(this.ledger);
+			return true;
+		} catch (error) {
+			this.ledgerError = `ledger write failed (${error instanceof Error ? error.message : String(error)})`;
+			return false;
+		}
 	}
 	/**
 	* Prune days past retention. Runs at most once per local day and whenever

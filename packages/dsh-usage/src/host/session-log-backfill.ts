@@ -11,14 +11,16 @@
  *
  * A transcript is a concatenation of independent zstd frames (one per append
  * batch) and `zstdDecompressSync` decodes only the leading frame, so the frame
- * walk below is required, not defensive.
+ * walk below is required, not defensive. A seeded subagent's transcript opens
+ * with a verbatim copy of its parent's messages, so one pass dedupes the whole
+ * run by message id before folding.
  * @module @linxin666/dsh-usage/host/session-log-backfill
  */
 
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { zstdDecompressSync } from 'node:zlib'
-import { createLedgerDocument, foldUsage } from '../core/ledger.ts'
+import { createLedgerDocument, foldUsage, localDateKey } from '../core/ledger.ts'
 import type { UsageLedgerDocument, UsageTokenTotals } from '../core/types.ts'
 
 /** zstd frame magic number, little-endian. */
@@ -113,8 +115,19 @@ function transcriptTotals(usage: Record<string, unknown>): UsageTokenTotals {
  * Fold every billed model call in one decoded transcript into `doc`. Records
  * without a provider route are skipped: the live fold cannot attribute them
  * either, and inventing a bucket would only distort the totals.
+ *
+ * A seeded subagent's transcript opens with a verbatim copy of its parent's
+ * assistant messages (same message id, time and usage), so a replay that folds
+ * every file double-counts them. `seen` carries the message ids of the whole
+ * run: the first copy folds, later ones are reported to `onDuplicate` and
+ * dropped. Pass the same set for every transcript of one pass.
  */
-export function foldTranscript(text: string, doc: UsageLedgerDocument): void {
+export function foldTranscript(
+  text: string,
+  doc: UsageLedgerDocument,
+  seen?: Set<string>,
+  onDuplicate?: (dayKey: string, provider: string, model: string, totals: UsageTokenTotals) => void,
+): void {
   for (const line of text.split('\n')) {
     if (line === '' || line[0] !== '{') continue
     let record: unknown
@@ -123,7 +136,11 @@ export function foldTranscript(text: string, doc: UsageLedgerDocument): void {
     } catch {
       continue
     }
-    const rec = record as { type?: unknown; time?: unknown; data?: { usage?: unknown; message?: { source?: { provider?: unknown; model?: unknown } } } }
+    const rec = record as {
+      type?: unknown
+      time?: unknown
+      data?: { usage?: unknown; message?: { id?: unknown; source?: { provider?: unknown; model?: unknown } } }
+    }
     if (rec?.type !== 'assistant/message') continue
     const usage = rec.data?.usage
     if (typeof usage !== 'object' || usage === null) continue
@@ -131,7 +148,16 @@ export function foldTranscript(text: string, doc: UsageLedgerDocument): void {
     if (typeof source?.provider !== 'string' || source.provider === '') continue
     const model = typeof source.model === 'string' && source.model !== '' ? source.model : 'unknown'
     const atMs = typeof rec.time === 'number' && Number.isFinite(rec.time) ? rec.time : Date.now()
-    foldUsage(doc, atMs, source.provider, model, transcriptTotals(usage as Record<string, unknown>))
+    const totals = transcriptTotals(usage as Record<string, unknown>)
+    const id = rec.data?.message?.id
+    if (seen !== undefined && typeof id === 'string' && id !== '') {
+      if (seen.has(id)) {
+        onDuplicate?.(localDateKey(atMs), source.provider, model, totals)
+        continue
+      }
+      seen.add(id)
+    }
+    foldUsage(doc, atMs, source.provider, model, totals)
   }
 }
 
@@ -173,27 +199,35 @@ export async function listSessionLogs(root: string): Promise<string[]> {
 
 /**
  * Replay the session transcripts into a fresh ledger-shaped document and hand it
- * to `merge`. Returns how many transcripts actually contributed.
+ * to `merge`. Returns how many transcripts actually contributed, and how many
+ * records were dropped as copies of a call another transcript already carried.
  */
 export async function collectSessionLogUsage(
   root: string,
   merge: (doc: UsageLedgerDocument) => void,
-): Promise<{ files: number; replayed: number }> {
+  onDuplicate?: (dayKey: string, provider: string, model: string, totals: UsageTokenTotals) => void,
+): Promise<{ files: number; replayed: number; duplicates: number }> {
   const files = await listSessionLogs(root)
   const doc = createLedgerDocument()
+  const seen = new Set<string>()
   let replayed = 0
+  let duplicates = 0
+  const reportDuplicate = (dayKey: string, provider: string, model: string, totals: UsageTokenTotals): void => {
+    duplicates += 1
+    onDuplicate?.(dayKey, provider, model, totals)
+  }
   for (const file of files) {
     try {
       const info = await stat(file)
       if (!info.isFile() || info.size <= 0 || info.size > SESSION_LOG_MAX_BYTES) continue
       const text = zstdDecodeAll(await readFile(file))
       if (text === '') continue
-      foldTranscript(text, doc)
+      foldTranscript(text, doc, seen, reportDuplicate)
       replayed += 1
     } catch {
       // Unreadable transcript: its records are lost, the rest of the run is not.
     }
   }
   merge(doc)
-  return { files: files.length, replayed }
+  return { files: files.length, replayed, duplicates }
 }

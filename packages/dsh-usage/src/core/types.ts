@@ -224,6 +224,13 @@ export interface UsageOverviewView {
      * usage. Optional for the same older-host tolerance as `range`.
      */
     devicesError?: string
+    /**
+     * Why this device's own ledger could not be loaded. Present only on
+     * failure: an unreadable file is never overwritten and a corrupt one is
+     * moved aside, so the panel has to say so or the totals would just look
+     * empty. Optional for the same older-host tolerance as `range`.
+     */
+    ledgerError?: string
   }
 }
 

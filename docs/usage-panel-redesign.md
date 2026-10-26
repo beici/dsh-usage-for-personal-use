@@ -95,6 +95,52 @@ reads as a solid block, so 今日/昨日 show totals + breakdown only),
 `WINDOW_MODEL_CAP = 12` (mirrors the host's `summarizeDays` cap),
 `SECTION_POLL_MS = 10_000`.
 
+Ledger writes (`src/host/usage-service.ts`): the live fold listens to
+`session/event` and folds every `assistant/message` that carries `usage`. The
+route comes from the **record itself** (`data.message.source`, which the session
+store refuses to publish without a provider *and* a model); `request/header` /
+`request/context` feed `sessionRoutes` only as a fallback, and the day bucket
+comes from the record's own `time`, not the fold instant. That ordering matters:
+a header fires once per epoch, so a session whose single header landed before
+the listener attached (the long-lived subagent sessions, whose header is
+published at spawn) lost every later call — mcgrox read 25 % low against its own
+upstream panel for exactly that reason. Calls made before the first mount are
+still recovered by the startup replay (`collectSessionLogUsage`), which merges
+per bucket with "larger total wins", so replay never shrinks a live bucket and
+running it on every start is idempotent.
+
+That merge rule is also why the replay has to be deduped: a seeded subagent's
+transcript opens with a verbatim copy of its parent's `assistant/message`
+records (same `data.message.id`, time and usage), and folding every file used to
+count those calls twice — yesterday read 17 % high on the real ledger, and no
+later run could bring it back down. `foldTranscript` now shares one `seen` set
+across all files, keyed by `data.message.id` (records without an id still fold;
+the older single-session format has none). The already-inflated buckets are
+corrected once: `repairDuplicatedReplay` subtracts exactly the extra copies,
+reprices them at the day's noon rate and writes the result over the file
+verbatim — the merge-based flush keeps the larger total and would drop the
+correction. A `usage-dedupe-marker.json` sidecar is written *after* that write,
+so a failed write retries on the next start instead of being skipped forever.
+
+Two more write-path rules:
+
+- A ledger that cannot be read is never overwritten. `readLedgerFile` separates
+  "missing" from "unreadable" (locked, permissions) from "corrupt"; unreadable
+  keeps the write guard armed, retries the load five times 20 s apart and
+  surfaces `usage.ledgerError` in the panel. A corrupt file is renamed to
+  `usage-ledger.<device>.json.corrupt-<ts>.json` and reported, so a fresh
+  document keeps counting without destroying the bytes someone may still want.
+- A flush writes the file's growth plus this process's own growth. Two DSH
+  processes on one machine (two windows, or the CLI beside the desktop app) share
+  one file and each writes the whole document; `mergeLedgerDelta(disk, ledger,
+  ledgerWritten)` adds only what this process folded since its last write, and
+  the merged document is adopted, so neither window's calls are lost.
+
+The replay runs before `pruneIfNeeded`: pruning first only resurrects the days
+the replay then re-adds. Peer files are trusted only when the `deviceId` inside
+the document matches the name it arrived under — a renamed copy of this machine's
+own ledger would otherwise double every call.
+
 `data-dsh-part` attributes (`range-tiles`, `range-card`, `window-card`,
 `trend-chart`, `trend-bar`, `trend-tooltip`, `channel-breakdown`,
 `model-rows`, `custom-range`, `custom-prompt`, `bank-card`, `tabs`, ...)

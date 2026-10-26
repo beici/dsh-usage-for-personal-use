@@ -35,6 +35,33 @@ export declare function foldUsage(doc: UsageLedgerDocument, atMs: number, provid
 export declare function mergeLedgerSum(target: UsageLedgerDocument, source: Readonly<UsageLedgerDocument>): void;
 /** Total tokens of a bucket (billed input + output; reasoning is inside output). */
 export declare function totalTokens(totals: Readonly<UsageTokenTotals>): number;
+/**
+ * Merge `source` into `target`, keeping the larger total of each bucket.
+ *
+ * The right rule when two processes on ONE machine write the same ledger file:
+ * both observe a subset of the same calls, so a bucket sum would count the
+ * calls both of them saw twice, while the larger bucket is the more complete
+ * view of that day. (Peer devices are the opposite case — see mergeLedgerSum.)
+ */
+export declare function mergeLedgerMax(target: UsageLedgerDocument, source: Readonly<UsageLedgerDocument>): void;
+/**
+ * `bucket` minus `extra`, floored at zero per field.
+ *
+ * Only used by the one-time duplicate-replay repair, where `extra` is a copy
+ * that was folded twice. `cost` comes back as 0 because the caller reprices
+ * the shrunken bucket from its tokens — a stored cost cannot be split.
+ */
+export declare function subtractTotals(bucket: Readonly<UsageTokenTotals>, extra: Readonly<UsageTokenTotals>): UsageTokenTotals;
+/**
+ * Add `current`'s growth since `baseline` onto `target`, per bucket.
+ *
+ * The write path of one process that shares its ledger file with another: the
+ * file already holds what both of them counted up to their last writes, so only
+ * the calls folded since our own last write may be added. Growth is floored at
+ * zero, so a bucket that shrank (a repair, a prune) never subtracts from the
+ * other process's numbers.
+ */
+export declare function mergeLedgerDelta(target: UsageLedgerDocument, current: Readonly<UsageLedgerDocument>, baseline: Readonly<UsageLedgerDocument>): void;
 /** How many model rows one summarized provider keeps. */
 export declare const SUMMARY_MODEL_CAP = 12;
 /**

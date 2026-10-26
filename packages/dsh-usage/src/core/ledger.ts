@@ -96,6 +96,93 @@ export function totalTokens(totals: Readonly<UsageTokenTotals>): number {
   return totals.inputTokens + totals.cacheReadTokens + totals.cacheWriteTokens + totals.outputTokens
 }
 
+/**
+ * Merge `source` into `target`, keeping the larger total of each bucket.
+ *
+ * The right rule when two processes on ONE machine write the same ledger file:
+ * both observe a subset of the same calls, so a bucket sum would count the
+ * calls both of them saw twice, while the larger bucket is the more complete
+ * view of that day. (Peer devices are the opposite case — see mergeLedgerSum.)
+ */
+export function mergeLedgerMax(target: UsageLedgerDocument, source: Readonly<UsageLedgerDocument>): void {
+  for (const [dayKey, providers] of Object.entries(source.days)) {
+    if (!isLedgerDateKey(dayKey)) continue
+    if (typeof providers !== 'object' || providers === null) continue
+    for (const [provider, models] of Object.entries(providers)) {
+      if (!isSafeBucketKey(provider) || typeof models !== 'object' || models === null) continue
+      for (const [model, totals] of Object.entries(models)) {
+        if (!isSafeBucketKey(model) || typeof totals !== 'object' || totals === null) continue
+        const bucket = target.days[dayKey]?.[provider]?.[model]
+        if (bucket !== undefined && totalTokens(bucket) >= totalTokens(totals)) continue
+        const day = target.days[dayKey] ?? (target.days[dayKey] = {})
+        const route = day[provider] ?? (day[provider] = {})
+        route[model] = { ...totals }
+      }
+    }
+  }
+}
+
+/**
+ * `bucket` minus `extra`, floored at zero per field.
+ *
+ * Only used by the one-time duplicate-replay repair, where `extra` is a copy
+ * that was folded twice. `cost` comes back as 0 because the caller reprices
+ * the shrunken bucket from its tokens — a stored cost cannot be split.
+ */
+export function subtractTotals(bucket: Readonly<UsageTokenTotals>, extra: Readonly<UsageTokenTotals>): UsageTokenTotals {
+  const cut = (value: number, by: number): number => Math.max(0, value - by)
+  return {
+    inputTokens: cut(bucket.inputTokens, extra.inputTokens),
+    outputTokens: cut(bucket.outputTokens, extra.outputTokens),
+    cacheReadTokens: cut(bucket.cacheReadTokens, extra.cacheReadTokens),
+    cacheWriteTokens: cut(bucket.cacheWriteTokens, extra.cacheWriteTokens),
+    reasoningTokens: cut(bucket.reasoningTokens, extra.reasoningTokens),
+    calls: cut(bucket.calls, extra.calls),
+    cost: 0,
+  }
+}
+
+/**
+ * Add `current`'s growth since `baseline` onto `target`, per bucket.
+ *
+ * The write path of one process that shares its ledger file with another: the
+ * file already holds what both of them counted up to their last writes, so only
+ * the calls folded since our own last write may be added. Growth is floored at
+ * zero, so a bucket that shrank (a repair, a prune) never subtracts from the
+ * other process's numbers.
+ */
+export function mergeLedgerDelta(
+  target: UsageLedgerDocument,
+  current: Readonly<UsageLedgerDocument>,
+  baseline: Readonly<UsageLedgerDocument>,
+): void {
+  for (const [dayKey, providers] of Object.entries(current.days)) {
+    if (!isLedgerDateKey(dayKey)) continue
+    if (typeof providers !== 'object' || providers === null) continue
+    for (const [provider, models] of Object.entries(providers)) {
+      if (!isSafeBucketKey(provider) || typeof models !== 'object' || models === null) continue
+      for (const [model, totals] of Object.entries(models)) {
+        if (!isSafeBucketKey(model) || typeof totals !== 'object' || totals === null) continue
+        const base = baseline.days[dayKey]?.[provider]?.[model]
+        const grow = (now: number, then: number): number => Math.max(0, now - then)
+        const delta: UsageTokenTotals = {
+          inputTokens: grow(totals.inputTokens, base?.inputTokens ?? 0),
+          outputTokens: grow(totals.outputTokens, base?.outputTokens ?? 0),
+          cacheReadTokens: grow(totals.cacheReadTokens, base?.cacheReadTokens ?? 0),
+          cacheWriteTokens: grow(totals.cacheWriteTokens, base?.cacheWriteTokens ?? 0),
+          reasoningTokens: grow(totals.reasoningTokens, base?.reasoningTokens ?? 0),
+          calls: grow(totals.calls, base?.calls ?? 0),
+          cost: grow(totals.cost, base?.cost ?? 0),
+        }
+        if (delta.calls === 0 && totalTokens(delta) === 0 && delta.cost === 0) continue
+        const atMs = new Date(dayKey + 'T12:00:00').getTime()
+        if (!Number.isFinite(atMs)) continue
+        foldUsage(target, atMs, provider, model, delta)
+      }
+    }
+  }
+}
+
 /** How many model rows one summarized provider keeps. */
 export const SUMMARY_MODEL_CAP = 12
 

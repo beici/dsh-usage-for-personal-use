@@ -11,10 +11,12 @@
  *
  * A transcript is a concatenation of independent zstd frames (one per append
  * batch) and `zstdDecompressSync` decodes only the leading frame, so the frame
- * walk below is required, not defensive.
+ * walk below is required, not defensive. A seeded subagent's transcript opens
+ * with a verbatim copy of its parent's messages, so one pass dedupes the whole
+ * run by message id before folding.
  * @module @linxin666/dsh-usage/host/session-log-backfill
  */
-import type { UsageLedgerDocument } from '../core/types.ts';
+import type { UsageLedgerDocument, UsageTokenTotals } from '../core/types.ts';
 /**
  * Offset just past the zstd frame that starts at `start`, or -1 when the frame
  * header or any of its blocks runs past the end of `buf`.
@@ -30,15 +32,23 @@ export declare function zstdDecodeAll(buf: Buffer): string;
  * Fold every billed model call in one decoded transcript into `doc`. Records
  * without a provider route are skipped: the live fold cannot attribute them
  * either, and inventing a bucket would only distort the totals.
+ *
+ * A seeded subagent's transcript opens with a verbatim copy of its parent's
+ * assistant messages (same message id, time and usage), so a replay that folds
+ * every file double-counts them. `seen` carries the message ids of the whole
+ * run: the first copy folds, later ones are reported to `onDuplicate` and
+ * dropped. Pass the same set for every transcript of one pass.
  */
-export declare function foldTranscript(text: string, doc: UsageLedgerDocument): void;
+export declare function foldTranscript(text: string, doc: UsageLedgerDocument, seen?: Set<string>, onDuplicate?: (dayKey: string, provider: string, model: string, totals: UsageTokenTotals) => void): void;
 /** Every transcript path under `<dshHome>/sessions`, two directory levels deep. */
 export declare function listSessionLogs(root: string): Promise<string[]>;
 /**
  * Replay the session transcripts into a fresh ledger-shaped document and hand it
- * to `merge`. Returns how many transcripts actually contributed.
+ * to `merge`. Returns how many transcripts actually contributed, and how many
+ * records were dropped as copies of a call another transcript already carried.
  */
-export declare function collectSessionLogUsage(root: string, merge: (doc: UsageLedgerDocument) => void): Promise<{
+export declare function collectSessionLogUsage(root: string, merge: (doc: UsageLedgerDocument) => void, onDuplicate?: (dayKey: string, provider: string, model: string, totals: UsageTokenTotals) => void): Promise<{
     files: number;
     replayed: number;
+    duplicates: number;
 }>;

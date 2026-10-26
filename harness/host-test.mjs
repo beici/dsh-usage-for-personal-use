@@ -9,7 +9,7 @@
  *
  * Run:  node --experimental-strip-types harness/host-test.mjs
  */
-import { mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -55,9 +55,9 @@ function messageRecord(provider, model, input, atMs = new Date('2026-10-18T10:00
   })
 }
 
-/** Write one multi-frame transcript under `<home>/sessions/<ws>/<id>/`. */
-async function writeTranscript(home, lines) {
-  const dir = join(home, 'sessions', 'ws1', 'sess1')
+/** Write one multi-frame transcript under `<home>/sessions/<ws>/<session>/`. */
+async function writeTranscript(home, lines, session = 'sess1') {
+  const dir = join(home, 'sessions', 'ws1', session)
   await mkdir(dir, { recursive: true })
   // Two frames: a transcript is a concatenation of per-append zstd frames.
   const half = Math.ceil(lines.length / 2)
@@ -107,7 +107,9 @@ async function writeTranscript(home, lines) {
   const { UsageService, UsageImportError } = await load('host/usage-service.ts')
   const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
   await svc.loadPersisted()
-  check('starts with one local file', (await readdir(join(home, 'dsh-usage'))).length === 0, 'no file before a fold')
+  // The dedupe marker is a sidecar, not a ledger: only ledger files matter here.
+  const ledgerFiles = async () => (await readdir(join(home, 'dsh-usage'))).filter((name) => name !== 'usage-dedupe-marker.json')
+  check('starts with one local file', (await ledgerFiles()).length === 0, 'no file before a fold')
 
   // The overview's `today` follows the wall clock, so this section folds into
   // the real today key — a fixed date went stale the day after it was written.
@@ -116,7 +118,7 @@ async function writeTranscript(home, lines) {
   svc.ledger = createLedgerDocument()
   foldUsage(svc.ledger, new Date(todayKey + 'T12:00:00').getTime(), 'buddy', 'm1', { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 2, cost: 0 })
   await svc.flushLedger()
-  check('flush writes only this device file', JSON.stringify((await readdir(join(home, 'dsh-usage'))).sort()) === JSON.stringify([`usage-ledger.${svc.device}.json`]), (await readdir(join(home, 'dsh-usage'))).join(','))
+  check('flush writes only this device file', JSON.stringify((await ledgerFiles()).sort()) === JSON.stringify([`usage-ledger.${svc.device}.json`]), (await ledgerFiles()).join(','))
 
   const exported = svc.exportLedger()
   check('export carries the schema', exported.schema === 'dsh-usage-ledger' && exported.version === 1)
@@ -243,6 +245,178 @@ async function writeTranscript(home, lines) {
   check('backfill is idempotent across restarts', again?.totals.calls === 1, String(again?.totals.calls))
 }
 
+// ---- seeded subagent transcripts are deduped ----------------------------
+// A seeded subagent's transcript opens with a verbatim copy of its parent's
+// assistant messages: same id, same time, same usage. Folding every file twice
+// inflated yesterday by 17% on the real ledger, and the max-merge rule meant the
+// inflated buckets could never come back down.
+{
+  const home = await freshHome()
+  const at = new Date('2026-10-16T09:00:00').getTime()
+  const call = (id, input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { id, source: { provider: 'buddy', model: 'm1' } },
+    },
+  })
+  await writeTranscript(home, [call('msg-1', 100)], 'parent')
+  await writeTranscript(home, [call('msg-1', 100), call('msg-2', 300)], 'child')
+
+  const { collectSessionLogUsage } = await load('host/session-log-backfill.ts')
+  let doc
+  const duplicates = []
+  const result = await collectSessionLogUsage(
+    join(home, 'sessions'),
+    (replayed) => { doc = replayed },
+    (dayKey, provider, model, totals) => duplicates.push([dayKey, provider, model, totals.inputTokens]),
+  )
+  const bucket = doc.days['2026-10-16']?.buddy?.m1
+  check('a copied call is counted once', bucket?.calls === 2 && bucket?.inputTokens === 400, `${bucket?.calls}/${bucket?.inputTokens}`)
+  check('the extra copy is reported', result.duplicates === 1 && duplicates.length === 1 && duplicates[0][3] === 100, JSON.stringify(duplicates))
+
+  // Records without an id cannot be told apart and must still fold: the older
+  // single-session transcript has no ids at all.
+  const plain = await freshHome()
+  await writeTranscript(plain, [messageRecord('buddy', 'm1', 100), messageRecord('buddy', 'm1', 100)])
+  let plainDoc
+  await collectSessionLogUsage(join(plain, 'sessions'), (replayed) => { plainDoc = replayed })
+  check('id-less records still fold', plainDoc.days['2026-10-18']?.buddy?.m1?.calls === 2, JSON.stringify(plainDoc.days).slice(0, 160))
+}
+
+// ---- the duplicate repair runs exactly once -----------------------------
+{
+  const home = await freshHome()
+  const at = new Date('2026-10-16T09:00:00').getTime()
+  const call = (id, input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { id, source: { provider: 'buddy', model: 'm1' } },
+    },
+  })
+  await writeTranscript(home, [call('msg-1', 100)], 'parent')
+  await writeTranscript(home, [call('msg-1', 100), call('msg-2', 300)], 'child')
+  // The ledger as the old replay left it: the copy folded in a third time.
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const inflated = {
+    version: 1,
+    days: { '2026-10-16': { buddy: { m1: { inputTokens: 500, outputTokens: 30, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 3, cost: 0 } } } },
+  }
+  await writeFile(join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`), JSON.stringify(inflated))
+
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const day = svc.overview().usage.days.find((row) => row.date === '2026-10-16')
+  check('the repair subtracts the extra copy', day?.totals.calls === 2 && day?.totals.inputTokens === 400, `${day?.totals.calls}/${day?.totals.inputTokens}`)
+  check('the repair leaves a marker', (await readdir(join(home, 'dsh-usage'))).includes('usage-dedupe-marker.json'))
+  await svc.stop()
+
+  const second = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await second.loadPersisted()
+  const again = second.overview().usage.days.find((row) => row.date === '2026-10-16')
+  check('the repair never runs twice', again?.totals.calls === 2 && again?.totals.inputTokens === 400, `${again?.totals.calls}/${again?.totals.inputTokens}`)
+  await second.stop()
+}
+
+// ---- a corrupt ledger is quarantined, not wiped -------------------------
+{
+  const home = await freshHome()
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
+  await writeFile(ledgerPath, '{ this is not a ledger')
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const names = await readdir(join(home, 'dsh-usage'))
+  check('a corrupt ledger is kept aside', names.some((name) => name.includes('.corrupt-')), names.join(','))
+  check('a corrupt ledger is reported', String(svc.overview().usage.ledgerError ?? '').includes('corrupt'), String(svc.overview().usage.ledgerError))
+
+  // The fresh document keeps counting and is written again.
+  const { createLedgerDocument, foldUsage } = await load('core/ledger.ts')
+  svc.ledger = createLedgerDocument()
+  foldUsage(svc.ledger, new Date('2026-10-15T12:00:00').getTime(), 'buddy', 'm1', { inputTokens: 40, outputTokens: 4, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 1, cost: 0 })
+  await svc.flushLedger()
+  const rewritten = JSON.parse(await readFile(ledgerPath, 'utf8'))
+  check('a fresh ledger is written after the quarantine', rewritten.days['2026-10-15']?.buddy?.m1?.calls === 1, JSON.stringify(rewritten).slice(0, 160))
+  await svc.stop()
+}
+
+// ---- an unreadable ledger is never overwritten --------------------------
+{
+  const home = await freshHome()
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
+  // A directory at the ledger path makes readFile fail with EISDIR — a stand-in
+  // for the locked / permission-denied cases a Windows profile produces.
+  await mkdir(ledgerPath, { recursive: true })
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  check('an unreadable ledger keeps the write guard armed', svc.loaded === false)
+  check('an unreadable ledger is reported', String(svc.overview().usage.ledgerError ?? '').includes('unreadable'), String(svc.overview().usage.ledgerError))
+  await svc.flushLedger()
+  check('an unreadable ledger is left untouched', (await stat(ledgerPath)).isDirectory())
+  await svc.stop()
+}
+
+// ---- two processes on one machine keep each other's calls ---------------
+// Both write the whole document, so the last flush used to own the history: a
+// second window's calls vanished on the next flush of the first.
+{
+  const home = await freshHome()
+  const { createLedgerDocument, foldUsage } = await load('core/ledger.ts')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
+  const at = new Date('2026-10-14T10:00:00').getTime()
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const calls = async () => JSON.parse(await readFile(ledgerPath, 'utf8')).days['2026-10-14']?.buddy?.m1?.calls
+
+  const first = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  const second = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await first.loadPersisted()
+  await second.loadPersisted()
+  foldUsage(first.ledger, at, 'buddy', 'm1', bucket(600, 6))
+  await first.flushLedger()
+  foldUsage(second.ledger, at, 'buddy', 'm1', bucket(700, 7))
+  await second.flushLedger()
+  check('both processes are counted', (await calls()) === 13, String(await calls()))
+  foldUsage(first.ledger, at, 'buddy', 'm1', bucket(100, 1))
+  await first.flushLedger()
+  check('a flush adds only its own growth', (await calls()) === 14, String(await calls()))
+  check('the first process adopted the merged document', first.ledger.days['2026-10-14']?.buddy?.m1?.calls === 14, String(first.ledger.days['2026-10-14']?.buddy?.m1?.calls))
+  await first.stop()
+  await second.stop()
+}
+
+// ---- a peer file must not impersonate another device --------------------
+{
+  const home = await freshHome()
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const own = localDeviceId()
+  const bucket = { inputTokens: 900, outputTokens: 90, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 9, cost: 0 }
+  // A copy of THIS machine's ledger under a peer name would double every call.
+  await writeFile(join(home, 'dsh-usage', 'usage-ledger.laptop-abc123.json'), JSON.stringify({ deviceId: own, ledger: { version: 1, days: { '2026-10-13': { buddy: { m1: bucket } } } } }))
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const day = svc.overview().usage.days.find((row) => row.date === '2026-10-13')
+  check('a renamed copy of this device is refused', day === undefined, JSON.stringify(day ?? null))
+  check('the refusal is reported', String(svc.overview().usage.devicesError ?? '').includes('names device'), String(svc.overview().usage.devicesError))
+  await svc.stop()
+
+  // A peer whose document agrees with its file name is still summed in.
+  await writeFile(join(home, 'dsh-usage', 'usage-ledger.laptop-abc123.json'), JSON.stringify({ deviceId: 'laptop-abc123', ledger: { version: 1, days: { '2026-10-13': { buddy: { m1: bucket } } } } }))
+  const third = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await third.loadPersisted()
+  check('a matching peer is summed in', third.overview().usage.days.find((row) => row.date === '2026-10-13')?.totals.calls === 9, JSON.stringify(third.overview().usage.days).slice(0, 160))
+  await third.stop()
+}
+
 // ---- range aggregate (the multi-month windows' one-request path) --------
 {
   const home = await freshHome()
@@ -345,6 +519,53 @@ async function writeTranscript(home, lines) {
   check('15:00 Beijing is peak', afternoon.peak === true)
   const saturday = deepseekPeriodAt(BEIJING('2026-10-24T10:00:00'))
   check('Saturday midday is never peak', saturday.peak === false)
+}
+
+// ---- live fold: every call carries its own route ------------------------
+// `request/header` fires once per epoch, so a session whose single header was
+// published before the listener attached used to lose every later call — the
+// long-lived subagent sessions, whose header lands at spawn time, dropped whole
+// runs that way. The record itself always names its provider/model pair, and
+// that is what the fold has to trust.
+{
+  await freshHome()
+  const { createLedgerDocument, localDateKey } = await load('core/ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const listeners = new Map()
+  const capturing = { ...ctxStub, on: (name, listener) => { listeners.set(name, listener); return () => {} } }
+  const svc = new UsageService(capturing, { pollIntervalSec: 60, retainDays: 180 })
+  svc.start()
+  await new Promise((done) => setTimeout(done, 25))
+  svc.ledger = createLedgerDocument()
+  const emit = listeners.get('session/event')
+  check('start subscribes to session/event', typeof emit === 'function')
+
+  const at = (iso) => Date.parse(iso + '+08:00')
+  const session = { id: 'sess-a' }
+  const call = (atMs, provider, model, input) => emit(session, {
+    type: 'assistant/message',
+    seq: 1,
+    time: atMs,
+    data: {
+      usage: { inputTokens: input, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      message: { source: { kind: 'model', provider, model } },
+    },
+  })
+  const bucket = (atMs, provider, model) => svc.ledger.days[localDateKey(atMs)]?.[provider]?.[model]
+
+  const morning = at('2026-10-20T10:00:00')
+  call(morning, 'mcgrox', 'deepseek-v4.1-flash', 1000)
+  check('a call with no header event still folds', bucket(morning, 'mcgrox', 'deepseek-v4.1-flash')?.calls === 1, JSON.stringify(svc.ledger.days).slice(0, 200))
+
+  call(at('2026-10-20T10:01:00'), 'magpie-anthropic', 'glm-5.3', 2000)
+  check('a mid-session route switch follows the record',
+    bucket(morning, 'magpie-anthropic', 'glm-5.3')?.calls === 1 && bucket(morning, 'mcgrox', 'deepseek-v4.1-flash')?.calls === 1,
+    JSON.stringify(svc.ledger.days[localDateKey(morning)] ?? {}).slice(0, 200))
+
+  const lateMs = at('2026-10-19T23:59:00')
+  call(lateMs, 'mcgrox', 'deepseek-v4.1-flash', 500)
+  check('the record timestamp decides the day', bucket(lateMs, 'mcgrox', 'deepseek-v4.1-flash')?.calls === 1, Object.keys(svc.ledger.days).join(','))
+  await svc.stop()
 }
 
 const failed = report.filter((row) => !row.ok)

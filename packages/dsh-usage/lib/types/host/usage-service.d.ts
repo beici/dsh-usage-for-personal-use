@@ -55,7 +55,19 @@ export declare class UsageService {
     private peers;
     /** Last peer scan failure, surfaced in the overview so a silent empty merge is visible. */
     private peersError;
+    /**
+     * Last ledger load failure, surfaced in the overview. A file that could not be
+     * read is never overwritten, so this is the only trace of why the totals are
+     * empty this boot.
+     */
+    private ledgerError;
     private ledger;
+    /**
+     * The document this process last wrote to disk. Another process on this
+     * machine writes the same file, so a flush adds only what we folded since
+     * this snapshot — adding the whole document would count its calls twice.
+     */
+    private ledgerWritten;
     private readonly snapshots;
     /** The official DeepSeek family's real-spend watch (see SpendWatch). */
     private spendWatch;
@@ -73,6 +85,9 @@ export declare class UsageService {
     private flushChain;
     /** True once loadPersisted finished; nothing may overwrite the files before that. */
     private loaded;
+    /** Retry bookkeeping for a ledger file that could not be read this boot. */
+    private loadRetries;
+    private loadRetryTimer;
     private disposed;
     /** Last prune guard: once per local day, and whenever retention shrinks. */
     private lastPrune;
@@ -190,7 +205,19 @@ export declare class UsageService {
      * period is time-of-day); other families stay unpriced (cost 0).
      */
     private totalsFrom;
+    /**
+     * Read this device's ledger file, telling the three failures apart: absent,
+     * unreadable (locked or permission-denied — the data may still be there), and
+     * corrupt (present but unparseable). Only "absent" may start a fresh file;
+     * treating either failure as "no history" would let the next flush replace a
+     * real ledger with an empty one.
+     */
+    private readLedgerFile;
     private loadPersisted;
+    /** Retry a ledger read that failed for a transient reason (lock, sharing). */
+    private scheduleLoadRetry;
+    /** Revive the probe cache and the spend watch; both are best-effort. */
+    private loadSnapshots;
     /**
      * Fold the session transcripts back into the ledger.
      *
@@ -202,6 +229,18 @@ export declare class UsageService {
      * is idempotent.
      */
     private backfillSessionLogs;
+    /**
+     * One-time correction for the seeded-subagent duplicate.
+     *
+     * A seeded subagent's transcript opens with a verbatim copy of its parent's
+     * assistant messages (same id, time and usage), and the replay used to fold
+     * both copies into the same bucket. Deduping the replay stops new inflation
+     * but cannot undo what is already written — the merge rule keeps the larger
+     * total, so an inflated bucket would never come back down. The extra copies
+     * are therefore subtracted once, exactly, and a sidecar marker records it:
+     * subtracting twice would take real calls away.
+     */
+    private repairDuplicatedReplay;
     /**
      * Fold a parsed document into a target ledger.
      *
@@ -235,6 +274,16 @@ export declare class UsageService {
      */
     private flushLedger;
     private writeLedgerOnce;
+    /** The ledger file as another writer left it, or undefined when absent/unreadable. */
+    private readDiskLedger;
+    /**
+     * Write this process's document over the file, ignoring what is there.
+     *
+     * The normal flush merges the file's growth in and keeps the larger total of
+     * each bucket — right for adding calls, wrong for a correction, which has to
+     * replace the number the old replay wrote. Only the duplicate repair uses it.
+     */
+    private writeLedgerVerbatim;
     /**
      * Prune days past retention. Runs at most once per local day and whenever
      * `retainDays` shrinks — not only at startup, so long-lived processes and
