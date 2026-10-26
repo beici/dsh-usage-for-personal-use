@@ -9,7 +9,7 @@
  *
  * Run:  node --experimental-strip-types harness/host-test.mjs
  */
-import { mkdtemp, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -1145,6 +1145,124 @@ async function writeTranscript(home, lines, session = 'sess1') {
   check('a renamed copy merges instead of summing', totals.calls === 12 && totals.inputTokens === 1200, JSON.stringify(totals))
   check('the merge is reported', String(second.overview().usage.ledgerNote ?? '').includes('oldhost-abc123'), String(second.overview().usage.ledgerNote))
   await second.stop()
+}
+
+// ---- a flush that never reached the disk does not put the correction back --
+// A write can fail (a locked file, a read-only profile, a full disk). The file on
+// disk then still holds the inflated buckets while memory holds the corrected
+// ones. Reading that file back and adopting it — which a plain max merge does —
+// would resurrect the very numbers the repair removed, and with the marker not yet
+// written nothing would ever take them out again.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const todayKey = localDateKey(Date.now())
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const ledgerPath = join(dir, 'usage-ledger.' + localDeviceId() + '.json')
+  const stamp = Date.now()
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, deviceId: localDeviceId(), machine: 'pin', repairedAt: stamp, days: { [todayKey]: { buddy: { m1: bucket(400, 4) } } } }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  // The correction never reached the disk: the old, inflated file is still there,
+  // and it carries no stamp at all.
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, days: { [todayKey]: { buddy: { m1: bucket(500, 5) } } } }))
+  await svc.flushLedger()
+  const written = JSON.parse(await readFile(ledgerPath, 'utf8'))
+  check('a failed write does not resurrect the inflated bucket', written.days[todayKey].buddy.m1.inputTokens === 400, JSON.stringify(written.days))
+  check('the rewrite is reported as a stale writer', String(svc.overview().usage.ledgerNote ?? '').includes('predates'), String(svc.overview().usage.ledgerNote))
+  check('the rewritten file is stamped again', written.repairedAt === stamp, String(written.repairedAt))
+  await svc.stop()
+}
+
+// ---- a file stamped with the derived digest is this machine -------------
+// Before the pinned id existed, a flush stamped the digest of host, platform and
+// user. A copy of this machine's own ledger that still carries that stamp is not
+// a second device; summing it would double this machine's history.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId, localMachineId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const todayKey = localDateKey(Date.now())
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), JSON.stringify({ version: 1, days: { [todayKey]: { buddy: { m1: bucket(1000, 10) } } } }))
+  await writeFile(join(dir, 'usage-ledger.backup-1.json'), JSON.stringify({
+    version: 1, deviceId: 'backup-1', machine: localMachineId(),
+    days: { [todayKey]: { buddy: { m1: bucket(700, 7) } } },
+  }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const totals = svc.overview().usage.all.totals
+  check('a digest-stamped copy is not a second device', svc.overview().usage.devices.length === 1, JSON.stringify(svc.overview().usage.devices))
+  check('a digest-stamped copy merges instead of summing', totals.calls === 10 && totals.inputTokens === 1000, JSON.stringify(totals))
+  await svc.stop()
+}
+
+// ---- a pin lost to a read-only profile still recognises the old files ---
+// A profile that could not write machine-id.json falls back to the digest, then
+// mints a fresh id once it can write. The files written under the old pin are
+// still this machine's, so they must be folded in rather than summed.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const todayKey = localDateKey(Date.now())
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const oldPin = 'a1b2c3d4e5f60718293a4b5c6d7e8f90'
+  await writeFile(join(dir, 'machine-id.json'), JSON.stringify({ machineId: oldPin }))
+  await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), JSON.stringify({
+    version: 1, deviceId: localDeviceId(), machine: oldPin,
+    days: { [todayKey]: { buddy: { m1: bucket(1000, 10) } } },
+  }))
+  const first = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await first.loadPersisted()
+  await first.stop()
+  await rm(join(dir, 'machine-id.json'), { force: true })
+  await writeFile(join(dir, 'usage-ledger.other-2.json'), JSON.stringify({
+    version: 1, deviceId: 'other-2', machine: oldPin,
+    days: { [todayKey]: { buddy: { m1: bucket(1200, 12) } } },
+  }))
+  const second = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await second.loadPersisted()
+  const totals = second.overview().usage.all.totals
+  check('a file under a lost pin is not a second device', second.overview().usage.devices.length === 1, JSON.stringify(second.overview().usage.devices))
+  check('a file under a lost pin is folded in', totals.calls === 12 && totals.inputTokens === 1200, JSON.stringify(totals))
+  await second.stop()
+}
+
+// ---- a lowered retention prunes after a restart -------------------------
+// The file records the window it was written under. Lowering the setting is the
+// user's own doing, so the first flush after the change has to prune — otherwise
+// the shorter window silently keeps the days it was meant to drop.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const dayKey = (daysAgo) => {
+    const at = new Date()
+    at.setDate(at.getDate() - daysAgo)
+    return localDateKey(at.getTime())
+  }
+  const days = {}
+  for (const ago of [20, 10, 0]) days[dayKey(ago)] = { buddy: { m1: bucket(100, 1) } }
+  const ledgerPath = join(dir, 'usage-ledger.' + localDeviceId() + '.json')
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, deviceId: localDeviceId(), machine: 'pin', retentionDays: 180, days }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 7 })
+  await svc.loadPersisted()
+  await svc.flushLedger()
+  const written = JSON.parse(await readFile(ledgerPath, 'utf8'))
+  check('a lowered retention prunes on the next flush', Object.keys(written.days).length === 1, Object.keys(written.days).join(','))
+  check('the file records the new window', written.retentionDays === 7, String(written.retentionDays))
+  await svc.stop()
 }
 
 // ---- retention: a shrink is honoured, a clock jump is refused -----------

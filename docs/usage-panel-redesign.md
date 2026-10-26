@@ -168,9 +168,12 @@ a setting the user lowered on purpose: a clock jump puts *every* recorded day
 outside the window at once, while a shrink keeps the recent days and drops the
 rest. So a prune that would delete all of them (with at least four days on file)
 is refused and reported as a note; a shrink is honoured, once, and the threshold
-applies again afterwards. Keeping `retainDays` days also means dropping anything
-older than `today-(retainDays-1)`, so the widest window and "all" agree instead
-of the history keeping one extra day.
+applies again afterwards — the file records the window it was written under
+(`retentionDays`), so a restart does not read the user's own change as a jumped
+clock. A shrink that deletes days says how many it dropped, because the panel
+then simply shows less history. Keeping `retainDays` days also means dropping
+anything older than `today-(retainDays-1)`, so the widest window and "all" agree
+instead of the history keeping one extra day.
 
 Two more things the ledger file must survive, because both end in a silent wipe:
 
@@ -193,9 +196,14 @@ Two more things the ledger file must survive, because both end in a silent wipe:
 - The machine id is minted once and pinned in `machine-id.json` inside the
   persist dir. It has to survive a host rename, a user rename and a plugin
   reinstall — exactly the events that change a derived identity — because it is
-  what tells "this machine, renamed" apart from "a second machine". The host
-  slug plus a digest of host, platform and user is only the fallback for a
-  read-only profile that cannot pin one.
+  what tells "this machine, renamed" apart from "a second machine". Two ids also
+  count as this machine: one this profile wrote under before (a lost pin is
+  re-minted, while the files on disk keep the old stamp) and the digest of host,
+  platform and user that builds before the pin stamped into their files. The
+  digest is only the fallback for a read-only profile that cannot pin one, and
+  accepting it always means two machines whose host name, user and platform are
+  identical share a history — an undercount, which is the lesser evil next to a
+  permanently doubled one.
 
 The pre-rename `usage-ledger.json` is read when this device's file is missing,
 and so is the `.migrated` sibling a successful migration leaves behind: that
@@ -217,7 +225,20 @@ Two more write-path rules:
   the merged document is adopted, so neither window's calls are lost. Buckets are
   merged field by field (`mergeLedgerMax`), never by "larger total wins": the
   total ignores fields like `reasoningTokens` and `cost`, so comparing totals
-  would silently drop them.
+  would silently drop them. The read-merge-write runs under a lock file
+  (`usage-ledger.<id>.json.lock`, `wx`, broken after a stale timeout), so two
+  processes cannot read the same version and lose one side's calls.
+- A file that predates the correction is not re-adopted. When a write fails (a
+  locked file, a read-only profile, a full disk) the disk still holds the inflated
+  buckets while memory holds the corrected ones, and a plain max merge would put
+  them straight back — permanently, since the marker has not been written yet. So
+  a flush that finds a stamp older than the correction it loaded writes *its own*
+  document, takes from the file only the days it does not hold at all, and reports
+  `usage.ledgerNote`. Losing a handful of calls in that window is recoverable by
+  the next replay; a resurrected copy is not.
+- A file that carries a newer `repairedAt` than this process loaded is adopted
+  whole (plus this process's own growth), so a process that loaded before the
+  correction cannot undo it.
 - Peer discovery is not allowed to lose data either. A scan that fails keeps the
   peers it already knows and reports `usage.devicesError`; a peer document whose
   `deviceId` does not match its file name, or whose `machine` is this machine, is
@@ -347,7 +368,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
 ## Verification
 
 - `node harness/render-test.mjs` — jsdom, real bundle, saved live fixtures,
-  **99/99 checks**: eight tiles with correct labels/values/`aria-pressed`
+  **113/113 checks**: eight tiles with correct labels/values/`aria-pressed`
   (近 3 天 sums 今日 + 10-19; 近 6 个月 / 全部 read the range aggregate, which the
   stub answers only up to yesterday — 49.2 M / 584 calls — so their 135 M / 1251
   tiles prove the panel folded the live today in itself, and no range fetch may
@@ -378,7 +399,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   ledger sends no range request, the tablist keyboard contract (ArrowRight,
   Home, End), the from-date `min`, and the legend readable outside the image
   role.
-- `node --experimental-strip-types harness/host-test.mjs` — 168 checks: range
+- `node --experimental-strip-types harness/host-test.mjs` — 177 checks: range
   aggregate + per-model series, route guards, device ledger, loopback fence,
   peak clock, the record-carried route of the live fold, transcript dedupe and
   the judged repair, ledger quarantine and unreadable-file protection, the

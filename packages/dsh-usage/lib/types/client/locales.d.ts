@@ -18,6 +18,7 @@ export declare const zh: {
     'usage.error': string;
     'usage.error.network': string;
     'usage.error.status': string;
+    'usage.error.unknown': string;
     'usage.disabled': string;
     'usage.current': string;
     'usage.today': string;
@@ -44,6 +45,7 @@ export declare const zh: {
     'usage.trend': string;
     'usage.trend.label': string;
     'usage.trend.labelFailed': string;
+    'usage.trend.loadFailed': string;
     'usage.range.title': string;
     'usage.range.today': string;
     'usage.range.yesterday': string;

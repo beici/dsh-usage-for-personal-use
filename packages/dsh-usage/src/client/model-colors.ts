@@ -14,24 +14,58 @@
  * chart-1 (blue) onto whatever model leads the current window, so the
  * dominant model was blue in every window and the whole table reshuffled
  * whenever the tile changed; hashing keeps a model's hue constant across
- * windows and independent of how much it ran. The hues themselves live in
- * usage.module.css as CSS variables with a light and a dark variant, so the
- * colors ride the theme instead of being baked in here.
+ * windows and independent of how much it ran.
  *
  * A slot is only sixteen hues wide, so two names do collide in it — and the
  * slot used to be the whole color, which painted the second model of a channel
- * exactly like the first. A name's color now has a second axis: a shade of its
- * slot mixed toward white or black. Both axes come from the name, so a model
- * keeps its color in every window and the order the names arrive in never
- * matters; only a full hash coincidence in both axes can repeat a color.
+ * exactly like the first. Each slot now carries a ladder of five shades, and a
+ * name's rung is its order inside the slot, so two colliding names land two
+ * rungs apart instead of on the same color.
+ *
+ * The shades are cut here, in TypeScript, from the hue bytes: a bar has to be
+ * legible on the light AND the dark skin, and only a measured luminance can
+ * promise that. The palette used to be CSS variables mixed toward white or
+ * black with `color-mix`, which left the ends of that ramp at 1.4:1 on white
+ * and 2.3:1 on the dark card — unreadable in exactly the theme the mix was
+ * meant to fit. A mix cannot be clamped either, so a rung is placed by its
+ * luminance instead: the two skins overlap in a narrow band, and every rung is
+ * pulled into it.
  * @module @linxin666/dsh-usage/client/model-colors
  */
 
-/** Fill for models past the palette (the collapsed tail). */
-export const MODEL_COLOR_OTHER = 'var(--dsw-chart-other)'
+/** Fill for models past the palette (the collapsed tail), legible on both skins. */
+export const MODEL_COLOR_OTHER = '#6f6f78'
 
 /** How many models the palette distinguishes before the gray tail. */
 export const MODEL_PALETTE_SIZE = 16
+
+/** One hue per slot, the panel's chart palette. */
+const PALETTE_HUES: readonly string[] = [
+  '#0576ff', '#2f6f37', '#c46212', '#975bf1', '#d34591', '#0d8a8a', '#b3341f', '#7a9018',
+  '#4b3fd0', '#d4a017', '#c25a7e', '#619e3a', '#2f9e73', '#0f96c9', '#a855c9', '#5c7ac0',
+]
+
+type Rgb = readonly [number, number, number]
+
+/** The surface behind the bars on the light skin. */
+const SURFACE_LIGHT: Rgb = [255, 255, 255]
+
+/** The surface behind the bars on the dark skin: the panel's own card. */
+const SURFACE_DARK: Rgb = [0x16, 0x17, 0x1a]
+
+/** WCAG 2.1 non-text contrast: a bar has to clear this against its surface. */
+const MIN_CONTRAST = 3
+
+/**
+ * Relative luminance a bar may sit at: the band where it clears MIN_CONTRAST on
+ * white (luminance at most 0.3) and on the dark card (at least 0.127). The
+ * margins keep rounding from pushing a rung under the floor.
+ */
+const LUMINANCE_FLOOR = MIN_CONTRAST * (luminance(SURFACE_DARK) + 0.05) - 0.05 + 0.004
+const LUMINANCE_CEILING = (luminance(SURFACE_LIGHT) + 0.05) / MIN_CONTRAST - 0.05 - 0.015
+
+/** Rungs on a slot's ladder: five shades, so a slot's second name sits two below. */
+const SHADE_COUNT = 5
 
 /** The color identity of a model: `prefix/`-stripped, trimmed, lower-cased. */
 export function normalizeModelName(model: string): string {
@@ -49,28 +83,76 @@ function hashOf(name: string): number {
   return hash >>> 0
 }
 
-/** Lowest share of the slot hue a shade keeps, in percent. */
-const SHADE_MIN_PERCENT = 58
+function hexToRgb(hex: string): Rgb {
+  const value = Number.parseInt(hex.slice(1), 16)
+  return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff]
+}
 
-/** Percent steps a shade walks above the minimum (58 % … 92 %). */
-const SHADE_SPAN = 35
+/** `percent` of every channel: the hue mixed with black, in sRGB bytes. */
+function dim(rgb: Rgb, percent: number): Rgb {
+  return [
+    Math.round((rgb[0] * percent) / 100),
+    Math.round((rgb[1] * percent) / 100),
+    Math.round((rgb[2] * percent) / 100),
+  ]
+}
 
-/** Shades a slot can carry: the hue itself plus white and black at every step. */
-const SHADE_COUNT = SHADE_SPAN * 2 + 1
+/** `share` of the way to white: the hue lifted without leaving its family. */
+function lighten(rgb: Rgb, share: number): Rgb {
+  const lift = (channel: number): number => Math.round(channel + (255 - channel) * share)
+  return [lift(rgb[0]), lift(rgb[1]), lift(rgb[2])]
+}
+
+function toHex(rgb: Rgb): string {
+  return '#' + rgb.map((channel) => channel.toString(16).padStart(2, '0')).join('')
+}
+
+function channelLuminance(channel: number): number {
+  const value = channel / 255
+  return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+}
+
+function luminance(rgb: Rgb): number {
+  return 0.2126 * channelLuminance(rgb[0]) + 0.7152 * channelLuminance(rgb[1]) + 0.0722 * channelLuminance(rgb[2])
+}
 
 /**
- * One slot in one shade: shade 0 is the slot's own hue (`--dsw-chart-N`), every
- * other shade mixes that hue toward white or black, walking 58 % … 92 % of the
- * hue. A shade therefore reads as the same hue in a lighter or darker tone —
- * apart from its slot neighbour, but never so far that it leaves the light/dark
- * skin the palette defines.
+ * One hue pulled to a target relative luminance: darkened by scaling when the
+ * target is below the hue's own luminance, lifted toward white when it is
+ * above. Both moves are monotonic, so a bisection lands on the target — and
+ * neither ever parks the hue at an extreme, which is what made the old ramp
+ * unreadable.
  */
-function slotColor(slot: number, shade: number): string {
-  const hue = `var(--dsw-chart-${slot + 1})`
-  if (shade === 0) return hue
-  const percent = SHADE_MIN_PERCENT + Math.ceil(shade / 2) - 1
-  return `color-mix(in srgb, ${hue} ${percent}%, ${shade % 2 === 1 ? 'white' : 'black'})`
+function withLuminance(base: Rgb, target: number): Rgb {
+  const move = target <= luminance(base)
+    ? (share: number): Rgb => dim(base, share * 100)
+    : (share: number): Rgb => lighten(base, share)
+  let low = 0
+  let high = 1
+  for (let step = 0; step < 24; step += 1) {
+    const mid = (low + high) / 2
+    if (luminance(move(mid)) < target) low = mid
+    else high = mid
+  }
+  return move((low + high) / 2)
 }
+
+/**
+ * One slot's ladder: SHADE_COUNT rungs spread across the luminance band both
+ * skins share, so every shade is legible on white and on the dark card alike.
+ */
+function shadeLadder(hue: string): string[] {
+  const base = hexToRgb(hue)
+  const ladder: string[] = []
+  for (let rung = 0; rung < SHADE_COUNT; rung += 1) {
+    const target = LUMINANCE_FLOOR + ((LUMINANCE_CEILING - LUMINANCE_FLOOR) * rung) / (SHADE_COUNT - 1)
+    ladder.push(toHex(withLuminance(base, target)))
+  }
+  return ladder
+}
+
+/** Each slot's ladder, cut once at load: the panel never recomputes a color. */
+const SLOT_SHADES: readonly (readonly string[])[] = PALETTE_HUES.map(shadeLadder)
 
 /**
  * Assign one palette color per normalized model name.
@@ -81,15 +163,19 @@ function slotColor(slot: number, shade: number): string {
  * window showing only the second recolored it to chart-1. Stability is the whole
  * promise of this table (the trend bars, the channel bars and the model rows
  * share it, and the user learns the colors), so a collision between two of the
- * sixteen hues is resolved by the shade axis instead of by shifting someone
- * else's hue: the bits above the slot pick a white/black mix of that same hue,
- * which keeps the pair apart without letting any other name move.
+ * sixteen hues is resolved on the shade ladder instead of by shifting someone
+ * else's hue. The rung is the name's order inside its slot, stepped by two, so
+ * consecutive names of one slot are as far apart on the ladder as it goes.
  */
 export function assignModelColors(models: Iterable<string>): Map<string, string> {
   const colors = new Map<string, string>()
+  const taken = new Array<number>(MODEL_PALETTE_SIZE).fill(0)
   for (const name of new Set(models)) {
-    const hash = hashOf(name)
-    colors.set(name, slotColor(hash % MODEL_PALETTE_SIZE, Math.floor(hash / MODEL_PALETTE_SIZE) % SHADE_COUNT))
+    const slot = hashOf(name) % MODEL_PALETTE_SIZE
+    const ladder = SLOT_SHADES[slot] ?? []
+    const rung = (taken[slot] ?? 0) * 2 % Math.max(ladder.length, 1)
+    taken[slot] = (taken[slot] ?? 0) + 1
+    colors.set(name, ladder[rung] ?? MODEL_COLOR_OTHER)
   }
   return colors
 }

@@ -1,76 +1,15 @@
 /* dsh-usage settings section: quiet cards on the host surface tokens, no
    framework style imports. Neutral grays follow the GUI text color so the
-   section reads on light and dark themes alike. */
+   section reads on light and dark themes alike.
+
+   Model colors are cut in model-colors.ts, not declared here: each slot's
+   shades are placed by luminance so they stay legible on both skins. */
 
 .section {
   display: flex;
   flex-direction: column;
   gap: 16px;
   color: inherit;
-  /* 模型分类色:reasonix usage-stats 十色 + 同风格补足的六色(azure/leaf/
-     mint/rose/violet/steel,补全色轮空档)+ 中性灰 Other,由 model-colors.ts
-     按 token 排名分配;原始色相在浅色卡面上偏重,掺 30% 白提亮去饱和。 */
-  --dsw-chart-1: color-mix(in srgb, #0576ff 70%, white);
-  --dsw-chart-2: color-mix(in srgb, #2f6f37 70%, white);
-  --dsw-chart-3: color-mix(in srgb, #c46212 70%, white);
-  --dsw-chart-4: color-mix(in srgb, #975bf1 70%, white);
-  --dsw-chart-5: color-mix(in srgb, #d34591 70%, white);
-  --dsw-chart-6: color-mix(in srgb, #0d8a8a 70%, white);
-  --dsw-chart-7: color-mix(in srgb, #b3341f 70%, white);
-  --dsw-chart-8: color-mix(in srgb, #7a9018 70%, white);
-  --dsw-chart-9: color-mix(in srgb, #4b3fd0 70%, white);
-  --dsw-chart-10: color-mix(in srgb, #d4a017 70%, white);
-  --dsw-chart-11: color-mix(in srgb, #c25a7e 70%, white);
-  --dsw-chart-12: color-mix(in srgb, #619e3a 70%, white);
-  --dsw-chart-13: color-mix(in srgb, #2f9e73 70%, white);
-  --dsw-chart-14: color-mix(in srgb, #0f96c9 70%, white);
-  --dsw-chart-15: color-mix(in srgb, #a855c9 70%, white);
-  --dsw-chart-16: color-mix(in srgb, #5c7ac0 70%, white);
-  --dsw-chart-other: color-mix(in srgb, #737373 70%, white);
-}
-
-/* 深色皮肤:同样的色相换更厚的白纱(65%),段面读起来柔和明亮而不是沉进底色。
-   DSH 桌面端用 body[data-ds-dark-theme] 切换;浏览器场景退回系统偏好。 */
-body[data-ds-dark-theme] .section {
-  --dsw-chart-1: color-mix(in srgb, #0576ff 65%, white);
-  --dsw-chart-2: color-mix(in srgb, #2f6f37 65%, white);
-  --dsw-chart-3: color-mix(in srgb, #c46212 65%, white);
-  --dsw-chart-4: color-mix(in srgb, #975bf1 65%, white);
-  --dsw-chart-5: color-mix(in srgb, #d34591 65%, white);
-  --dsw-chart-6: color-mix(in srgb, #0d8a8a 65%, white);
-  --dsw-chart-7: color-mix(in srgb, #b3341f 65%, white);
-  --dsw-chart-8: color-mix(in srgb, #7a9018 65%, white);
-  --dsw-chart-9: color-mix(in srgb, #4b3fd0 65%, white);
-  --dsw-chart-10: color-mix(in srgb, #d4a017 65%, white);
-  --dsw-chart-11: color-mix(in srgb, #c25a7e 65%, white);
-  --dsw-chart-12: color-mix(in srgb, #619e3a 65%, white);
-  --dsw-chart-13: color-mix(in srgb, #2f9e73 65%, white);
-  --dsw-chart-14: color-mix(in srgb, #0f96c9 65%, white);
-  --dsw-chart-15: color-mix(in srgb, #a855c9 65%, white);
-  --dsw-chart-16: color-mix(in srgb, #5c7ac0 65%, white);
-  --dsw-chart-other: color-mix(in srgb, #737373 65%, white);
-}
-
-@media (prefers-color-scheme: dark) {
-  .section {
-    --dsw-chart-1: color-mix(in srgb, #0576ff 65%, white);
-    --dsw-chart-2: color-mix(in srgb, #2f6f37 65%, white);
-    --dsw-chart-3: color-mix(in srgb, #c46212 65%, white);
-    --dsw-chart-4: color-mix(in srgb, #975bf1 65%, white);
-    --dsw-chart-5: color-mix(in srgb, #d34591 65%, white);
-    --dsw-chart-6: color-mix(in srgb, #0d8a8a 65%, white);
-    --dsw-chart-7: color-mix(in srgb, #b3341f 65%, white);
-    --dsw-chart-8: color-mix(in srgb, #7a9018 65%, white);
-    --dsw-chart-9: color-mix(in srgb, #4b3fd0 65%, white);
-    --dsw-chart-10: color-mix(in srgb, #d4a017 65%, white);
-    --dsw-chart-11: color-mix(in srgb, #c25a7e 65%, white);
-    --dsw-chart-12: color-mix(in srgb, #619e3a 65%, white);
-    --dsw-chart-13: color-mix(in srgb, #2f9e73 65%, white);
-    --dsw-chart-14: color-mix(in srgb, #0f96c9 65%, white);
-    --dsw-chart-15: color-mix(in srgb, #a855c9 65%, white);
-    --dsw-chart-16: color-mix(in srgb, #5c7ac0 65%, white);
-    --dsw-chart-other: color-mix(in srgb, #737373 65%, white);
-  }
 }
 
 .header {
@@ -155,6 +94,13 @@ body[data-ds-dark-theme] .section {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* A tab that is not showing keeps its panel mounted — the tab's `aria-controls`
+   has to name a tabpanel that exists — so this class's `display: flex` would
+   otherwise beat the user agent's `[hidden]` rule. */
+.panel[hidden] {
+  display: none;
 }
 
 .card {
@@ -450,6 +396,18 @@ body[data-ds-dark-theme] .section {
   display: flex;
   align-items: flex-end;
   gap: 2px;
+}
+
+/* A window that failed whole gets one centred notice instead of a wall of failed
+   stripes: the hatch marks belong to the gaps in an otherwise real chart. */
+.trendFailed {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  text-align: center;
 }
 
 /* column-reverse 让 DOM 顺序 (缓存读→输入→输出) 直接成为自底向上的堆叠。 */

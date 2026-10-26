@@ -104,14 +104,13 @@ export async function ensureMachineId(dir: string): Promise<string> {
   const known = await read()
   if (known !== undefined) return known
   const minted = randomUUID().replace(/-/g, '')
-  const body = `${JSON.stringify({ version: 1, machineId: minted }, null, 2)}\n`
   try {
     await mkdir(dir, { recursive: true })
     // Two processes starting together both find no file and both mint an id;
     // whichever writes second must lose, or the two of them spend the session
     // stamping documents with ids that disagree — and a file stamped with the
     // losing id looks like a different machine to its own sibling.
-    await writeFile(path, body, { encoding: 'utf8', flag: 'wx' })
+    await writeFile(path, machineIdBody(minted, []), { encoding: 'utf8', flag: 'wx' })
   } catch (error) {
     // Losing the race is the expected path: read back what the winner wrote.
     const settled = await read()
@@ -122,15 +121,53 @@ export async function ensureMachineId(dir: string): Promise<string> {
       // real one.
       return localMachineId()
     }
-    // The file exists but is unreadable: overwrite it rather than run unpinned.
+    // The file exists but is unreadable: overwrite it rather than run unpinned,
+    // but keep whatever id it still holds so files stamped with it stay
+    // recognisable as this machine instead of turning into a phantom peer.
+    const salvage = (await readRawIds(path)).filter((id) => id !== minted)
     try {
-      await writeFile(path, body, 'utf8')
+      await writeFile(path, machineIdBody(minted, salvage), 'utf8')
       return minted
     } catch {
       return localMachineId()
     }
   }
   return minted
+}
+
+/** The pinned-id file body: the live id plus every id this profile used before. */
+function machineIdBody(machineId: string, previous: string[]): string {
+  return `${JSON.stringify({ version: 2, machineId, previous }, null, 2)}\n`
+}
+
+/** Every id-shaped string in a file we failed to parse, newest first. */
+async function readRawIds(path: string): Promise<string[]> {
+  try {
+    const raw = await readFile(path, 'utf8')
+    const found = raw.match(/[0-9a-f]{32}/g) ?? []
+    return [...new Set(found)]
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Ids this profile has used before.
+ *
+ * A re-minted pin (a lost `machine-id.json`, a moved profile, an upgrade from a
+ * build that never pinned one) leaves older files stamped with the old id. Those
+ * files are this machine's own history, so they have to be folded in rather than
+ * summed as a second device — the difference is a permanently doubled total.
+ */
+export async function readMachineAliases(dir: string): Promise<string[]> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(join(dir, MACHINE_ID_FILE), 'utf8'))
+    const list = (parsed as { previous?: unknown } | null)?.previous
+    if (!Array.isArray(list)) return []
+    return list.filter((id): id is string => typeof id === 'string' && MACHINE_ID_PATTERN.test(id))
+  } catch {
+    return []
+  }
 }
 
 /** 32 lowercase hex characters: what `ensureMachineId` mints and accepts. */
@@ -189,6 +226,8 @@ export interface LoadedLedgerFile {
   machine?: string
   doc: UsageLedgerDocument
   updatedAt?: number
+  /** Retention the writer had applied, so a lowered setting survives a restart. */
+  retentionDays?: number
 }
 
 /**
@@ -200,17 +239,20 @@ export interface LoadedLedgerFile {
  * `/export` envelope does exactly that) would let a downgrade overwrite the
  * history with nothing. `repairedAt` marks the last correction, so a process
  * that loaded before the correction cannot raise a bucket a newer write
- * lowered.
+ * lowered. `retentionDays` records which window the writer pruned to: without
+ * it a restart cannot tell "the user lowered retention while we were down" from
+ * "the clock jumped", and it refuses the prune forever.
  */
 export function ledgerFileDocument(
   doc: Readonly<UsageLedgerDocument>,
-  extra?: { repairedAt?: number; machine?: string },
-): UsageLedgerDocument & { deviceId: string; machine: string; repairedAt?: number } {
+  extra?: { repairedAt?: number; machine?: string; retentionDays?: number },
+): UsageLedgerDocument & { deviceId: string; machine: string; repairedAt?: number; retentionDays?: number } {
   return {
     ...doc,
     deviceId: localDeviceId(),
     machine: extra?.machine ?? localMachineId(),
     ...(extra?.repairedAt !== undefined ? { repairedAt: extra.repairedAt } : {}),
+    ...(extra?.retentionDays !== undefined ? { retentionDays: extra.retentionDays } : {}),
   }
 }
 
@@ -224,8 +266,9 @@ export function ledgerFileDocument(
  */
 export function parsePeerLedger(value: unknown): LoadedLedgerFile | undefined {
   if (typeof value !== 'object' || value === null) return undefined
-  const record = value as { deviceId?: unknown; machine?: unknown; ledger?: unknown; days?: unknown }
+  const record = value as { deviceId?: unknown; machine?: unknown; ledger?: unknown; days?: unknown; retentionDays?: unknown }
   const machine = typeof record.machine === 'string' && record.machine !== '' ? record.machine : undefined
+  const retentionDays = typeof record.retentionDays === 'number' && Number.isFinite(record.retentionDays) ? record.retentionDays : undefined
   // Envelope form: { deviceId, ledger: { version, days } }. The payload has to
   // be an object carrying `days`: `deserializeLedger` tolerates anything and
   // answers an empty document, so a string here would otherwise import as a
@@ -238,13 +281,13 @@ export function parsePeerLedger(value: unknown): LoadedLedgerFile | undefined {
     // file written by this build — the device simply disappeared from the panel.
     const payload = hasDayMap(record.ledger) ? record.ledger : hasDayMap(value) ? value : undefined
     if (payload === undefined) return undefined
-    return { deviceId: record.deviceId, machine, doc: deserializeLedger(payload) }
+    return { deviceId: record.deviceId, machine, doc: deserializeLedger(payload), retentionDays }
   }
   // Bare document form: the device id then comes from the file name. Callers
   // must not trust it — a bare document carries no proof of which machine wrote
   // it, and this build writes its own files WITH the id (see
   // `ledgerFileDocument`), so a bare file is a copy, not a device.
-  if (hasDayMap(value)) return { deviceId: '', machine, doc: deserializeLedger(value) }
+  if (hasDayMap(value)) return { deviceId: '', machine, doc: deserializeLedger(value), retentionDays }
   return undefined
 }
 

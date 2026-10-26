@@ -206,15 +206,17 @@ function roundShares(exact: readonly number[]): number[] {
  * A non-2xx answer arrives as `usage api/… failed: 500` — the internal route and
  * a bare status code, which used to be printed verbatim next to the translated
  * sentence around it. The status is the one part worth repeating, so it gets its
- * own sentence; anything else still falls through unchanged (callers keep the
- * raw text in a title attribute, so the diagnostic is never lost).
+ * own sentence; an abort, a JSON parse failure ("Unexpected token <") or any
+ * other wire text is a diagnostic with no meaning for the reader, so it reads as
+ * one generic sentence too (callers keep the raw text in a title attribute, so
+ * the diagnostic is never lost).
  */
 function describeError(error: string): string {
-  if (/failed to fetch|networkerror|network error|econnrefused|econnreset|enotfound|socket hang up|load failed|timeout|timed out/i.test(error)) {
+  if (/failed to fetch|networkerror|network error|econnrefused|econnreset|enotfound|socket hang up|load failed|timeout|timed out|abort/i.test(error)) {
     return t('usage.error.network')
   }
   const status = /failed: (\d{3})\b/.exec(error)
-  return status === null ? error : t('usage.error.status', { status: status[1] })
+  return status === null ? t('usage.error.unknown') : t('usage.error.status', { status: status[1] })
 }
 
 /** Units for plan-window keys the dictionary does not name (`7_day`, `12_hour`). */
@@ -271,9 +273,46 @@ const RANGE_LABEL_KEYS: Record<RangeKey, string> = {
  */
 const RANGE_FETCH_MAX_DAYS = 45
 
+/**
+ * What the ledger's past looked like when a cached answer was fetched: the
+ * number of retained days plus every recorded token that is not today's.
+ *
+ * Both caches are keyed by a date or a span, and a poll changes neither. A
+ * backfill, a peer import or a late write into a past day therefore left the
+ * cached answer in place forever — a wide window kept showing its old total
+ * while 全部 (whose span starts at the new oldest day) refetched and grew, so
+ * the panel could report 近 6 个月 as less than 全部. Folding this stamp into the
+ * entry makes a cached answer self-invalidating when the history behind it moved,
+ * and today is subtracted so a live day that grows with every request cannot
+ * invalidate it on every poll.
+ */
+function historyStampOf(usage: UsageOverviewView['usage']): string {
+  const recorded = usage.availableDays?.length ?? usage.days.length
+  const whole = usage.all === undefined
+    ? usage.days.reduce((sum, row) => sum + totalOf(row.totals), 0)
+    : totalOf(usage.all.totals)
+  return `${recorded}:${whole - totalOf(usage.today.totals)}`
+}
+
+/**
+ * A picked day key, held inside the calendar's own bounds. The picker's `min`
+ * and `max` bind its calendar, not a typed or pasted value, so without this a
+ * window could run into the future and fold today's usage into days that have
+ * not happened. A start *before* the oldest retained day is left alone: the
+ * picker's `min` already keeps it out of the calendar, and a window that opens
+ * earlier than the ledger is a legitimate question — the chart draws the stretch
+ * the host has nothing for, rather than silently rewriting the dates the user
+ * typed. An empty value is the picker clearing the end.
+ */
+function clampDay(value: string | undefined, today: string): string | undefined {
+  if (value === undefined || value === '') return value
+  if (today !== '' && value > today) return today
+  return value
+}
+
 /** Session cache of fetched day views: a past day does not change within one.
  * Refreshing the panel clears it, because a late backfill can still land. */
-type DayCache = Map<string, UsageDayView>
+type DayCache = Map<string, { view: UsageDayView; stamp: string }>
 
 /**
  * Cache generation. A manual refresh bumps it, so a request that started
@@ -287,18 +326,18 @@ let cacheGeneration = 0
  * development double-mount) share one request instead of racing. Each entry
  * carries the generation it was started in.
  */
-const dayRequests = new Map<string, { promise: Promise<UsageDayView>; generation: number }>()
+const dayRequests = new Map<string, { promise: Promise<UsageDayView>; generation: number; stamp: string }>()
 
-function requestDay(loadDay: (date: string) => Promise<UsageDayView>, date: string, cache: DayCache): Promise<UsageDayView> {
+function requestDay(loadDay: (date: string) => Promise<UsageDayView>, date: string, cache: DayCache, stamp: string): Promise<UsageDayView> {
   const pending = dayRequests.get(date)
-  if (pending !== undefined && pending.generation === cacheGeneration) return pending.promise
+  if (pending !== undefined && pending.generation === cacheGeneration && pending.stamp === stamp) return pending.promise
   const generation = cacheGeneration
   const request = loadDay(date).then(
     (view) => {
       if (dayRequests.get(date)?.generation === generation) dayRequests.delete(date)
       // Refreshed mid-flight: this answer describes the state before the
       // refresh, so it must not seed the cache the next window reads.
-      if (generation === cacheGeneration) cache.set(date, view)
+      if (generation === cacheGeneration) cache.set(date, { view, stamp })
       return view
     },
     (error: unknown) => {
@@ -306,7 +345,7 @@ function requestDay(loadDay: (date: string) => Promise<UsageDayView>, date: stri
       throw error
     },
   )
-  dayRequests.set(date, { promise: request, generation })
+  dayRequests.set(date, { promise: request, generation, stamp })
   return request
 }
 
@@ -350,6 +389,7 @@ function useWindowDays(
   cache: DayCache,
   epoch: number,
   retry: number,
+  stamp: string,
 ): WindowDays {
   const signature = dateKeys.join(',')
   const [load, setLoad] = useState<WindowDays>(() => ({ status: dateKeys.length === 0 ? 'ready' : 'loading', days: {}, failedDates: [] }))
@@ -359,9 +399,11 @@ function useWindowDays(
     const failedDates: string[] = []
     const missing: string[] = []
     for (const date of wanted) {
+      // A cached day is only good for the history it was read from: the same
+      // date re-served after a backfill is a different day.
       const cached = cache.get(date)
-      if (cached === undefined) missing.push(date)
-      else days[date] = cached
+      if (cached === undefined || cached.stamp !== stamp) missing.push(date)
+      else days[date] = cached.view
     }
     if (missing.length === 0) {
       setLoad({ status: 'ready', days, failedDates })
@@ -376,7 +418,7 @@ function useWindowDays(
     let firstError: string | undefined
     void mapPool(missing, DAY_FETCH_CONCURRENCY, async (date) => {
       try {
-        days[date] = await requestDay(loadDay, date, cache)
+        days[date] = await requestDay(loadDay, date, cache, stamp)
         // Publish each day as it lands: a window whose own dates are all here
         // can show its total while a slower day elsewhere in the shared load is
         // still in flight (a stuck day would otherwise hold every tile at "…").
@@ -401,8 +443,9 @@ function useWindowDays(
     })
     return () => { cancelled = true }
   // `signature` carries the key list; `epoch` invalidates the cache; `retry`
-  // lets the poll tick retry a day that failed without a manual refresh.
-  }, [signature, loadDay, cache, epoch, retry])
+  // lets the poll tick retry a day that failed without a manual refresh; `stamp`
+  // re-reads a cached day whose history moved under it.
+  }, [signature, loadDay, cache, epoch, retry, stamp])
   return load
 }
 
@@ -410,6 +453,8 @@ function useWindowDays(
 interface RangeResult {
   summary: { totals: UsageTokenTotals; providers: UsageProviderSummary[] }
   series: Array<{ date: string; totals: UsageTokenTotals; models?: Record<string, UsageTokenTotals> }>
+  /** The history the aggregate was read from; a mismatch means the span needs a refetch. */
+  stamp: string
 }
 
 /**
@@ -420,18 +465,18 @@ interface RangeResult {
 const rangeResults = new Map<string, RangeResult>()
 
 /** In-flight range requests, so overlapping windows share one fetch. */
-const rangeRequests = new Map<string, { promise: Promise<UsageRangeResponse>; generation: number }>()
+const rangeRequests = new Map<string, { promise: Promise<UsageRangeResponse>; generation: number; stamp: string }>()
 
-function requestRange(loadRange: (from: string, to: string) => Promise<UsageRangeResponse>, from: string, to: string): Promise<UsageRangeResponse> {
+function requestRange(loadRange: (from: string, to: string) => Promise<UsageRangeResponse>, from: string, to: string, stamp: string): Promise<UsageRangeResponse> {
   const key = `${from}:${to}`
   const pending = rangeRequests.get(key)
-  if (pending !== undefined && pending.generation === cacheGeneration) return pending.promise
+  if (pending !== undefined && pending.generation === cacheGeneration && pending.stamp === stamp) return pending.promise
   const generation = cacheGeneration
   const request = loadRange(from, to).then(
     (response) => {
       if (rangeRequests.get(key)?.generation === generation) rangeRequests.delete(key)
       if (generation === cacheGeneration) {
-        rangeResults.set(key, { summary: { totals: response.totals, providers: response.providers }, series: response.series })
+        rangeResults.set(key, { summary: { totals: response.totals, providers: response.providers }, series: response.series, stamp })
       }
       return response
     },
@@ -440,7 +485,7 @@ function requestRange(loadRange: (from: string, to: string) => Promise<UsageRang
       throw error
     },
   )
-  rangeRequests.set(key, { promise: request, generation })
+  rangeRequests.set(key, { promise: request, generation, stamp })
   return request
 }
 
@@ -485,6 +530,7 @@ function useRangeData(
   today: string,
   epoch: number,
   retry: number,
+  stamp: string,
 ): RangeLoad {
   // Keyed by the span actually fetched, not by the window: a window ending today
   // stops at yesterday, so today never freezes into a cached aggregate.
@@ -501,8 +547,11 @@ function useRangeData(
       setLoad((previous) => (previous.status === 'idle' ? previous : { status: 'idle' }))
       return undefined
     }
+    // A cached aggregate only answers for the history it was read from: the span
+    // key does not move when a past day is backfilled, so a stamp mismatch has to
+    // drop it or a wide window stays on its old total forever.
     const cached = rangeResults.get(key)
-    if (cached !== undefined) {
+    if (cached !== undefined && cached.stamp === stamp) {
       setLoad({ status: 'ready', summary: cached.summary, series: cached.series })
       return undefined
     }
@@ -511,13 +560,13 @@ function useRangeData(
     // tile shows "—" while a window is failed, and flipping to "…" on every
     // attempt made a flaky request look like the panel had lost its data.
     setLoad((previous) => (previous.status === 'ready' || previous.status === 'error' ? previous : { status: 'loading' }))
-    requestRange(loadRange, key.slice(0, 10), key.slice(11)).then(
+    requestRange(loadRange, key.slice(0, 10), key.slice(11), stamp).then(
       (response) => {
         if (cancelled) return
         const stored = rangeResults.get(key)
         setLoad({
           status: 'ready',
-          summary: stored?.summary ?? { totals: response.totals, providers: response.providers },
+          summary: stored !== undefined && stored.stamp === stamp ? stored.summary : { totals: response.totals, providers: response.providers },
           series: response.series,
         })
       },
@@ -528,8 +577,9 @@ function useRangeData(
     return () => { cancelled = true }
   // `key` carries the fetched span; `empty` the window with nothing to fetch;
   // `epoch` invalidates the cache; `retry` lets the poll tick retry a window
-  // that failed without a manual refresh.
-  }, [key, empty, loadRange, epoch, retry])
+  // that failed without a manual refresh; `stamp` re-reads a cached aggregate
+  // whose history moved under it.
+  }, [key, empty, loadRange, epoch, retry, stamp])
   return load
 }
 
@@ -792,6 +842,7 @@ function useDayView(
   cache: DayCache,
   epoch: number,
   retry: number,
+  stamp: string,
 ): DayLoad | undefined {
   const [load, setLoad] = useState<DayLoad | undefined>(undefined)
   useEffect(() => {
@@ -800,21 +851,22 @@ function useDayView(
       return undefined
     }
     const cached = cache.get(date)
-    if (cached !== undefined) {
-      setLoad({ status: 'ready', view: cached })
+    if (cached !== undefined && cached.stamp === stamp) {
+      setLoad({ status: 'ready', view: cached.view })
       return undefined
     }
     let cancelled = false
     setLoad({ status: 'loading' })
-    requestDay(loadDay, date, cache).then(
+    requestDay(loadDay, date, cache, stamp).then(
       (view) => { if (!cancelled) setLoad({ status: 'ready', view }) },
       (error: unknown) => { if (!cancelled) setLoad({ status: 'error', error: error instanceof Error ? error.message : String(error) }) },
     )
     return () => { cancelled = true }
   // `epoch` is in the deps so a manual refresh re-reads the selected day too: the
   // window prefetch has already refetched it, and a ticket left on the pre-refresh
-  // number is a stale receipt for a day the panel no longer believes.
-  }, [date, today, loadDay, cache, epoch, retry])
+  // number is a stale receipt for a day the panel no longer believes. `stamp`
+  // does the same for a backfilled day the poll noticed.
+  }, [date, today, loadDay, cache, epoch, retry, stamp])
   return load
 }
 
@@ -1121,6 +1173,12 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   // Every retained day the ledger recorded. The overview serves it as
   // `availableDays`; the trend's day rows carry the same keys on an older host.
   const recorded = snapshot === null ? [] : snapshot.usage.availableDays ?? snapshot.usage.days.map((row) => row.date)
+  // The oldest retained day: the custom picker's floor, and the start of 全部.
+  const oldestDay = recorded[0]
+  // The history fingerprint every cached answer carries. A poll that only moved
+  // today leaves it alone (today is subtracted); a poll that backfilled the past
+  // or gained a day changes it, and the cache re-reads instead of going stale.
+  const historyStamp = snapshot === null ? '' : historyStampOf(snapshot.usage)
   // The fixed windows inside the last-30 one share that window's per-day load
   // (today, yesterday, last3 and last7 are all slices of it), so one fetch
   // feeds five tiles; the two multi-month windows each read one range
@@ -1133,7 +1191,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   const last180Window: RangeWindow = { from: shiftDateKey(todayDate, -179), to: todayDate }
   // The whole retained ledger: the oldest day the overview still lists through
   // today. An empty ledger collapses to today, which reads as an empty window.
-  const allWindow: RangeWindow = { from: recorded[0] ?? todayDate, to: todayDate }
+  const allWindow: RangeWindow = { from: oldestDay ?? todayDate, to: todayDate }
   // Custom range: the user's pair when set, else a sensible seven-day default.
   // Until the user picks anything the tile shows a prompt instead of the
   // default's total, which would only repeat the 近 7 天 tile above it. Once one
@@ -1151,19 +1209,19 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   // instead — one request for however long the span is.
   const customSpanDays = customPicked ? dateKeysBetween(customWindow.from, customWindow.to).length : 0
   const customIsRange = customSpanDays > RANGE_FETCH_MAX_DAYS
-  const last30Days = useWindowDays(loadDay, recordedIn(last30Window, recorded, todayDate), cache, cacheEpoch, retryTick)
+  const last30Days = useWindowDays(loadDay, recordedIn(last30Window, recorded, todayDate), cache, cacheEpoch, retryTick, historyStamp)
   // An untouched custom range has nothing to fetch: the prompt state renders
   // instead, so opening the section never fires requests for a window the user
   // has not asked for yet.
-  const customDays = useWindowDays(loadDay, customPicked && !customIsRange ? recordedIn(customWindow, recorded, todayDate) : [], cache, cacheEpoch, retryTick)
+  const customDays = useWindowDays(loadDay, customPicked && !customIsRange ? recordedIn(customWindow, recorded, todayDate) : [], cache, cacheEpoch, retryTick, historyStamp)
   // Both multi-month windows fetch up to YESTERDAY: today rides the live
   // overview, so the aggregate never carries a stale copy of it. Each hook gets
   // the window, not a pre-computed span: it has to tell "no window yet" from
   // "window with nothing to fetch" to keep the 全部 tile out of a permanent
   // pending state on a ledger that only holds today.
-  const last180Load = useRangeData(loadRange, last180Window, todayDate, cacheEpoch, retryTick)
-  const allLoad = useRangeData(loadRange, allWindow, todayDate, cacheEpoch, retryTick)
-  const customRangeLoad = useRangeData(loadRange, customPicked && customIsRange ? customWindow : undefined, todayDate, cacheEpoch, retryTick)
+  const last180Load = useRangeData(loadRange, last180Window, todayDate, cacheEpoch, retryTick, historyStamp)
+  const allLoad = useRangeData(loadRange, allWindow, todayDate, cacheEpoch, retryTick, historyStamp)
+  const customRangeLoad = useRangeData(loadRange, customPicked && customIsRange ? customWindow : undefined, todayDate, cacheEpoch, retryTick, historyStamp)
   /** One range-kind window as the panel states it: the fetched aggregate plus the live day. */
   const rangeSummaryOf = (window: RangeWindow, load: RangeLoad): UsageWindowSummary =>
     withLiveToday({ from: window.from, to: window.to, ...(load.summary ?? { totals: emptyTotals(), providers: [] }) }, window, todayView)
@@ -1175,6 +1233,14 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   const loadsFailed = last30Days.error !== undefined || customDays.error !== undefined
     || last180Load.status === 'error' || allLoad.status === 'error' || customRangeLoad.status === 'error'
   const retryAttempts = useRef(0)
+  // A host that is answering again has recovered, so the budget refills. Without
+  // this the panel stopped retrying for good once it had spent five attempts and
+  // a failed window sat at "—" until the user pressed refresh, however long the
+  // section stayed open.
+  const progressStamp = snapshot?.updatedAt ?? 0
+  useEffect(() => {
+    retryAttempts.current = 0
+  }, [progressStamp])
   useEffect(() => {
     if (!loadsFailed) {
       retryAttempts.current = 0
@@ -1187,7 +1253,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
       setRetryTick((tick) => tick + 1)
     }, delay)
     return () => window.clearTimeout(timer)
-  }, [loadsFailed, pollIntervalMs, retryTick])
+  }, [loadsFailed, pollIntervalMs, retryTick, progressStamp])
 
   const dayOptions = snapshot === null
     ? []
@@ -1196,7 +1262,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   // A selection retention no longer holds falls back to the tab's default
   // window, so the picker can never keep displaying a day the host dropped.
   const bankSelection = bankDay !== undefined && dayOptions.includes(bankDay) ? bankDay : undefined
-  const bankDayLoad = useDayView(loadDay, bankSelection, todayDate, cache, cacheEpoch, retryTick)
+  const bankDayLoad = useDayView(loadDay, bankSelection, todayDate, cache, cacheEpoch, retryTick, historyStamp)
   const bankDayView = bankSelection === undefined
     ? undefined
     : bankSelection === todayDate ? snapshot?.usage.today : bankDayLoad?.view
@@ -1338,8 +1404,10 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   // A failed aggregate answers for none of the days it was asked about, so every
   // drawn bar is unknown rather than empty — otherwise one failed request painted
   // a full row of "no records" bars and the chart's aria label still stated a
-  // confident total. Today stays known: it rides the live overview.
+  // confident total. Today stays known: it rides the live overview, so a failure
+  // that left nothing at all is the only case where the plot has nothing to draw.
   const rangeFailed = activeSlice.kind === 'range' && activeSlice.load.status === 'error'
+    && activeSlice.load.series === undefined
   const trendRowsRaw: TrendRow[] = rangeKey === 'custom' && !customPicked
     ? []
     : dateKeysBetween(activeWindow.from, activeWindow.to).map((date) => {
@@ -1435,124 +1503,138 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
         ))}
       </div>
 
-      {tab === 'usage' && (
-        <div className={styles.panel} role="tabpanel" id="dsh-usage-panel-usage" aria-labelledby="dsh-usage-tab-usage">
-          <RangeStrip
-            rangeKey={rangeKey}
-            onSelect={setRangeKey}
-            tiles={tiles}
-            custom={customPicked ? customWindow : { from: '', to: '' }}
-            // The `max` attribute stops the picker's own calendar, not a typed
-            // or pasted date, so the window's ends are clamped here as well: a
-            // window cannot run into the future.
-            onCustomFrom={(value) => { setCustomFrom(value !== undefined && todayDate !== '' && value > todayDate ? todayDate : value) }}
-            onCustomTo={(value) => { setCustomTo(value !== undefined && todayDate !== '' && value > todayDate ? todayDate : value) }}
-            today={todayDate}
-            // An empty ledger has no oldest day to clamp to.
-            min={recorded.length > 0 ? recorded[0] : undefined}
-          />
+      {/* Every panel stays mounted so a tab's `aria-controls` always names a
+          tabpanel that exists; `hidden` is what switches between them. */}
+      <div
+        className={styles.panel}
+        role="tabpanel"
+        id="dsh-usage-panel-usage"
+        aria-labelledby="dsh-usage-tab-usage"
+        hidden={tab !== 'usage'}
+      >
+        <RangeStrip
+          rangeKey={rangeKey}
+          onSelect={setRangeKey}
+          tiles={tiles}
+          custom={customPicked ? customWindow : { from: '', to: '' }}
+          // The `min`/`max` attributes stop the picker's own calendar, not a
+          // typed or pasted date, so the future end is clamped here as well.
+          // A start before the ledger is left as typed — see clampDay.
+          onCustomFrom={(value) => { setCustomFrom(clampDay(value, todayDate)) }}
+          onCustomTo={(value) => { setCustomTo(value !== undefined && todayDate !== '' && value > todayDate ? todayDate : value) }}
+          today={todayDate}
+          // An empty ledger has no oldest day to clamp to.
+          min={oldestDay}
+        />
 
-          <div className={styles.card} data-dsh-part="window-card">
-            <div className={styles.windowHead}>
-              <span className={styles.cardTitle}>{t('usage.range.detail', { label: t(RANGE_LABEL_KEYS[rangeKey]) })}</span>
-              {/* An untouched custom range has no span to state yet. */}
-              {(rangeKey !== 'custom' || customPicked) && (
-                <span className={styles.spanLine}>{t('usage.range.span', { from: activeWindow.from, to: activeWindow.to })}</span>
-              )}
-            </div>
-            {deepseekVisible && (
-              <PeakBadge peak={deepseekPeriod.peak} boundaryMs={deepseekPeriod.boundaryMs} variant="full" />
-            )}
-            {activeError !== undefined && <span className={styles.errorLine} role="status" title={activeError}>{t('usage.range.error', { error: describeError(activeError) })}</span>}
-            {rangeKey === 'custom' && !customPicked
-              ? <span className={styles.muted} data-dsh-part="custom-prompt">{t('usage.range.customPrompt')}</span>
-              : slicePending(activeSlice, rangeKey)
-                ? <span className={styles.muted}>{t('usage.range.loading')}</span>
-                : activeError !== undefined
-                  // The days that did arrive are a WRONG total, not a small one,
-                  // so a failed window states the failure and the per-day trend
-                  // (each bar is that day's own number) instead of a sum that
-                  // contradicts the "—" the tile shows for the same window.
-                  ? trendRows.length >= TREND_CHART_MIN_DAYS && <TrendChart rows={trendRows} colors={modelColors} labels={modelLabels} />
-                  : isEmptyTotals(summary.totals) && summary.providers.length === 0
-                    ? <span className={styles.muted}>{t('usage.range.empty')}</span>
-                    : <>
-                      <TotalsRow totals={summary.totals} />
-                      {summary.totals.cost > 0 && (
-                        <div className={styles.providerRow} data-dsh-part="window-cost">
-                          <span className={styles.providerName}>{t('usage.range.cost')}</span>
-                          <span className={styles.providerTokens}>{formatCost(summary.totals.cost)}</span>
-                        </div>
-                      )}
-                      {trendRows.length >= TREND_CHART_MIN_DAYS && <TrendChart rows={trendRows} colors={modelColors} labels={modelLabels} />}
-                      <span className={styles.cardTitle}>{t('usage.range.channels')}</span>
-                      <ChannelBreakdown summary={summary} providers={snapshot.providers} currentProvider={current.provider} modelColors={modelColors} modelLabels={modelLabels} />
-                    </>}
-          </div>
-
-          <div className={styles.card} data-dsh-part="balance-card">
-            <span className={styles.cardTitle}>{t('usage.balance')}</span>
-            {(() => {
-              const configured = snapshot.providers.filter(isConfigured)
-              // Include rows whose balance is deliberately not applicable
-              // (another origin's endpoint): the row itself explains why, which
-              // a single generic line cannot (#1688).
-              const rows = configured.filter((provider) => provider.balanceSupported === true || provider.balanceSupported === false || (provider.balanceSupported === undefined && provider.supported))
-              if (rows.length === 0) {
-                return <span className={styles.muted}>{configured.length === 0 ? t('usage.balance.noneConfigured') : t('usage.balance.unsupported')}</span>
-              }
-              return rows.map((provider) => (
-                <ProviderRow key={provider.provider} provider={provider} current={current.provider} />
-              ))
-            })()}
-            {snapshot.providers.some((provider) => isConfigured(provider) && provider.error !== undefined) && (
-              <span className={styles.errorLine}>
-                {snapshot.providers.filter((provider) => isConfigured(provider) && provider.error !== undefined).map((provider) => `${provider.displayName}: ${t('usage.provider.error', { error: provider.error ?? '' })}`).join(t('usage.errorListSeparator'))}
-              </span>
+        <div className={styles.card} data-dsh-part="window-card">
+          <div className={styles.windowHead}>
+            <span className={styles.cardTitle}>{t('usage.range.detail', { label: t(RANGE_LABEL_KEYS[rangeKey]) })}</span>
+            {/* An untouched custom range has no span to state yet. */}
+            {(rangeKey !== 'custom' || customPicked) && (
+              <span className={styles.spanLine}>{t('usage.range.span', { from: activeWindow.from, to: activeWindow.to })}</span>
             )}
           </div>
-
-          <DeviceSyncCard
-            deviceId={snapshot.usage.deviceId}
-            devices={snapshot.usage.devices}
-            devicesError={snapshot.usage.devicesError}
-            api={deviceSync}
-            onChanged={onRefresh}
-          />
-
-          <SettingsRow settings={settings} snapshot={settingsSnapshot.status === 'ready' ? settingsSnapshot : undefined} value={settingsValue} />
+          {deepseekVisible && (
+            <PeakBadge peak={deepseekPeriod.peak} boundaryMs={deepseekPeriod.boundaryMs} variant="full" />
+          )}
+          {activeError !== undefined && <span className={styles.errorLine} role="status" title={activeError}>{t('usage.range.error', { error: describeError(activeError) })}</span>}
+          {rangeKey === 'custom' && !customPicked
+            ? <span className={styles.muted} data-dsh-part="custom-prompt">{t('usage.range.customPrompt')}</span>
+            : slicePending(activeSlice, rangeKey)
+              ? <span className={styles.muted}>{t('usage.range.loading')}</span>
+              : activeError !== undefined
+                // The days that did arrive are a WRONG total, not a small one,
+                // so a failed window states the failure and the per-day trend
+                // (each bar is that day's own number) instead of a sum that
+                // contradicts the "—" the tile shows for the same window.
+                ? trendRows.length >= TREND_CHART_MIN_DAYS && <TrendChart rows={trendRows} colors={modelColors} labels={modelLabels} allFailed={rangeFailed} />
+                : isEmptyTotals(summary.totals) && summary.providers.length === 0
+                  ? <span className={styles.muted}>{t('usage.range.empty')}</span>
+                  : <>
+                    <TotalsRow totals={summary.totals} />
+                    {summary.totals.cost > 0 && (
+                      <div className={styles.providerRow} data-dsh-part="window-cost">
+                        <span className={styles.providerName}>{t('usage.range.cost')}</span>
+                        <span className={styles.providerTokens}>{formatCost(summary.totals.cost)}</span>
+                      </div>
+                    )}
+                    {trendRows.length >= TREND_CHART_MIN_DAYS && <TrendChart rows={trendRows} colors={modelColors} labels={modelLabels} />}
+                    <span className={styles.cardTitle}>{t('usage.range.channels')}</span>
+                    <ChannelBreakdown summary={summary} providers={snapshot.providers} currentProvider={current.provider} modelColors={modelColors} modelLabels={modelLabels} />
+                  </>}
         </div>
-      )}
 
-      {tab === 'plans' && (
-        <div className={styles.panel} role="tabpanel" id="dsh-usage-panel-plans" aria-labelledby="dsh-usage-tab-plans">
-          {planProviders.length === 0
-            ? <div className={styles.card}><span className={styles.muted}>{t('usage.plan.noneConfigured')}</span></div>
-            : planProviders.map((provider) => <PlanCard key={provider.provider} provider={provider} current={current.provider} />)}
+        <div className={styles.card} data-dsh-part="balance-card">
+          <span className={styles.cardTitle}>{t('usage.balance')}</span>
+          {(() => {
+            const configured = snapshot.providers.filter(isConfigured)
+            // Include rows whose balance is deliberately not applicable
+            // (another origin's endpoint): the row itself explains why, which
+            // a single generic line cannot (#1688).
+            const rows = configured.filter((provider) => provider.balanceSupported === true || provider.balanceSupported === false || (provider.balanceSupported === undefined && provider.supported))
+            if (rows.length === 0) {
+              return <span className={styles.muted}>{configured.length === 0 ? t('usage.balance.noneConfigured') : t('usage.balance.unsupported')}</span>
+            }
+            return rows.map((provider) => (
+              <ProviderRow key={provider.provider} provider={provider} current={current.provider} />
+            ))
+          })()}
+          {snapshot.providers.some((provider) => isConfigured(provider) && provider.error !== undefined) && (
+            <span className={styles.errorLine}>
+              {snapshot.providers.filter((provider) => isConfigured(provider) && provider.error !== undefined).map((provider) => `${provider.displayName}: ${t('usage.provider.error', { error: provider.error ?? '' })}`).join(t('usage.errorListSeparator'))}
+            </span>
+          )}
         </div>
-      )}
 
-      {tab === 'bank' && (
-        <div className={styles.panel} role="tabpanel" id="dsh-usage-panel-bank" aria-labelledby="dsh-usage-tab-bank">
-          <DayPicker
-            part="bank"
-            value={bankSelection ?? BANK_ALL_DAYS}
-            options={dayOptions}
-            today={todayDate}
-            leading={{ value: BANK_ALL_DAYS, label: t('usage.bank.windowAll') }}
-            onSelect={(date) => { setBankDay(date === BANK_ALL_DAYS ? undefined : date) }}
-          />
-          <VoucherCard
-            window={bankWindow}
-            // The observed-spend watch accrues from its own first balance
-            // reading, so it describes the whole window only: a single day's
-            // voucher falls back to that day's fold-time estimate.
-            observedSpend={bankSelection === undefined ? snapshot.usage.observedSpend : undefined}
-            loading={bankSelection !== undefined && bankDayLoad?.status === 'loading'}
-            {...(bankDayLoad?.status === 'error' ? { error: bankDayLoad.error ?? '' } : {})}
-          />
-        </div>
-      )}
+        <DeviceSyncCard
+          deviceId={snapshot.usage.deviceId}
+          devices={snapshot.usage.devices}
+          devicesError={snapshot.usage.devicesError}
+          api={deviceSync}
+          onChanged={onRefresh}
+        />
+
+        <SettingsRow settings={settings} snapshot={settingsSnapshot.status === 'ready' ? settingsSnapshot : undefined} value={settingsValue} />
+      </div>
+
+      <div
+        className={styles.panel}
+        role="tabpanel"
+        id="dsh-usage-panel-plans"
+        aria-labelledby="dsh-usage-tab-plans"
+        hidden={tab !== 'plans'}
+      >
+        {planProviders.length === 0
+          ? <div className={styles.card}><span className={styles.muted}>{t('usage.plan.noneConfigured')}</span></div>
+          : planProviders.map((provider) => <PlanCard key={provider.provider} provider={provider} current={current.provider} />)}
+      </div>
+
+      <div
+        className={styles.panel}
+        role="tabpanel"
+        id="dsh-usage-panel-bank"
+        aria-labelledby="dsh-usage-tab-bank"
+        hidden={tab !== 'bank'}
+      >
+        <DayPicker
+          part="bank"
+          value={bankSelection ?? BANK_ALL_DAYS}
+          options={dayOptions}
+          today={todayDate}
+          leading={{ value: BANK_ALL_DAYS, label: t('usage.bank.windowAll') }}
+          onSelect={(date) => { setBankDay(date === BANK_ALL_DAYS ? undefined : date) }}
+        />
+        <VoucherCard
+          window={bankWindow}
+          // The observed-spend watch accrues from its own first balance
+          // reading, so it describes the whole window only: a single day's
+          // voucher falls back to that day's fold-time estimate.
+          observedSpend={bankSelection === undefined ? snapshot.usage.observedSpend : undefined}
+          loading={bankSelection !== undefined && bankDayLoad?.status === 'loading'}
+          {...(bankDayLoad?.status === 'error' ? { error: bankDayLoad.error ?? '' } : {})}
+        />
+      </div>
     </div>
   )
 }

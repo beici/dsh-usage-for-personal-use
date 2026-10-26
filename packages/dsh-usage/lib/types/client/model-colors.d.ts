@@ -14,20 +14,26 @@
  * chart-1 (blue) onto whatever model leads the current window, so the
  * dominant model was blue in every window and the whole table reshuffled
  * whenever the tile changed; hashing keeps a model's hue constant across
- * windows and independent of how much it ran. The hues themselves live in
- * usage.module.css as CSS variables with a light and a dark variant, so the
- * colors ride the theme instead of being baked in here.
+ * windows and independent of how much it ran.
  *
  * A slot is only sixteen hues wide, so two names do collide in it — and the
  * slot used to be the whole color, which painted the second model of a channel
- * exactly like the first. A name's color now has a second axis: a shade of its
- * slot mixed toward white or black. Both axes come from the name, so a model
- * keeps its color in every window and the order the names arrive in never
- * matters; only a full hash coincidence in both axes can repeat a color.
+ * exactly like the first. Each slot now carries a ladder of five shades, and a
+ * name's rung is its order inside the slot, so two colliding names land two
+ * rungs apart instead of on the same color.
+ *
+ * The shades are cut here, in TypeScript, from the hue bytes: a bar has to be
+ * legible on the light AND the dark skin, and only a measured luminance can
+ * promise that. The palette used to be CSS variables mixed toward white or
+ * black with `color-mix`, which left the ends of that ramp at 1.4:1 on white
+ * and 2.3:1 on the dark card — unreadable in exactly the theme the mix was
+ * meant to fit. A mix cannot be clamped either, so a rung is placed by its
+ * luminance instead: the two skins overlap in a narrow band, and every rung is
+ * pulled into it.
  * @module @linxin666/dsh-usage/client/model-colors
  */
-/** Fill for models past the palette (the collapsed tail). */
-export declare const MODEL_COLOR_OTHER = "var(--dsw-chart-other)";
+/** Fill for models past the palette (the collapsed tail), legible on both skins. */
+export declare const MODEL_COLOR_OTHER = "#6f6f78";
 /** How many models the palette distinguishes before the gray tail. */
 export declare const MODEL_PALETTE_SIZE = 16;
 /** The color identity of a model: `prefix/`-stripped, trimmed, lower-cased. */
@@ -41,9 +47,9 @@ export declare function normalizeModelName(model: string): string;
  * window showing only the second recolored it to chart-1. Stability is the whole
  * promise of this table (the trend bars, the channel bars and the model rows
  * share it, and the user learns the colors), so a collision between two of the
- * sixteen hues is resolved by the shade axis instead of by shifting someone
- * else's hue: the bits above the slot pick a white/black mix of that same hue,
- * which keeps the pair apart without letting any other name move.
+ * sixteen hues is resolved on the shade ladder instead of by shifting someone
+ * else's hue. The rung is the name's order inside its slot, stepped by two, so
+ * consecutive names of one slot are as far apart on the ladder as it goes.
  */
 export declare function assignModelColors(models: Iterable<string>): Map<string, string>;
 /**

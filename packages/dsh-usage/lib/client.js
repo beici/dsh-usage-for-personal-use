@@ -58,6 +58,7 @@ window.__ModuleLoader__.load({
 			"usage.error": "加载失败：{error}",
 			"usage.error.network": "网络请求失败，请检查与 DSH 的连接",
 			"usage.error.status": "请求失败（HTTP {status}），请稍后再试",
+			"usage.error.unknown": "请求失败，请稍后再试",
 			"usage.disabled": "插件已停用：勾选下方「启用插件」即可恢复统计。",
 			"usage.current": "当前",
 			"usage.today": "今日用量",
@@ -84,6 +85,7 @@ window.__ModuleLoader__.load({
 			"usage.trend": "近 30 天",
 			"usage.trend.label": "用量趋势图：{from} 至 {to}，合计 {tokens}",
 			"usage.trend.labelFailed": "用量趋势图：{from} 至 {to}，部分日期加载失败",
+			"usage.trend.loadFailed": "该时间段加载失败，暂无趋势数据",
 			"usage.range.title": "统计窗口",
 			"usage.range.today": "今日",
 			"usage.range.yesterday": "昨日",
@@ -179,6 +181,7 @@ window.__ModuleLoader__.load({
 			"usage.error": "Failed to load: {error}",
 			"usage.error.network": "Network request failed. Check the connection to DSH.",
 			"usage.error.status": "Request failed (HTTP {status}). Try again in a moment.",
+			"usage.error.unknown": "The request failed. Try again in a moment.",
 			"usage.disabled": "Plugin disabled. Tick \"Enable plugin\" below to resume statistics.",
 			"usage.current": "Current",
 			"usage.today": "Today",
@@ -205,6 +208,7 @@ window.__ModuleLoader__.load({
 			"usage.trend": "Last 30 days",
 			"usage.trend.label": "Usage trend: {from} to {to}, {tokens} in total",
 			"usage.trend.labelFailed": "Usage trend: {from} to {to}, some days failed to load",
+			"usage.trend.loadFailed": "This window failed to load, so there is no trend to show",
 			"usage.range.title": "Time window",
 			"usage.range.today": "Today",
 			"usage.range.yesterday": "Yesterday",
@@ -303,7 +307,7 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 		//#region \0dsh-css:packages/dsh-usage/src/client/usage.module.css.mjs
-		const css = ".cvtkAW_section{color:inherit;--dsw-chart-1:#509fff;--dsw-chart-2:#6d9a73;--dsw-chart-3:#d69159;--dsw-chart-4:#b68cf5;--dsw-chart-5:#e07db2;--dsw-chart-6:#56adad;--dsw-chart-7:#ca7162;--dsw-chart-8:#a2b15d;--dsw-chart-9:#8179de;--dsw-chart-10:#e1bd5d;--dsw-chart-11:#d48ca5;--dsw-chart-12:#90bb75;--dsw-chart-13:#6dbb9d;--dsw-chart-14:#57b6d9;--dsw-chart-15:#c288d9;--dsw-chart-16:#8da2d3;--dsw-chart-other:#9d9d9d;flex-direction:column;gap:16px;display:flex}body[data-ds-dark-theme] .cvtkAW_section{--dsw-chart-1:#5da6ff;--dsw-chart-2:#78a17d;--dsw-chart-3:#d99965;--dsw-chart-4:#bb94f6;--dsw-chart-5:#e286b8;--dsw-chart-6:#62b3b3;--dsw-chart-7:#ce7b6d;--dsw-chart-8:#a9b769;--dsw-chart-9:#8a82e0;--dsw-chart-10:#e3c168;--dsw-chart-11:#d794ab;--dsw-chart-12:#98c07f;--dsw-chart-13:#78c0a4;--dsw-chart-14:#63bbdc;--dsw-chart-15:#c691dc;--dsw-chart-16:#95a9d6;--dsw-chart-other:#a4a4a4}@media (prefers-color-scheme:dark){.cvtkAW_section{--dsw-chart-1:#5da6ff;--dsw-chart-2:#78a17d;--dsw-chart-3:#d99965;--dsw-chart-4:#bb94f6;--dsw-chart-5:#e286b8;--dsw-chart-6:#62b3b3;--dsw-chart-7:#ce7b6d;--dsw-chart-8:#a9b769;--dsw-chart-9:#8a82e0;--dsw-chart-10:#e3c168;--dsw-chart-11:#d794ab;--dsw-chart-12:#98c07f;--dsw-chart-13:#78c0a4;--dsw-chart-14:#63bbdc;--dsw-chart-15:#c691dc;--dsw-chart-16:#95a9d6;--dsw-chart-other:#a4a4a4}}.cvtkAW_header{justify-content:space-between;align-items:center;gap:12px;display:flex}.cvtkAW_currentProvider{opacity:.75;font-size:13px}.cvtkAW_refreshBtn{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.85;background:0 0;border:1px solid;border-radius:8px;padding:4px 12px;font-size:12px;transition:opacity .12s,background-color .12s}.cvtkAW_refreshBtn:hover:not(:disabled){opacity:1;background:color-mix(in srgb, currentColor 8%, transparent)}.cvtkAW_refreshBtn:disabled{cursor:default;opacity:.5}.cvtkAW_refreshBtn:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabs{border-bottom:1px solid color-mix(in srgb, currentColor 14%, transparent);gap:4px;display:flex}.cvtkAW_tab{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.65;background:0 0;border:none;border-bottom:2px solid #0000;margin-bottom:-1px;padding:6px 14px;font-size:13px}.cvtkAW_tab:hover{opacity:.9}.cvtkAW_tab:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabActive{opacity:1;border-bottom-color:currentColor;font-weight:600}.cvtkAW_panel{flex-direction:column;gap:16px;display:flex}.cvtkAW_card{border:1px solid color-mix(in srgb, currentColor 14%, transparent);border-radius:12px;flex-direction:column;gap:10px;padding:14px 16px;display:flex}.cvtkAW_cardTitle{letter-spacing:.04em;text-transform:uppercase;opacity:.6;font-size:12px;font-weight:600}.cvtkAW_dayPicker{align-items:center;gap:8px;display:flex}.cvtkAW_dayPickerLabel{opacity:.6;font-size:11px}.cvtkAW_daySelect{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_daySelect:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_daySelect option,.cvtkAW_settingItem select option{background-color:var(--dsw-alias-bg-multi-select,Canvas);color:var(--dsw-alias-label-primary,CanvasText)}.cvtkAW_statRow{flex-wrap:wrap;gap:18px;display:flex}.cvtkAW_stat{text-align:center;flex-direction:column;align-items:center;gap:2px;display:flex}.cvtkAW_statValue{font-variant-numeric:tabular-nums;font-size:18px;font-weight:600}.cvtkAW_statLabel{opacity:.6;font-size:11px}.cvtkAW_providerRow{border-top:1px solid color-mix(in srgb, currentColor 8%, transparent);flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;font-size:13px;display:flex}.cvtkAW_providerRow:first-of-type{border-top:none}.cvtkAW_providerName{align-items:center;gap:8px;min-width:0;display:flex}.cvtkAW_providerTokens{font-variant-numeric:tabular-nums;opacity:.75;white-space:nowrap}.cvtkAW_providerBalance{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}.cvtkAW_currentBadge{border:1px solid color-mix(in srgb, currentColor 35%, transparent);opacity:.8;border-radius:999px;flex:none;padding:1px 7px;font-size:10px;font-weight:600}.cvtkAW_chart{flex-direction:column;gap:12px;display:flex}.cvtkAW_chartProvider{flex-direction:column;gap:5px;display:flex}.cvtkAW_chartProvider+.cvtkAW_chartProvider{border-top:1px solid color-mix(in srgb, currentColor 7%, transparent);padding-top:10px}.cvtkAW_chartHead{justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;display:flex}.cvtkAW_chartHeadName{letter-spacing:.01em;font-weight:600}.cvtkAW_chartHeadTokens{font-variant-numeric:tabular-nums;opacity:.88;white-space:nowrap;font-size:11.5px;font-weight:600}.cvtkAW_chartTokens{font-variant-numeric:tabular-nums;opacity:.6;white-space:nowrap;font-size:11px}.cvtkAW_chartBar{background:color-mix(in srgb, currentColor 8%, transparent);border-radius:999px;height:8px;display:flex;overflow:hidden}.cvtkAW_chartSeg{flex:none;height:100%;display:block}.cvtkAW_chartModel{opacity:.8;grid-template-columns:minmax(0,180px) minmax(0,1fr) minmax(0,176px);align-items:center;gap:8px;padding-left:14px;font-size:11px;display:grid}.cvtkAW_chartModelName{text-overflow:ellipsis;white-space:nowrap;opacity:.95;overflow:hidden}.cvtkAW_chartModelBar{background:color-mix(in srgb, currentColor 6%, transparent);border-radius:999px;height:4px;display:block;overflow:hidden}.cvtkAW_chartModelFill{background:color-mix(in srgb, currentColor 35%, transparent);border-radius:999px;height:100%;transition:width .3s;display:block}.cvtkAW_trendWrap{flex-direction:column;gap:6px;display:flex}.cvtkAW_trendPlot{gap:6px;height:96px;display:flex}.cvtkAW_trendYLabels{flex:none;width:34px;position:relative}.cvtkAW_trendYLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;right:0;transform:translateY(50%)}.cvtkAW_trendArea{border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);flex:1 1 0;min-width:0;position:relative}.cvtkAW_trendGridline{background:color-mix(in srgb, currentColor 8%, transparent);height:1px;position:absolute;left:0;right:0}.cvtkAW_trendBars{align-items:flex-end;gap:2px;display:flex;position:absolute;inset:0}.cvtkAW_trendBar{border-radius:2px 2px 0 0;flex-direction:column-reverse;flex:1 1 0;min-width:2px;height:100%;display:flex;overflow:hidden}.cvtkAW_trendBar:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_trendBar[data-failed=true]{outline:1px dashed color-mix(in srgb, currentColor 45%, transparent);outline-offset:-1px;background-image:repeating-linear-gradient(135deg, color-mix(in srgb, currentColor 12%, transparent) 0 2px, transparent 2px 5px)}.cvtkAW_trendSeg{width:100%;display:block}.cvtkAW_trendSegCache{background:color-mix(in srgb, currentColor 70%, transparent)}.cvtkAW_trendSegInput{background:color-mix(in srgb, currentColor 45%, transparent)}.cvtkAW_trendSegOutput{background:color-mix(in srgb, currentColor 22%, transparent)}.cvtkAW_trendBar:hover .cvtkAW_trendSeg{filter:saturate(1.15)brightness(1.06)}.cvtkAW_trendTooltip{z-index:2;border:1px solid color-mix(in srgb, currentColor 18%, transparent);background:var(--dsw-alias-bg-floating,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;box-shadow:0 4px 14px color-mix(in srgb, currentColor 18%, transparent);border-radius:8px;flex-direction:column;gap:2px;padding:6px 9px;font-size:11px;display:flex;position:absolute;transform:translate(-50%,-100%)}.cvtkAW_trendTooltipTitle{font-weight:600}.cvtkAW_trendTooltipLine{opacity:.8}.cvtkAW_trendXLabels{height:14px;margin-left:40px;position:relative}.cvtkAW_trendXLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;transform:translate(-50%)}.cvtkAW_trendLegend{opacity:.65;flex-wrap:wrap;gap:12px;font-size:10px;display:flex}.cvtkAW_trendLegendItem{align-items:center;gap:4px;display:inline-flex}.cvtkAW_trendSwatch{border-radius:2px;width:8px;height:8px;display:inline-block}.cvtkAW_rangeGrid{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;display:grid}.cvtkAW_rangeTile{appearance:none;border:1px solid color-mix(in srgb, currentColor 14%, transparent);color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border-radius:10px;flex-direction:column;gap:2px;padding:8px 10px;transition:background-color .12s,border-color .12s;display:flex}.cvtkAW_rangeTile:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_rangeTile:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_rangeTileActive{border-color:color-mix(in srgb, currentColor 45%, transparent);background:color-mix(in srgb, currentColor 9%, transparent)}.cvtkAW_rangeTileLabel{opacity:.65;font-size:11px}.cvtkAW_rangeTileValue{font-variant-numeric:tabular-nums;font-size:16px;font-weight:600}.cvtkAW_rangeTileMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_rangeControls{flex-wrap:wrap;align-items:center;gap:12px;display:flex}.cvtkAW_dateInput{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_dateInput:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_windowHead{flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_spanLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_modelRows{flex-direction:column;gap:4px;display:flex}.cvtkAW_muted{opacity:.6;font-size:12px}.cvtkAW_voucherPreview canvas{border-radius:8px;width:100%;height:auto;display:block}.cvtkAW_buttonRow{gap:8px;display:flex}.cvtkAW_errorLine{opacity:.75;font-size:12px}.cvtkAW_noteLine{opacity:.6;font-size:11.5px}.cvtkAW_planCard{flex-direction:column;gap:8px;display:flex}.cvtkAW_planHead{justify-content:space-between;align-items:baseline;gap:10px;display:flex}.cvtkAW_planName{font-size:14px;font-weight:600}.cvtkAW_windowRow{flex-direction:column;gap:4px;display:flex}.cvtkAW_windowLabel{opacity:.8;font-variant-numeric:tabular-nums;justify-content:space-between;font-size:12px;display:flex}.cvtkAW_bar{background:color-mix(in srgb, currentColor 10%, transparent);border-radius:999px;height:6px;overflow:hidden}.cvtkAW_barFill{background:color-mix(in srgb, currentColor 55%, transparent);border-radius:999px;height:100%;transition:width .3s}.cvtkAW_barWarn{background:#d97706}.cvtkAW_barLow{background:#dc2626}.cvtkAW_resetLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_settingsGrid{flex-wrap:wrap;align-items:center;gap:16px;display:flex}.cvtkAW_settingItem{align-items:center;gap:8px;font-size:13px;display:flex}.cvtkAW_settingItem input[type=checkbox]{accent-color:currentColor}.cvtkAW_settingItem input[type=number]{border:1px solid color-mix(in srgb, currentColor 25%, transparent);width:90px;color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem select{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem input:focus-visible,.cvtkAW_settingItem select:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footCard{box-sizing:border-box;background:color-mix(in srgb, currentColor 4%, transparent);width:100%;color:inherit;border:none;border-radius:12px;margin:2px 0 4px;transition:background-color .12s;position:relative}.cvtkAW_footCard:hover{background:var(--dsw-alias-interactive-bg-hover)}.cvtkAW_footCardCollapsed{background:0 0}.cvtkAW_footMain{appearance:none;box-sizing:border-box;width:100%;color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border:none;border-radius:12px;flex-direction:column;gap:4px;padding:8px;display:flex}.cvtkAW_footMain:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle{appearance:none;width:20px;height:20px;color:inherit;cursor:pointer;opacity:.55;background:0 0;border:none;border-radius:6px;justify-content:center;align-items:center;padding:0;transition:opacity .12s,background-color .12s;display:inline-flex;position:absolute;top:6px;right:6px}.cvtkAW_footCard:hover .cvtkAW_footToggle{opacity:.8}.cvtkAW_footToggle:hover{opacity:1;background:color-mix(in srgb, currentColor 10%, transparent)}.cvtkAW_footToggle:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle svg{display:block}.cvtkAW_footHead{justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_footTitle{opacity:.65;white-space:nowrap;align-items:center;gap:6px;min-width:0;font-size:12px;display:inline-flex}.cvtkAW_footTitle svg{flex:none;display:block}.cvtkAW_footValue{font-variant-numeric:tabular-nums;white-space:nowrap;margin-right:18px;font-size:15px;font-weight:600}.cvtkAW_footLine{opacity:.7;font-variant-numeric:tabular-nums;text-overflow:ellipsis;white-space:nowrap;font-size:11px;overflow:hidden}.cvtkAW_footMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_footCardCollapsed .cvtkAW_footMain{min-height:36px;padding:7px 8px}.cvtkAW_footStrip{white-space:nowrap;align-items:center;gap:6px;padding-right:20px;font-size:12px;display:flex;overflow:hidden}.cvtkAW_footStrip svg{opacity:.65;flex:none;display:block}.cvtkAW_footStripProvider{text-overflow:ellipsis;flex:none;max-width:38%;font-weight:500;overflow:hidden}.cvtkAW_footStripLabel{opacity:.65;text-overflow:ellipsis;overflow:hidden}.cvtkAW_footStripValue{font-variant-numeric:tabular-nums;margin-left:auto;font-weight:600}[data-dsh-frame][data-sidebar-collapsed] .cvtkAW_footCard,[data-sidebar-collapsed] .cvtkAW_footCard{display:none}.cvtkAW_peakBadge,.cvtkAW_peakLine{font-variant-numeric:tabular-nums;white-space:nowrap;align-items:center;gap:4px;font-size:11px;display:inline-flex}.cvtkAW_peakBadge{flex:none}.cvtkAW_peakLine{gap:6px}.cvtkAW_peakBadge[data-peak=on],.cvtkAW_peakLine[data-peak=on]{color:var(--dsw-alias-state-error-primary,#b42318)}.cvtkAW_peakBadge[data-peak=off],.cvtkAW_peakLine[data-peak=off]{color:var(--dsw-alias-state-success-primary,#067647)}.cvtkAW_peakDot{background:currentColor;border-radius:50%;flex:none;width:6px;height:6px}.cvtkAW_footPeak{white-space:nowrap;align-items:center;gap:5px;font-size:10px;display:flex;overflow:hidden}.cvtkAW_footPeakClock{opacity:.7;font-variant-numeric:tabular-nums}";
+		const css = ".cvtkAW_section{color:inherit;flex-direction:column;gap:16px;display:flex}.cvtkAW_header{justify-content:space-between;align-items:center;gap:12px;display:flex}.cvtkAW_currentProvider{opacity:.75;font-size:13px}.cvtkAW_refreshBtn{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.85;background:0 0;border:1px solid;border-radius:8px;padding:4px 12px;font-size:12px;transition:opacity .12s,background-color .12s}.cvtkAW_refreshBtn:hover:not(:disabled){opacity:1;background:color-mix(in srgb, currentColor 8%, transparent)}.cvtkAW_refreshBtn:disabled{cursor:default;opacity:.5}.cvtkAW_refreshBtn:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabs{border-bottom:1px solid color-mix(in srgb, currentColor 14%, transparent);gap:4px;display:flex}.cvtkAW_tab{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.65;background:0 0;border:none;border-bottom:2px solid #0000;margin-bottom:-1px;padding:6px 14px;font-size:13px}.cvtkAW_tab:hover{opacity:.9}.cvtkAW_tab:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabActive{opacity:1;border-bottom-color:currentColor;font-weight:600}.cvtkAW_panel{flex-direction:column;gap:16px;display:flex}.cvtkAW_panel[hidden]{display:none}.cvtkAW_card{border:1px solid color-mix(in srgb, currentColor 14%, transparent);border-radius:12px;flex-direction:column;gap:10px;padding:14px 16px;display:flex}.cvtkAW_cardTitle{letter-spacing:.04em;text-transform:uppercase;opacity:.6;font-size:12px;font-weight:600}.cvtkAW_dayPicker{align-items:center;gap:8px;display:flex}.cvtkAW_dayPickerLabel{opacity:.6;font-size:11px}.cvtkAW_daySelect{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_daySelect:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_daySelect option,.cvtkAW_settingItem select option{background-color:var(--dsw-alias-bg-multi-select,Canvas);color:var(--dsw-alias-label-primary,CanvasText)}.cvtkAW_statRow{flex-wrap:wrap;gap:18px;display:flex}.cvtkAW_stat{text-align:center;flex-direction:column;align-items:center;gap:2px;display:flex}.cvtkAW_statValue{font-variant-numeric:tabular-nums;font-size:18px;font-weight:600}.cvtkAW_statLabel{opacity:.6;font-size:11px}.cvtkAW_providerRow{border-top:1px solid color-mix(in srgb, currentColor 8%, transparent);flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;font-size:13px;display:flex}.cvtkAW_providerRow:first-of-type{border-top:none}.cvtkAW_providerName{align-items:center;gap:8px;min-width:0;display:flex}.cvtkAW_providerTokens{font-variant-numeric:tabular-nums;opacity:.75;white-space:nowrap}.cvtkAW_providerBalance{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}.cvtkAW_currentBadge{border:1px solid color-mix(in srgb, currentColor 35%, transparent);opacity:.8;border-radius:999px;flex:none;padding:1px 7px;font-size:10px;font-weight:600}.cvtkAW_chart{flex-direction:column;gap:12px;display:flex}.cvtkAW_chartProvider{flex-direction:column;gap:5px;display:flex}.cvtkAW_chartProvider+.cvtkAW_chartProvider{border-top:1px solid color-mix(in srgb, currentColor 7%, transparent);padding-top:10px}.cvtkAW_chartHead{justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;display:flex}.cvtkAW_chartHeadName{letter-spacing:.01em;font-weight:600}.cvtkAW_chartHeadTokens{font-variant-numeric:tabular-nums;opacity:.88;white-space:nowrap;font-size:11.5px;font-weight:600}.cvtkAW_chartTokens{font-variant-numeric:tabular-nums;opacity:.6;white-space:nowrap;font-size:11px}.cvtkAW_chartBar{background:color-mix(in srgb, currentColor 8%, transparent);border-radius:999px;height:8px;display:flex;overflow:hidden}.cvtkAW_chartSeg{flex:none;height:100%;display:block}.cvtkAW_chartModel{opacity:.8;grid-template-columns:minmax(0,180px) minmax(0,1fr) minmax(0,176px);align-items:center;gap:8px;padding-left:14px;font-size:11px;display:grid}.cvtkAW_chartModelName{text-overflow:ellipsis;white-space:nowrap;opacity:.95;overflow:hidden}.cvtkAW_chartModelBar{background:color-mix(in srgb, currentColor 6%, transparent);border-radius:999px;height:4px;display:block;overflow:hidden}.cvtkAW_chartModelFill{background:color-mix(in srgb, currentColor 35%, transparent);border-radius:999px;height:100%;transition:width .3s;display:block}.cvtkAW_trendWrap{flex-direction:column;gap:6px;display:flex}.cvtkAW_trendPlot{gap:6px;height:96px;display:flex}.cvtkAW_trendYLabels{flex:none;width:34px;position:relative}.cvtkAW_trendYLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;right:0;transform:translateY(50%)}.cvtkAW_trendArea{border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);flex:1 1 0;min-width:0;position:relative}.cvtkAW_trendGridline{background:color-mix(in srgb, currentColor 8%, transparent);height:1px;position:absolute;left:0;right:0}.cvtkAW_trendBars{align-items:flex-end;gap:2px;display:flex;position:absolute;inset:0}.cvtkAW_trendFailed{text-align:center;justify-content:center;align-items:center;padding:0 12px;display:flex;position:absolute;inset:0}.cvtkAW_trendBar{border-radius:2px 2px 0 0;flex-direction:column-reverse;flex:1 1 0;min-width:2px;height:100%;display:flex;overflow:hidden}.cvtkAW_trendBar:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_trendBar[data-failed=true]{outline:1px dashed color-mix(in srgb, currentColor 45%, transparent);outline-offset:-1px;background-image:repeating-linear-gradient(135deg, color-mix(in srgb, currentColor 12%, transparent) 0 2px, transparent 2px 5px)}.cvtkAW_trendSeg{width:100%;display:block}.cvtkAW_trendSegCache{background:color-mix(in srgb, currentColor 70%, transparent)}.cvtkAW_trendSegInput{background:color-mix(in srgb, currentColor 45%, transparent)}.cvtkAW_trendSegOutput{background:color-mix(in srgb, currentColor 22%, transparent)}.cvtkAW_trendBar:hover .cvtkAW_trendSeg{filter:saturate(1.15)brightness(1.06)}.cvtkAW_trendTooltip{z-index:2;border:1px solid color-mix(in srgb, currentColor 18%, transparent);background:var(--dsw-alias-bg-floating,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;box-shadow:0 4px 14px color-mix(in srgb, currentColor 18%, transparent);border-radius:8px;flex-direction:column;gap:2px;padding:6px 9px;font-size:11px;display:flex;position:absolute;transform:translate(-50%,-100%)}.cvtkAW_trendTooltipTitle{font-weight:600}.cvtkAW_trendTooltipLine{opacity:.8}.cvtkAW_trendXLabels{height:14px;margin-left:40px;position:relative}.cvtkAW_trendXLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;transform:translate(-50%)}.cvtkAW_trendLegend{opacity:.65;flex-wrap:wrap;gap:12px;font-size:10px;display:flex}.cvtkAW_trendLegendItem{align-items:center;gap:4px;display:inline-flex}.cvtkAW_trendSwatch{border-radius:2px;width:8px;height:8px;display:inline-block}.cvtkAW_rangeGrid{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;display:grid}.cvtkAW_rangeTile{appearance:none;border:1px solid color-mix(in srgb, currentColor 14%, transparent);color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border-radius:10px;flex-direction:column;gap:2px;padding:8px 10px;transition:background-color .12s,border-color .12s;display:flex}.cvtkAW_rangeTile:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_rangeTile:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_rangeTileActive{border-color:color-mix(in srgb, currentColor 45%, transparent);background:color-mix(in srgb, currentColor 9%, transparent)}.cvtkAW_rangeTileLabel{opacity:.65;font-size:11px}.cvtkAW_rangeTileValue{font-variant-numeric:tabular-nums;font-size:16px;font-weight:600}.cvtkAW_rangeTileMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_rangeControls{flex-wrap:wrap;align-items:center;gap:12px;display:flex}.cvtkAW_dateInput{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_dateInput:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_windowHead{flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_spanLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_modelRows{flex-direction:column;gap:4px;display:flex}.cvtkAW_muted{opacity:.6;font-size:12px}.cvtkAW_voucherPreview canvas{border-radius:8px;width:100%;height:auto;display:block}.cvtkAW_buttonRow{gap:8px;display:flex}.cvtkAW_errorLine{opacity:.75;font-size:12px}.cvtkAW_noteLine{opacity:.6;font-size:11.5px}.cvtkAW_planCard{flex-direction:column;gap:8px;display:flex}.cvtkAW_planHead{justify-content:space-between;align-items:baseline;gap:10px;display:flex}.cvtkAW_planName{font-size:14px;font-weight:600}.cvtkAW_windowRow{flex-direction:column;gap:4px;display:flex}.cvtkAW_windowLabel{opacity:.8;font-variant-numeric:tabular-nums;justify-content:space-between;font-size:12px;display:flex}.cvtkAW_bar{background:color-mix(in srgb, currentColor 10%, transparent);border-radius:999px;height:6px;overflow:hidden}.cvtkAW_barFill{background:color-mix(in srgb, currentColor 55%, transparent);border-radius:999px;height:100%;transition:width .3s}.cvtkAW_barWarn{background:#d97706}.cvtkAW_barLow{background:#dc2626}.cvtkAW_resetLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_settingsGrid{flex-wrap:wrap;align-items:center;gap:16px;display:flex}.cvtkAW_settingItem{align-items:center;gap:8px;font-size:13px;display:flex}.cvtkAW_settingItem input[type=checkbox]{accent-color:currentColor}.cvtkAW_settingItem input[type=number]{border:1px solid color-mix(in srgb, currentColor 25%, transparent);width:90px;color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem select{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem input:focus-visible,.cvtkAW_settingItem select:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footCard{box-sizing:border-box;background:color-mix(in srgb, currentColor 4%, transparent);width:100%;color:inherit;border:none;border-radius:12px;margin:2px 0 4px;transition:background-color .12s;position:relative}.cvtkAW_footCard:hover{background:var(--dsw-alias-interactive-bg-hover)}.cvtkAW_footCardCollapsed{background:0 0}.cvtkAW_footMain{appearance:none;box-sizing:border-box;width:100%;color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border:none;border-radius:12px;flex-direction:column;gap:4px;padding:8px;display:flex}.cvtkAW_footMain:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle{appearance:none;width:20px;height:20px;color:inherit;cursor:pointer;opacity:.55;background:0 0;border:none;border-radius:6px;justify-content:center;align-items:center;padding:0;transition:opacity .12s,background-color .12s;display:inline-flex;position:absolute;top:6px;right:6px}.cvtkAW_footCard:hover .cvtkAW_footToggle{opacity:.8}.cvtkAW_footToggle:hover{opacity:1;background:color-mix(in srgb, currentColor 10%, transparent)}.cvtkAW_footToggle:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle svg{display:block}.cvtkAW_footHead{justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_footTitle{opacity:.65;white-space:nowrap;align-items:center;gap:6px;min-width:0;font-size:12px;display:inline-flex}.cvtkAW_footTitle svg{flex:none;display:block}.cvtkAW_footValue{font-variant-numeric:tabular-nums;white-space:nowrap;margin-right:18px;font-size:15px;font-weight:600}.cvtkAW_footLine{opacity:.7;font-variant-numeric:tabular-nums;text-overflow:ellipsis;white-space:nowrap;font-size:11px;overflow:hidden}.cvtkAW_footMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_footCardCollapsed .cvtkAW_footMain{min-height:36px;padding:7px 8px}.cvtkAW_footStrip{white-space:nowrap;align-items:center;gap:6px;padding-right:20px;font-size:12px;display:flex;overflow:hidden}.cvtkAW_footStrip svg{opacity:.65;flex:none;display:block}.cvtkAW_footStripProvider{text-overflow:ellipsis;flex:none;max-width:38%;font-weight:500;overflow:hidden}.cvtkAW_footStripLabel{opacity:.65;text-overflow:ellipsis;overflow:hidden}.cvtkAW_footStripValue{font-variant-numeric:tabular-nums;margin-left:auto;font-weight:600}[data-dsh-frame][data-sidebar-collapsed] .cvtkAW_footCard,[data-sidebar-collapsed] .cvtkAW_footCard{display:none}.cvtkAW_peakBadge,.cvtkAW_peakLine{font-variant-numeric:tabular-nums;white-space:nowrap;align-items:center;gap:4px;font-size:11px;display:inline-flex}.cvtkAW_peakBadge{flex:none}.cvtkAW_peakLine{gap:6px}.cvtkAW_peakBadge[data-peak=on],.cvtkAW_peakLine[data-peak=on]{color:var(--dsw-alias-state-error-primary,#b42318)}.cvtkAW_peakBadge[data-peak=off],.cvtkAW_peakLine[data-peak=off]{color:var(--dsw-alias-state-success-primary,#067647)}.cvtkAW_peakDot{background:currentColor;border-radius:50%;flex:none;width:6px;height:6px}.cvtkAW_footPeak{white-space:nowrap;align-items:center;gap:5px;font-size:10px;display:flex;overflow:hidden}.cvtkAW_footPeakClock{opacity:.7;font-variant-numeric:tabular-nums}";
 		const tagId = "@linxin666/dsh-usage/packages/dsh-usage/src/client/usage.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -392,6 +396,7 @@ window.__ModuleLoader__.load({
 			"trendArea": "cvtkAW_trendArea",
 			"trendBar": "cvtkAW_trendBar",
 			"trendBars": "cvtkAW_trendBars",
+			"trendFailed": "cvtkAW_trendFailed",
 			"trendGridline": "cvtkAW_trendGridline",
 			"trendLegend": "cvtkAW_trendLegend",
 			"trendLegendItem": "cvtkAW_trendLegendItem",
@@ -499,6 +504,48 @@ window.__ModuleLoader__.load({
 		function totalTokens(totals) {
 			return totals.inputTokens + totals.cacheReadTokens + totals.cacheWriteTokens + totals.outputTokens;
 		}
+		/** One hue per slot, the panel's chart palette. */
+		const PALETTE_HUES = [
+			"#0576ff",
+			"#2f6f37",
+			"#c46212",
+			"#975bf1",
+			"#d34591",
+			"#0d8a8a",
+			"#b3341f",
+			"#7a9018",
+			"#4b3fd0",
+			"#d4a017",
+			"#c25a7e",
+			"#619e3a",
+			"#2f9e73",
+			"#0f96c9",
+			"#a855c9",
+			"#5c7ac0"
+		];
+		/** The surface behind the bars on the light skin. */
+		const SURFACE_LIGHT = [
+			255,
+			255,
+			255
+		];
+		/** The surface behind the bars on the dark skin: the panel's own card. */
+		const SURFACE_DARK = [
+			22,
+			23,
+			26
+		];
+		/** WCAG 2.1 non-text contrast: a bar has to clear this against its surface. */
+		const MIN_CONTRAST = 3;
+		/**
+		* Relative luminance a bar may sit at: the band where it clears MIN_CONTRAST on
+		* white (luminance at most 0.3) and on the dark card (at least 0.127). The
+		* margins keep rounding from pushing a rung under the floor.
+		*/
+		const LUMINANCE_FLOOR = MIN_CONTRAST * (luminance(SURFACE_DARK) + .05) - .05 + .004;
+		const LUMINANCE_CEILING = (luminance(SURFACE_LIGHT) + .05) / MIN_CONTRAST - .05 - .015;
+		/** Rungs on a slot's ladder: five shades, so a slot's second name sits two below. */
+		const SHADE_COUNT = 5;
 		/** The color identity of a model: `prefix/`-stripped, trimmed, lower-cased. */
 		function normalizeModelName(model) {
 			return model.slice(model.lastIndexOf("/") + 1).trim().toLowerCase();
@@ -512,22 +559,74 @@ window.__ModuleLoader__.load({
 			}
 			return hash >>> 0;
 		}
-		/** Lowest share of the slot hue a shade keeps, in percent. */
-		const SHADE_MIN_PERCENT = 58;
-		/** Shades a slot can carry: the hue itself plus white and black at every step. */
-		const SHADE_COUNT = 71;
-		/**
-		* One slot in one shade: shade 0 is the slot's own hue (`--dsw-chart-N`), every
-		* other shade mixes that hue toward white or black, walking 58 % … 92 % of the
-		* hue. A shade therefore reads as the same hue in a lighter or darker tone —
-		* apart from its slot neighbour, but never so far that it leaves the light/dark
-		* skin the palette defines.
-		*/
-		function slotColor(slot, shade) {
-			const hue = `var(--dsw-chart-${slot + 1})`;
-			if (shade === 0) return hue;
-			return `color-mix(in srgb, ${hue} ${SHADE_MIN_PERCENT + Math.ceil(shade / 2) - 1}%, ${shade % 2 === 1 ? "white" : "black"})`;
+		function hexToRgb(hex) {
+			const value = Number.parseInt(hex.slice(1), 16);
+			return [
+				value >> 16 & 255,
+				value >> 8 & 255,
+				value & 255
+			];
 		}
+		/** `percent` of every channel: the hue mixed with black, in sRGB bytes. */
+		function dim(rgb, percent) {
+			return [
+				Math.round(rgb[0] * percent / 100),
+				Math.round(rgb[1] * percent / 100),
+				Math.round(rgb[2] * percent / 100)
+			];
+		}
+		/** `share` of the way to white: the hue lifted without leaving its family. */
+		function lighten(rgb, share) {
+			const lift = (channel) => Math.round(channel + (255 - channel) * share);
+			return [
+				lift(rgb[0]),
+				lift(rgb[1]),
+				lift(rgb[2])
+			];
+		}
+		function toHex(rgb) {
+			return "#" + rgb.map((channel) => channel.toString(16).padStart(2, "0")).join("");
+		}
+		function channelLuminance(channel) {
+			const value = channel / 255;
+			return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4;
+		}
+		function luminance(rgb) {
+			return .2126 * channelLuminance(rgb[0]) + .7152 * channelLuminance(rgb[1]) + .0722 * channelLuminance(rgb[2]);
+		}
+		/**
+		* One hue pulled to a target relative luminance: darkened by scaling when the
+		* target is below the hue's own luminance, lifted toward white when it is
+		* above. Both moves are monotonic, so a bisection lands on the target — and
+		* neither ever parks the hue at an extreme, which is what made the old ramp
+		* unreadable.
+		*/
+		function withLuminance(base, target) {
+			const move = target <= luminance(base) ? (share) => dim(base, share * 100) : (share) => lighten(base, share);
+			let low = 0;
+			let high = 1;
+			for (let step = 0; step < 24; step += 1) {
+				const mid = (low + high) / 2;
+				if (luminance(move(mid)) < target) low = mid;
+				else high = mid;
+			}
+			return move((low + high) / 2);
+		}
+		/**
+		* One slot's ladder: SHADE_COUNT rungs spread across the luminance band both
+		* skins share, so every shade is legible on white and on the dark card alike.
+		*/
+		function shadeLadder(hue) {
+			const base = hexToRgb(hue);
+			const ladder = [];
+			for (let rung = 0; rung < SHADE_COUNT; rung += 1) {
+				const target = LUMINANCE_FLOOR + (LUMINANCE_CEILING - LUMINANCE_FLOOR) * rung / 4;
+				ladder.push(toHex(withLuminance(base, target)));
+			}
+			return ladder;
+		}
+		/** Each slot's ladder, cut once at load: the panel never recomputes a color. */
+		const SLOT_SHADES = PALETTE_HUES.map(shadeLadder);
 		/**
 		* Assign one palette color per normalized model name.
 		*
@@ -537,15 +636,19 @@ window.__ModuleLoader__.load({
 		* window showing only the second recolored it to chart-1. Stability is the whole
 		* promise of this table (the trend bars, the channel bars and the model rows
 		* share it, and the user learns the colors), so a collision between two of the
-		* sixteen hues is resolved by the shade axis instead of by shifting someone
-		* else's hue: the bits above the slot pick a white/black mix of that same hue,
-		* which keeps the pair apart without letting any other name move.
+		* sixteen hues is resolved on the shade ladder instead of by shifting someone
+		* else's hue. The rung is the name's order inside its slot, stepped by two, so
+		* consecutive names of one slot are as far apart on the ladder as it goes.
 		*/
 		function assignModelColors(models) {
 			const colors = /* @__PURE__ */ new Map();
+			const taken = new Array(16).fill(0);
 			for (const name of new Set(models)) {
-				const hash = hashOf(name);
-				colors.set(name, slotColor(hash % 16, Math.floor(hash / 16) % SHADE_COUNT));
+				const slot = hashOf(name) % 16;
+				const ladder = SLOT_SHADES[slot] ?? [];
+				const rung = (taken[slot] ?? 0) * 2 % Math.max(ladder.length, 1);
+				taken[slot] = (taken[slot] ?? 0) + 1;
+				colors.set(name, ladder[rung] ?? "#6f6f78");
 			}
 			return colors;
 		}
@@ -749,7 +852,7 @@ window.__ModuleLoader__.load({
 		* neutral slate.
 		*/
 		function TrendChart(props) {
-			const { rows, colors, labels } = props;
+			const { rows, colors, labels, allFailed } = props;
 			const [hovered, setHovered] = (0, react.useState)(void 0);
 			if (rows.length < 2) return null;
 			const buckets = buildBuckets(rows, granularityOf(rows.length));
@@ -758,7 +861,7 @@ window.__ModuleLoader__.load({
 			const hoveredBucket = hovered !== void 0 ? buckets[hovered] : void 0;
 			const order = modelOrderOf(buckets);
 			const modelMode = order.length > 0 && colors !== void 0 && colors.size > 0;
-			const colorOf = (model) => colors?.get(model) ?? "var(--dsw-chart-other)";
+			const colorOf = (model) => colors?.get(model) ?? "#6f6f78";
 			const labelOf = (model) => labels?.get(model) ?? model;
 			const legendEntries = modelMode ? order.slice(0, LEGEND_MAX_MODELS).map((model) => ({
 				key: model,
@@ -782,6 +885,7 @@ window.__ModuleLoader__.load({
 				}
 			];
 			const anyFailed = buckets.some((bucket) => bucket.failed);
+			const rangeFailed = allFailed === true;
 			const chartFrom = buckets[0].from;
 			const chartTo = buckets[buckets.length - 1].to;
 			const chartTotal = buckets.reduce((sum, bucket) => sum + totalOf$1(bucket.totals), 0);
@@ -815,7 +919,14 @@ window.__ModuleLoader__.load({
 									className: usage_module_css_default.trendGridline,
 									style: { bottom: `${fraction * 100}%` }
 								}, fraction)),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								rangeFailed ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+									className: usage_module_css_default.trendFailed,
+									"data-dsh-part": "trend-failed",
+									children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: usage_module_css_default.errorLine,
+										children: t("usage.trend.loadFailed")
+									})
+								}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 									className: usage_module_css_default.trendBars,
 									onMouseLeave: () => {
 										setHovered(void 0);
@@ -2159,13 +2270,15 @@ window.__ModuleLoader__.load({
 		* A non-2xx answer arrives as `usage api/… failed: 500` — the internal route and
 		* a bare status code, which used to be printed verbatim next to the translated
 		* sentence around it. The status is the one part worth repeating, so it gets its
-		* own sentence; anything else still falls through unchanged (callers keep the
-		* raw text in a title attribute, so the diagnostic is never lost).
+		* own sentence; an abort, a JSON parse failure ("Unexpected token <") or any
+		* other wire text is a diagnostic with no meaning for the reader, so it reads as
+		* one generic sentence too (callers keep the raw text in a title attribute, so
+		* the diagnostic is never lost).
 		*/
 		function describeError(error) {
-			if (/failed to fetch|networkerror|network error|econnrefused|econnreset|enotfound|socket hang up|load failed|timeout|timed out/i.test(error)) return t("usage.error.network");
+			if (/failed to fetch|networkerror|network error|econnrefused|econnreset|enotfound|socket hang up|load failed|timeout|timed out|abort/i.test(error)) return t("usage.error.network");
 			const status = /failed: (\d{3})\b/.exec(error);
-			return status === null ? error : t("usage.error.status", { status: status[1] });
+			return status === null ? t("usage.error.unknown") : t("usage.error.status", { status: status[1] });
 		}
 		/** Units for plan-window keys the dictionary does not name (`7_day`, `12_hour`). */
 		const PLAN_WINDOW_UNIT_KEYS = {
@@ -2207,6 +2320,37 @@ window.__ModuleLoader__.load({
 		*/
 		const RANGE_FETCH_MAX_DAYS = 45;
 		/**
+		* What the ledger's past looked like when a cached answer was fetched: the
+		* number of retained days plus every recorded token that is not today's.
+		*
+		* Both caches are keyed by a date or a span, and a poll changes neither. A
+		* backfill, a peer import or a late write into a past day therefore left the
+		* cached answer in place forever — a wide window kept showing its old total
+		* while 全部 (whose span starts at the new oldest day) refetched and grew, so
+		* the panel could report 近 6 个月 as less than 全部. Folding this stamp into the
+		* entry makes a cached answer self-invalidating when the history behind it moved,
+		* and today is subtracted so a live day that grows with every request cannot
+		* invalidate it on every poll.
+		*/
+		function historyStampOf(usage) {
+			return `${usage.availableDays?.length ?? usage.days.length}:${(usage.all === void 0 ? usage.days.reduce((sum, row) => sum + totalOf(row.totals), 0) : totalOf(usage.all.totals)) - totalOf(usage.today.totals)}`;
+		}
+		/**
+		* A picked day key, held inside the calendar's own bounds. The picker's `min`
+		* and `max` bind its calendar, not a typed or pasted value, so without this a
+		* window could run into the future and fold today's usage into days that have
+		* not happened. A start *before* the oldest retained day is left alone: the
+		* picker's `min` already keeps it out of the calendar, and a window that opens
+		* earlier than the ledger is a legitimate question — the chart draws the stretch
+		* the host has nothing for, rather than silently rewriting the dates the user
+		* typed. An empty value is the picker clearing the end.
+		*/
+		function clampDay(value, today) {
+			if (value === void 0 || value === "") return value;
+			if (today !== "" && value > today) return today;
+			return value;
+		}
+		/**
 		* Cache generation. A manual refresh bumps it, so a request that started
 		* before the refresh can neither be joined by a later reader nor write its
 		* now-stale answer back into a cache.
@@ -2218,13 +2362,16 @@ window.__ModuleLoader__.load({
 		* carries the generation it was started in.
 		*/
 		const dayRequests = /* @__PURE__ */ new Map();
-		function requestDay(loadDay, date, cache) {
+		function requestDay(loadDay, date, cache, stamp) {
 			const pending = dayRequests.get(date);
-			if (pending !== void 0 && pending.generation === cacheGeneration) return pending.promise;
+			if (pending !== void 0 && pending.generation === cacheGeneration && pending.stamp === stamp) return pending.promise;
 			const generation = cacheGeneration;
 			const request = loadDay(date).then((view) => {
 				if (dayRequests.get(date)?.generation === generation) dayRequests.delete(date);
-				if (generation === cacheGeneration) cache.set(date, view);
+				if (generation === cacheGeneration) cache.set(date, {
+					view,
+					stamp
+				});
 				return view;
 			}, (error) => {
 				if (dayRequests.get(date)?.generation === generation) dayRequests.delete(date);
@@ -2232,7 +2379,8 @@ window.__ModuleLoader__.load({
 			});
 			dayRequests.set(date, {
 				promise: request,
-				generation
+				generation,
+				stamp
 			});
 			return request;
 		}
@@ -2254,7 +2402,7 @@ window.__ModuleLoader__.load({
 		* lands because the effect cancels. A partially failed load still renders the
 		* days that arrived, plus the error line.
 		*/
-		function useWindowDays(loadDay, dateKeys, cache, epoch, retry) {
+		function useWindowDays(loadDay, dateKeys, cache, epoch, retry, stamp) {
 			const signature = dateKeys.join(",");
 			const [load, setLoad] = (0, react.useState)(() => ({
 				status: dateKeys.length === 0 ? "ready" : "loading",
@@ -2268,8 +2416,8 @@ window.__ModuleLoader__.load({
 				const missing = [];
 				for (const date of wanted) {
 					const cached = cache.get(date);
-					if (cached === void 0) missing.push(date);
-					else days[date] = cached;
+					if (cached === void 0 || cached.stamp !== stamp) missing.push(date);
+					else days[date] = cached.view;
 				}
 				if (missing.length === 0) {
 					setLoad({
@@ -2289,7 +2437,7 @@ window.__ModuleLoader__.load({
 				let firstError;
 				mapPool(missing, DAY_FETCH_CONCURRENCY, async (date) => {
 					try {
-						days[date] = await requestDay(loadDay, date, cache);
+						days[date] = await requestDay(loadDay, date, cache, stamp);
 						if (!cancelled) setLoad((previous) => ({
 							status: previous.status === "ready" ? "ready" : "loading",
 							days: { ...days },
@@ -2318,7 +2466,8 @@ window.__ModuleLoader__.load({
 				loadDay,
 				cache,
 				epoch,
-				retry
+				retry,
+				stamp
 			]);
 			return load;
 		}
@@ -2330,10 +2479,10 @@ window.__ModuleLoader__.load({
 		const rangeResults = /* @__PURE__ */ new Map();
 		/** In-flight range requests, so overlapping windows share one fetch. */
 		const rangeRequests = /* @__PURE__ */ new Map();
-		function requestRange(loadRange, from, to) {
+		function requestRange(loadRange, from, to, stamp) {
 			const key = `${from}:${to}`;
 			const pending = rangeRequests.get(key);
-			if (pending !== void 0 && pending.generation === cacheGeneration) return pending.promise;
+			if (pending !== void 0 && pending.generation === cacheGeneration && pending.stamp === stamp) return pending.promise;
 			const generation = cacheGeneration;
 			const request = loadRange(from, to).then((response) => {
 				if (rangeRequests.get(key)?.generation === generation) rangeRequests.delete(key);
@@ -2342,7 +2491,8 @@ window.__ModuleLoader__.load({
 						totals: response.totals,
 						providers: response.providers
 					},
-					series: response.series
+					series: response.series,
+					stamp
 				});
 				return response;
 			}, (error) => {
@@ -2351,7 +2501,8 @@ window.__ModuleLoader__.load({
 			});
 			rangeRequests.set(key, {
 				promise: request,
-				generation
+				generation,
+				stamp
 			});
 			return request;
 		}
@@ -2380,7 +2531,7 @@ window.__ModuleLoader__.load({
 		* at "…" forever on a ledger whose oldest day is today: the tile treats idle as
 		* pending, and nothing was ever going to move it.
 		*/
-		function useRangeData(loadRange, window, today, epoch, retry) {
+		function useRangeData(loadRange, window, today, epoch, retry, stamp) {
 			const span = window === void 0 ? void 0 : fetchSpanOf(window, today);
 			const empty = window !== void 0 && span === void 0;
 			const key = span === void 0 ? "" : `${span.from}:${span.to}`;
@@ -2398,7 +2549,7 @@ window.__ModuleLoader__.load({
 					return;
 				}
 				const cached = rangeResults.get(key);
-				if (cached !== void 0) {
+				if (cached !== void 0 && cached.stamp === stamp) {
 					setLoad({
 						status: "ready",
 						summary: cached.summary,
@@ -2408,12 +2559,12 @@ window.__ModuleLoader__.load({
 				}
 				let cancelled = false;
 				setLoad((previous) => previous.status === "ready" || previous.status === "error" ? previous : { status: "loading" });
-				requestRange(loadRange, key.slice(0, 10), key.slice(11)).then((response) => {
+				requestRange(loadRange, key.slice(0, 10), key.slice(11), stamp).then((response) => {
 					if (cancelled) return;
 					const stored = rangeResults.get(key);
 					setLoad({
 						status: "ready",
-						summary: stored?.summary ?? {
+						summary: stored !== void 0 && stored.stamp === stamp ? stored.summary : {
 							totals: response.totals,
 							providers: response.providers
 						},
@@ -2433,7 +2584,8 @@ window.__ModuleLoader__.load({
 				empty,
 				loadRange,
 				epoch,
-				retry
+				retry,
+				stamp
 			]);
 			return load;
 		}
@@ -2734,7 +2886,7 @@ window.__ModuleLoader__.load({
 		* retries a day that failed, instead of leaving the error up until the user
 		* picks something else and comes back.
 		*/
-		function useDayView(loadDay, date, today, cache, epoch, retry) {
+		function useDayView(loadDay, date, today, cache, epoch, retry, stamp) {
 			const [load, setLoad] = (0, react.useState)(void 0);
 			(0, react.useEffect)(() => {
 				if (date === void 0 || date === today) {
@@ -2742,16 +2894,16 @@ window.__ModuleLoader__.load({
 					return;
 				}
 				const cached = cache.get(date);
-				if (cached !== void 0) {
+				if (cached !== void 0 && cached.stamp === stamp) {
 					setLoad({
 						status: "ready",
-						view: cached
+						view: cached.view
 					});
 					return;
 				}
 				let cancelled = false;
 				setLoad({ status: "loading" });
-				requestDay(loadDay, date, cache).then((view) => {
+				requestDay(loadDay, date, cache, stamp).then((view) => {
 					if (!cancelled) setLoad({
 						status: "ready",
 						view
@@ -2771,7 +2923,8 @@ window.__ModuleLoader__.load({
 				loadDay,
 				cache,
 				epoch,
-				retry
+				retry,
+				stamp
 			]);
 			return load;
 		}
@@ -2944,7 +3097,7 @@ window.__ModuleLoader__.load({
 										className: usage_module_css_default.chartSeg,
 										style: {
 											width: `${width}%`,
-											background: modelColors.get(segment.model) ?? "var(--dsw-chart-other)"
+											background: modelColors.get(segment.model) ?? "#6f6f78"
 										}
 									}, segment.model);
 								})
@@ -2970,7 +3123,7 @@ window.__ModuleLoader__.load({
 													className: usage_module_css_default.chartModelFill,
 													style: {
 														width: `${Math.max(3, Math.round(sharePct))}%`,
-														background: modelColors.get(model.model) ?? "var(--dsw-chart-other)"
+														background: modelColors.get(model.model) ?? "#6f6f78"
 													}
 												})
 											}),
@@ -3074,6 +3227,8 @@ window.__ModuleLoader__.load({
 			const todayView = snapshot?.usage.today;
 			const todayDate = todayView?.date ?? "";
 			const recorded = snapshot === null ? [] : snapshot.usage.availableDays ?? snapshot.usage.days.map((row) => row.date);
+			const oldestDay = recorded[0];
+			const historyStamp = snapshot === null ? "" : historyStampOf(snapshot.usage);
 			const last30Window = {
 				from: shiftDateKey(todayDate, -29),
 				to: todayDate
@@ -3099,7 +3254,7 @@ window.__ModuleLoader__.load({
 				to: todayDate
 			};
 			const allWindow = {
-				from: recorded[0] ?? todayDate,
+				from: oldestDay ?? todayDate,
 				to: todayDate
 			};
 			const customPicked = customFrom !== void 0 || customTo !== void 0;
@@ -3114,11 +3269,11 @@ window.__ModuleLoader__.load({
 			};
 			const cache = dayCacheRef.current;
 			const customIsRange = (customPicked ? dateKeysBetween(customWindow.from, customWindow.to).length : 0) > RANGE_FETCH_MAX_DAYS;
-			const last30Days = useWindowDays(loadDay, recordedIn(last30Window, recorded, todayDate), cache, cacheEpoch, retryTick);
-			const customDays = useWindowDays(loadDay, customPicked && !customIsRange ? recordedIn(customWindow, recorded, todayDate) : [], cache, cacheEpoch, retryTick);
-			const last180Load = useRangeData(loadRange, last180Window, todayDate, cacheEpoch, retryTick);
-			const allLoad = useRangeData(loadRange, allWindow, todayDate, cacheEpoch, retryTick);
-			const customRangeLoad = useRangeData(loadRange, customPicked && customIsRange ? customWindow : void 0, todayDate, cacheEpoch, retryTick);
+			const last30Days = useWindowDays(loadDay, recordedIn(last30Window, recorded, todayDate), cache, cacheEpoch, retryTick, historyStamp);
+			const customDays = useWindowDays(loadDay, customPicked && !customIsRange ? recordedIn(customWindow, recorded, todayDate) : [], cache, cacheEpoch, retryTick, historyStamp);
+			const last180Load = useRangeData(loadRange, last180Window, todayDate, cacheEpoch, retryTick, historyStamp);
+			const allLoad = useRangeData(loadRange, allWindow, todayDate, cacheEpoch, retryTick, historyStamp);
+			const customRangeLoad = useRangeData(loadRange, customPicked && customIsRange ? customWindow : void 0, todayDate, cacheEpoch, retryTick, historyStamp);
 			/** One range-kind window as the panel states it: the fetched aggregate plus the live day. */
 			const rangeSummaryOf = (window, load) => withLiveToday({
 				from: window.from,
@@ -3130,6 +3285,10 @@ window.__ModuleLoader__.load({
 			}, window, todayView);
 			const loadsFailed = last30Days.error !== void 0 || customDays.error !== void 0 || last180Load.status === "error" || allLoad.status === "error" || customRangeLoad.status === "error";
 			const retryAttempts = (0, react.useRef)(0);
+			const progressStamp = snapshot?.updatedAt ?? 0;
+			(0, react.useEffect)(() => {
+				retryAttempts.current = 0;
+			}, [progressStamp]);
 			(0, react.useEffect)(() => {
 				if (!loadsFailed) {
 					retryAttempts.current = 0;
@@ -3145,11 +3304,12 @@ window.__ModuleLoader__.load({
 			}, [
 				loadsFailed,
 				pollIntervalMs,
-				retryTick
+				retryTick,
+				progressStamp
 			]);
 			const dayOptions = snapshot === null ? [] : [...new Set([todayDate, ...snapshot.usage.availableDays ?? []].filter((date) => date !== void 0 && date !== ""))].sort().reverse();
 			const bankSelection = bankDay !== void 0 && dayOptions.includes(bankDay) ? bankDay : void 0;
-			const bankDayLoad = useDayView(loadDay, bankSelection, todayDate, cache, cacheEpoch, retryTick);
+			const bankDayLoad = useDayView(loadDay, bankSelection, todayDate, cache, cacheEpoch, retryTick, historyStamp);
 			const bankDayView = bankSelection === void 0 ? void 0 : bankSelection === todayDate ? snapshot?.usage.today : bankDayLoad?.view;
 			const bankWindow = bankSelection === void 0 ? snapshot?.usage.all ?? snapshot?.usage.range : bankDayView === void 0 ? void 0 : {
 				from: bankDayView.date,
@@ -3267,7 +3427,7 @@ window.__ModuleLoader__.load({
 			const seriesByDate = activeSlice.kind === "range" && activeSlice.load.series !== void 0 ? new Map(activeSlice.load.series.map((row) => [row.date, row])) : void 0;
 			const daysByDate = activeSlice.kind === "days" ? activeSlice.load.days : void 0;
 			const failedDates = activeSlice.kind === "days" ? new Set(activeSlice.load.failedDates) : void 0;
-			const rangeFailed = activeSlice.kind === "range" && activeSlice.load.status === "error";
+			const rangeFailed = activeSlice.kind === "range" && activeSlice.load.status === "error" && activeSlice.load.series === void 0;
 			const trendRowsRaw = rangeKey === "custom" && !customPicked ? [] : dateKeysBetween(activeWindow.from, activeWindow.to).map((date) => {
 				if (todayView !== void 0 && date === todayView.date) return {
 					date,
@@ -3383,11 +3543,12 @@ window.__ModuleLoader__.load({
 							children: t(TAB_LABEL_KEYS[key])
 						}, key))
 					}),
-					tab === "usage" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: usage_module_css_default.panel,
 						role: "tabpanel",
 						id: "dsh-usage-panel-usage",
 						"aria-labelledby": "dsh-usage-tab-usage",
+						hidden: tab !== "usage",
 						children: [
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(RangeStrip, {
 								rangeKey,
@@ -3398,13 +3559,13 @@ window.__ModuleLoader__.load({
 									to: ""
 								},
 								onCustomFrom: (value) => {
-									setCustomFrom(value !== void 0 && todayDate !== "" && value > todayDate ? todayDate : value);
+									setCustomFrom(clampDay(value, todayDate));
 								},
 								onCustomTo: (value) => {
 									setCustomTo(value !== void 0 && todayDate !== "" && value > todayDate ? todayDate : value);
 								},
 								today: todayDate,
-								min: recorded.length > 0 ? recorded[0] : void 0
+								min: oldestDay
 							}),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 								className: usage_module_css_default.card,
@@ -3444,7 +3605,8 @@ window.__ModuleLoader__.load({
 									}) : activeError !== void 0 ? trendRows.length >= TREND_CHART_MIN_DAYS && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TrendChart, {
 										rows: trendRows,
 										colors: modelColors,
-										labels: modelLabels
+										labels: modelLabels,
+										allFailed: rangeFailed
 									}) : isEmptyTotals(summary.totals) && summary.providers.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: usage_module_css_default.muted,
 										children: t("usage.range.empty")
@@ -3520,11 +3682,12 @@ window.__ModuleLoader__.load({
 							})
 						]
 					}),
-					tab === "plans" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 						className: usage_module_css_default.panel,
 						role: "tabpanel",
 						id: "dsh-usage-panel-plans",
 						"aria-labelledby": "dsh-usage-tab-plans",
+						hidden: tab !== "plans",
 						children: planProviders.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 							className: usage_module_css_default.card,
 							children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
@@ -3536,11 +3699,12 @@ window.__ModuleLoader__.load({
 							current: current.provider
 						}, provider.provider))
 					}),
-					tab === "bank" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: usage_module_css_default.panel,
 						role: "tabpanel",
 						id: "dsh-usage-panel-bank",
 						"aria-labelledby": "dsh-usage-tab-bank",
+						hidden: tab !== "bank",
 						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(DayPicker, {
 							part: "bank",
 							value: bankSelection ?? BANK_ALL_DAYS,

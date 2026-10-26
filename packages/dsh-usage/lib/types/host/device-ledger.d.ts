@@ -67,6 +67,15 @@ export declare const MACHINE_ID_FILE = "machine-id.json";
  * cannot do that — it changes exactly when the rename happens.
  */
 export declare function ensureMachineId(dir: string): Promise<string>;
+/**
+ * Ids this profile has used before.
+ *
+ * A re-minted pin (a lost `machine-id.json`, a moved profile, an upgrade from a
+ * build that never pinned one) leaves older files stamped with the old id. Those
+ * files are this machine's own history, so they have to be folded in rather than
+ * summed as a second device — the difference is a permanently doubled total.
+ */
+export declare function readMachineAliases(dir: string): Promise<string[]>;
 /** File name a device's ledger lives under. */
 export declare function ledgerFileName(deviceId: string): string;
 /**
@@ -82,6 +91,8 @@ export interface LoadedLedgerFile {
     machine?: string;
     doc: UsageLedgerDocument;
     updatedAt?: number;
+    /** Retention the writer had applied, so a lowered setting survives a restart. */
+    retentionDays?: number;
 }
 /**
  * The document as it is written to disk: the ledger plus the identity of the
@@ -92,15 +103,19 @@ export interface LoadedLedgerFile {
  * `/export` envelope does exactly that) would let a downgrade overwrite the
  * history with nothing. `repairedAt` marks the last correction, so a process
  * that loaded before the correction cannot raise a bucket a newer write
- * lowered.
+ * lowered. `retentionDays` records which window the writer pruned to: without
+ * it a restart cannot tell "the user lowered retention while we were down" from
+ * "the clock jumped", and it refuses the prune forever.
  */
 export declare function ledgerFileDocument(doc: Readonly<UsageLedgerDocument>, extra?: {
     repairedAt?: number;
     machine?: string;
+    retentionDays?: number;
 }): UsageLedgerDocument & {
     deviceId: string;
     machine: string;
     repairedAt?: number;
+    retentionDays?: number;
 };
 /**
  * Parse one peer ledger document from untrusted JSON.

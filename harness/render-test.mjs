@@ -1081,13 +1081,16 @@ console.log('   plans tab text:', text(container).slice(0, 200))
     await new Promise((r) => setTimeout(r, 150))
   })
 
+  // A window that failed wholesale has nothing to plot. It used to draw one
+  // full-height hatched bar per bucket — 27 of them here — a wall of stripes that
+  // reads as data, so the plot states the failure once instead of drawing it.
   const bars = [...host.querySelectorAll('[data-dsh-part="trend-bar"]')]
-  // A bar with neither a recorded total nor a failure is the "no usage
-  // recorded" lie this window must not tell: every drawn day is either known to
-  // have usage or known to have failed.
-  const lies = bars.filter((bar) => bar.getAttribute('data-failed') !== 'true' && bar.getAttribute('data-recorded') !== 'true')
-  check('a failed aggregate draws no confident empty day', bars.length > 1 && lies.length === 0,
-    'bars=' + bars.length + ' empty=' + lies.length)
+  const failedNotice = host.querySelector('[data-dsh-part="trend-failed"]')
+  check('a failed aggregate draws no confident empty day', bars.length === 0,
+    'bars=' + bars.length)
+  check('a failed aggregate states the failure in the plot instead of drawing bars',
+    failedNotice !== null && text(failedNotice).includes('加载失败') && bars.length === 0,
+    failedNotice === null ? 'no notice' : text(failedNotice))
   const figure = host.querySelector('[data-dsh-part="trend-chart"] [role="img"]')
   const label = String(figure?.getAttribute('aria-label') ?? '')
   check('a failed aggregate states no total in the aria label',
@@ -1105,6 +1108,158 @@ console.log('   plans tab text:', text(container).slice(0, 200))
 
   await act(async () => { localRoot.unmount() })
   host.remove()
+}
+
+// ---- a poll re-reads the history it cached -------------------------------
+// The day cache and the range cache were keyed by date and span alone, so a host
+// rescan that moved a past day never reached a window already fetched: after one
+// poll the wide windows grew (their spans start at the ledger's oldest day) while
+// 近 6 个月 kept its old total. Both caches carry the history stamp they were read
+// from now, and a stamp that moved drops them.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const backfill = { inputTokens: 10000000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 1, cost: 0 }
+  const withBackfill = (totals) => {
+    const next = { ...totals }
+    for (const key of Object.keys(next)) next[key] += backfill[key] ?? 0
+    return next
+  }
+  // One past day and the all-time total move together, the way a rescan reports it.
+  const rescan = {
+    ...snapshot,
+    updatedAt: snapshot.updatedAt + 60000,
+    usage: {
+      ...snapshot.usage,
+      days: snapshot.usage.days.map((row) => (row.date === '2026-10-19' ? { ...row, totals: withBackfill(row.totals) } : row)),
+      all: snapshot.usage.all === undefined ? undefined : { ...snapshot.usage.all, totals: withBackfill(snapshot.usage.all.totals) },
+    },
+  }
+  let current = snapshot
+  let state = { snapshot: current, status: 'ready', error: null }
+  const storeListeners = new Set()
+  const localStore = {
+    // A fresh object per publish: useSyncExternalStore skips a notification whose
+    // snapshot is referentially unchanged.
+    getSnapshot: () => state,
+    subscribe: (fn) => { storeListeners.add(fn); return () => storeListeners.delete(fn) },
+  }
+  const publish = (next) => {
+    current = next
+    state = { snapshot: next, status: 'ready', error: null }
+    for (const listener of storeListeners) listener()
+  }
+  // The backfilled day answers with the new totals once the host has rescanned.
+  const bumpedDay = async (date) => {
+    const day = await loadDay(date)
+    return current === rescan && date === '2026-10-19' ? { ...day, totals: withBackfill(day.totals) } : day
+  }
+  const start = rangeCalls.length
+  const localRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => { publish(current) },
+      refresh: () => {},
+      loadDay: bumpedDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 200)) })
+  const tileOf = (label) => [...host.querySelectorAll('[data-dsh-part="range-tiles"] button')]
+    .find((button) => text(button).includes(label))
+  // Warm the day cache for yesterday before the ledger moves.
+  await act(async () => {
+    tileOf('昨日')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 200))
+  })
+  const yesterdayBefore = text(tileOf('昨日') ?? host)
+  const warm = [...new Set(rangeCalls.slice(start))]
+  const warmCounts = warm.map((key) => rangeCalls.slice(start).filter((entry) => entry === key).length)
+
+  await act(async () => {
+    publish(rescan)
+    await new Promise((r) => setTimeout(r, 300))
+  })
+  const after = rangeCalls.slice(start)
+  const reread = warm.filter((key, index) => after.filter((entry) => entry === key).length > warmCounts[index])
+  check('a poll re-reads the cached aggregates the ledger moved',
+    warm.length > 0 && reread.length === warm.length,
+    'warm=' + warm.join(' ') + ' reread=' + reread.join(' '))
+  const yesterdayAfter = text(tileOf('昨日') ?? host)
+  check('a poll re-reads a cached past day the ledger moved',
+    yesterdayAfter !== yesterdayBefore && !yesterdayAfter.includes('…'),
+    'before=' + yesterdayBefore + ' after=' + yesterdayAfter)
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- the retry budget recovers when the host comes back ------------------
+// A failed window retried five times with a capped backoff and then stopped for
+// good: the counter only reset when a load succeeded, so a panel left open
+// through a host restart sat at "—" after the host was healthy again.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  let state = { snapshot, status: 'ready', error: null }
+  const storeListeners = new Set()
+  const localStore = {
+    getSnapshot: () => state,
+    subscribe: (fn) => { storeListeners.add(fn); return () => storeListeners.delete(fn) },
+  }
+  const realSetTimeout = window.setTimeout
+  // The card waits on window.setTimeout for its backoff (10s, 20s, 40s, 60s).
+  // Firing the callback at once keeps that ladder out of the test unchanged; the
+  // test's own waits use the bare setTimeout, which is Node's.
+  window.setTimeout = (callback) => { if (typeof callback === 'function') callback(); return 0 }
+  // The dead endpoint counts its own attempts: the harness's loadRange records
+  // into rangeCalls, and this block replaces it.
+  const attempts = []
+  const deadRange = async (from, to) => {
+    attempts.push(from + ':' + to)
+    throw new Error('usage api/dsh-usage/range failed: 500')
+  }
+  const localRoot = ReactDOMClient.createRoot(host)
+  try {
+    await act(async () => {
+      localRoot.render(React.createElement(UsageSectionCard, {
+        store: localStore,
+        poll: () => {},
+        refresh: () => {},
+        loadDay,
+        loadRange: deadRange,
+        settings,
+        deviceSync,
+        close: () => {},
+      }))
+    })
+    await act(async () => { await new Promise((r) => setTimeout(r, 200)) })
+    const capped = attempts.length
+    // Another poll must not reopen a spent budget.
+    await act(async () => {
+      document.dispatchEvent(new window.Event('visibilitychange'))
+      await new Promise((r) => setTimeout(r, 200))
+    })
+    const stillCapped = attempts.length
+    check('a failing window stops retrying at its budget',
+      capped > 2 && stillCapped === capped, 'capped=' + capped + ' later=' + stillCapped)
+    // The host answers again: a snapshot that moves forward refills the budget.
+    state = { snapshot: { ...snapshot, updatedAt: snapshot.updatedAt + 60000 }, status: 'ready', error: null }
+    await act(async () => {
+      for (const listener of storeListeners) listener()
+      await new Promise((r) => setTimeout(r, 200))
+    })
+    check('a healthy snapshot resets the retry budget',
+      attempts.length > stillCapped, 'capped=' + stillCapped + ' after=' + attempts.length)
+  } finally {
+    window.setTimeout = realSetTimeout
+    await act(async () => { localRoot.unmount() })
+    host.remove()
+  }
 }
 
 // ---- a retry keeps the numbers it already has ---------------------------
@@ -1195,7 +1350,7 @@ console.log('   plans tab text:', text(container).slice(0, 200))
 
   const tabs = [...host.querySelectorAll('[role="tab"]')]
   const selected = () => tabs.find((tab) => tab.getAttribute('aria-selected') === 'true')
-  const panel = () => host.querySelector('[role="tabpanel"]')
+  const panel = () => host.querySelector('[role="tabpanel"]:not([hidden])')
   check('every tab names the panel it opens',
     tabs.length === 3 && tabs.every((tab) => tab.id !== '' && (tab.getAttribute('aria-controls') ?? '') !== ''),
     tabs.map((tab) => tab.id + '->' + tab.getAttribute('aria-controls')).join(', '))
@@ -1205,6 +1360,16 @@ console.log('   plans tab text:', text(container).slice(0, 200))
   check('only the selected tab is in the tab order',
     tabs.every((tab) => tab.getAttribute('tabindex') === (tab === selected() ? '0' : '-1')),
     tabs.map((tab) => tab.getAttribute('tabindex')).join(','))
+  // Every tab's aria-controls has to name an element that exists: the unselected
+  // panels used to be unmounted, so two of the three ids pointed at nothing and
+  // the tablist described a page that was not there.
+  const panels = [...host.querySelectorAll('[role="tabpanel"]')]
+  check('every tab controls a panel that exists',
+    panels.length === 3 && tabs.every((tab) => panels.some((node) => node.id === tab.getAttribute('aria-controls'))),
+    'panels=' + panels.length + ' ids=' + panels.map((node) => node.id).join(','))
+  check('only the open panel is shown',
+    panels.filter((node) => !node.hasAttribute('hidden')).length === 1 && panel() !== null,
+    'shown=' + panels.filter((node) => !node.hasAttribute('hidden')).length)
 
   await act(async () => {
     selected()?.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
@@ -1260,6 +1425,31 @@ console.log('   plans tab text:', text(container).slice(0, 200))
   const oldest = snapshot.usage.availableDays[0]
   check('the from-date input starts at the oldest recorded day',
     inputs[0]?.getAttribute('min') === oldest, `min=${inputs[0]?.getAttribute('min')} oldest=${oldest}`)
+  // `min` binds the calendar picker, not a typed value: the handler has to clamp
+  // what it is handed, or a window runs into days that have not happened yet and
+  // today's usage lands in them. A start *before* the ledger is deliberately kept:
+  // the picker's `min` already blocks it there, and rewriting dates the user typed
+  // would answer a different question than the one asked.
+  await act(async () => {
+    const input = host.querySelector('[data-dsh-part="custom-range"] input[type="date"]')
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+    setter?.call(input, '2099-01-01')
+    input?.dispatchEvent(new window.Event('input', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 120))
+  })
+  const clampedFrom = host.querySelector('[data-dsh-part="custom-range"] input[type="date"]')
+  check('a from-date past today is clamped to today',
+    clampedFrom?.value === snapshot.usage.today.date, `value=${clampedFrom?.value}`)
+  await act(async () => {
+    const input = host.querySelector('[data-dsh-part="custom-range"] input[type="date"]')
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+    setter?.call(input, '2026-09-01')
+    input?.dispatchEvent(new window.Event('input', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 120))
+  })
+  const earlyFrom = host.querySelector('[data-dsh-part="custom-range"] input[type="date"]')
+  check('a from-date before the ledger is kept as typed', earlyFrom?.value === '2026-09-01',
+    `value=${earlyFrom?.value}`)
 
   await act(async () => { localRoot.unmount() })
   host.remove()
@@ -1371,9 +1561,86 @@ console.log('   plans tab text:', text(container).slice(0, 200))
   check('two names in one palette slot get different colors',
     first !== 'missing' && second !== 'missing' && first !== second,
     `${pair?.[0] ?? '?'}=${first} | ${pair?.[1] ?? '?'}=${second}`)
+  // The palette is emitted as a measured color, not as one of the 17
+  // --dsw-chart-* color-mix knobs the stylesheet used to carry.
+  check('a model color is a measured color, not a css variable',
+    first !== 'missing' && second !== 'missing' && !String(first).includes('var(') && !String(second).includes('var('),
+    `${first} | ${second}`)
 
   await act(async () => { localRoot.unmount() })
   host.remove()
+}
+
+// ---- the palette is legible on both skins --------------------------------
+// The shades used to be a color-mix toward white or black: the ends of that ramp
+// measured 1.40:1 on the white card and 2.29:1 on the dark one, and two rungs of
+// one slot sat 1.36 apart in RGB — invisible as a difference. The ladder is cut
+// from measured luminance now, so the same numbers are asserted here. The palette
+// is a pure function, so the test reads it from the TypeScript source instead of
+// waiting for a bundle.
+{
+  const palette = await import(new URL('../packages/dsh-usage/src/client/model-colors.ts', import.meta.url).href)
+  const channelsOf = (hex) => {
+    const value = Number.parseInt(String(hex).slice(1), 16)
+    return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff]
+  }
+  const channel = (value) => {
+    const scaled = value / 255
+    return scaled <= 0.04045 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4
+  }
+  const luminanceOf = (rgb) => 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2])
+  const contrastOf = (a, b) => {
+    const high = Math.max(luminanceOf(a), luminanceOf(b))
+    const low = Math.min(luminanceOf(a), luminanceOf(b))
+    return (high + 0.05) / (low + 0.05)
+  }
+  const distanceOf = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])
+  const hashOf = (name) => {
+    let hash = 0x811c9dc5
+    for (let index = 0; index < name.length; index += 1) {
+      hash ^= name.charCodeAt(index)
+      hash = Math.imul(hash, 0x01000193)
+    }
+    return hash >>> 0
+  }
+  // Five names per palette slot: the ladder's rungs only meet inside one slot.
+  const slots = new Map()
+  for (let index = 0; index < 4000; index += 1) {
+    const name = 'legible-' + index + '.'
+    const slot = hashOf(name) % 16
+    const group = slots.get(slot) ?? []
+    if (group.length < 5) {
+      group.push(name)
+      slots.set(slot, group)
+    }
+  }
+  const colors = palette.assignModelColors([...slots.values()].flat())
+  const rgbOf = (name) => {
+    const color = colors.get(name)
+    return color === undefined ? [NaN, NaN, NaN] : channelsOf(color)
+  }
+  const light = channelsOf('#ffffff')
+  const dark = channelsOf('#16171a')
+  let worstLight = Infinity
+  let worstDark = Infinity
+  let closest = Infinity
+  for (const group of slots.values()) {
+    for (const name of group) {
+      worstLight = Math.min(worstLight, contrastOf(rgbOf(name), light))
+      worstDark = Math.min(worstDark, contrastOf(rgbOf(name), dark))
+    }
+    for (let a = 0; a < group.length; a += 1) {
+      for (let b = a + 1; b < group.length; b += 1) {
+        closest = Math.min(closest, distanceOf(rgbOf(group[a]), rgbOf(group[b])))
+      }
+    }
+  }
+  check('every model color clears 3:1 on the light card', worstLight >= 3, worstLight.toFixed(2))
+  check('every model color clears 3:1 on the dark card', worstDark >= 3, worstDark.toFixed(2))
+  check('the rungs of one palette slot are told apart', closest >= 16, String(closest))
+  check('the other-models color is legible on both skins',
+    contrastOf(channelsOf(palette.MODEL_COLOR_OTHER), light) >= 3 && contrastOf(channelsOf(palette.MODEL_COLOR_OTHER), dark) >= 3,
+    palette.MODEL_COLOR_OTHER)
 }
 
 const failed = report.filter((row) => !row.ok)

@@ -22,6 +22,9 @@ export const zh = {
   // A transport error carries the route and the status code; the code is the
   // only part a user can act on, so it gets a sentence of its own.
   'usage.error.status': '请求失败（HTTP {status}），请稍后再试',
+  // Anything else (an abort, a mangled body) is not something the user can read
+  // raw: the raw text stays in the tooltip.
+  'usage.error.unknown': '请求失败，请稍后再试',
   'usage.disabled': '插件已停用：勾选下方「启用插件」即可恢复统计。',
   'usage.current': '当前',
   'usage.today': '今日用量',
@@ -50,6 +53,8 @@ export const zh = {
   // A failed aggregate leaves the total unmeasured: the label states the span
   // and the failure instead of a number nothing backs.
   'usage.trend.labelFailed': '用量趋势图：{from} 至 {to}，部分日期加载失败',
+  // A window that failed whole has no bars to draw: one line says so instead.
+  'usage.trend.loadFailed': '该时间段加载失败，暂无趋势数据',
   'usage.range.title': '统计窗口',
   'usage.range.today': '今日',
   'usage.range.yesterday': '昨日',
@@ -148,6 +153,7 @@ export const en: Record<UsageKey, string> = {
   'usage.error': 'Failed to load: {error}',
   'usage.error.network': 'Network request failed. Check the connection to DSH.',
   'usage.error.status': 'Request failed (HTTP {status}). Try again in a moment.',
+  'usage.error.unknown': 'The request failed. Try again in a moment.',
   'usage.disabled': 'Plugin disabled. Tick "Enable plugin" below to resume statistics.',
   'usage.current': 'Current',
   'usage.today': 'Today',
@@ -174,6 +180,7 @@ export const en: Record<UsageKey, string> = {
   'usage.trend': 'Last 30 days',
   'usage.trend.label': 'Usage trend: {from} to {to}, {tokens} in total',
   'usage.trend.labelFailed': 'Usage trend: {from} to {to}, some days failed to load',
+  'usage.trend.loadFailed': 'This window failed to load, so there is no trend to show',
   'usage.range.title': 'Time window',
   'usage.range.today': 'Today',
   'usage.range.yesterday': 'Yesterday',

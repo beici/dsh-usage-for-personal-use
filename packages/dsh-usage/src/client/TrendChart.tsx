@@ -210,8 +210,14 @@ function tokenStack(totals: UsageTokenTotals): Array<{ value: number; className:
  * to a raw display spelling. A model outside the color table draws in the
  * neutral slate.
  */
-export function TrendChart(props: { rows: ReadonlyArray<TrendRow>; colors?: Map<string, string>; labels?: Map<string, string> }): ReactNode {
-  const { rows, colors, labels } = props
+export function TrendChart(props: {
+  rows: ReadonlyArray<TrendRow>
+  colors?: Map<string, string>
+  labels?: Map<string, string>
+  /** The window's own request failed, so the plot has no bars to draw. */
+  allFailed?: boolean
+}): ReactNode {
+  const { rows, colors, labels, allFailed } = props
   const [hovered, setHovered] = useState<number | undefined>(undefined)
   if (rows.length < 2) return null
   const buckets = buildBuckets(rows, granularityOf(rows.length))
@@ -236,6 +242,12 @@ export function TrendChart(props: { rows: ReadonlyArray<TrendRow>; colors?: Map<
   // A failed bucket makes the sum meaningless: the label states the span and the
   // failure instead of a total nothing measured.
   const anyFailed = buckets.some((bucket) => bucket.failed)
+  // A window that failed whole has nothing to chart: painting each of its buckets
+  // as a failed stripe drew a wall of full-height hatch marks — 27 of them across
+  // a six-month window — which reads as data rather than as an error. One notice
+  // stands in for the plot instead; the stripes stay for a partial failure, where
+  // they mark the gaps in an otherwise real chart.
+  const rangeFailed = allFailed === true
   const chartFrom = buckets[0].from
   const chartTo = buckets[buckets.length - 1].to
   const chartTotal = buckets.reduce((sum, bucket) => sum + totalOf(bucket.totals), 0)
@@ -263,37 +275,45 @@ export function TrendChart(props: { rows: ReadonlyArray<TrendRow>; colors?: Map<
           {GRIDLINE_FRACTIONS.map((fraction) => (
             <span key={fraction} className={styles.trendGridline} style={{ bottom: `${fraction * 100}%` }} />
           ))}
-          <div className={styles.trendBars} onMouseLeave={() => { setHovered(undefined) }}>
-            {buckets.map((bucket, index) => {
-              const stack: Array<{ height: number; color?: string; className?: string }> = modelMode
-                ? stackHeights(order.map((model) => totalOf(bucket.models.get(model) ?? emptyTotals())), axisMax)
-                    .map((height, at) => ({ height, color: colorOf(order[at]) }))
-                : (() => {
-                    const tokens = tokenStack(bucket.totals)
-                    return stackHeights(tokens.map((segment) => segment.value), axisMax)
-                      .map((height, at) => ({ height, className: tokens[at].className }))
-                  })()
-              const segments = stack.filter((segment) => segment.height > 0)
-              return (
-                <div
-                  key={bucket.from}
-                  className={styles.trendBar}
-                  data-dsh-part="trend-bar"
-                  data-recorded={bucket.recorded ? 'true' : 'false'}
-                  data-failed={bucket.failed ? 'true' : 'false'}
-                  onMouseEnter={() => { setHovered(index) }}
-                >
-                  {segments.map((segment, at) => (
-                    <span
-                      key={at}
-                      className={segment.className === undefined ? styles.trendSeg : `${styles.trendSeg} ${segment.className}`}
-                      style={segment.color === undefined ? { height: `${segment.height}%` } : { height: `${segment.height}%`, background: segment.color }}
-                    />
-                  ))}
-                </div>
-              )
-            })}
-          </div>
+          {rangeFailed
+            ? (
+              <div className={styles.trendFailed} data-dsh-part="trend-failed">
+                <span className={styles.errorLine}>{t('usage.trend.loadFailed')}</span>
+              </div>
+            )
+            : (
+              <div className={styles.trendBars} onMouseLeave={() => { setHovered(undefined) }}>
+                {buckets.map((bucket, index) => {
+                  const stack: Array<{ height: number; color?: string; className?: string }> = modelMode
+                    ? stackHeights(order.map((model) => totalOf(bucket.models.get(model) ?? emptyTotals())), axisMax)
+                        .map((height, at) => ({ height, color: colorOf(order[at]) }))
+                    : (() => {
+                        const tokens = tokenStack(bucket.totals)
+                        return stackHeights(tokens.map((segment) => segment.value), axisMax)
+                          .map((height, at) => ({ height, className: tokens[at].className }))
+                      })()
+                  const segments = stack.filter((segment) => segment.height > 0)
+                  return (
+                    <div
+                      key={bucket.from}
+                      className={styles.trendBar}
+                      data-dsh-part="trend-bar"
+                      data-recorded={bucket.recorded ? 'true' : 'false'}
+                      data-failed={bucket.failed ? 'true' : 'false'}
+                      onMouseEnter={() => { setHovered(index) }}
+                    >
+                      {segments.map((segment, at) => (
+                        <span
+                          key={at}
+                          className={segment.className === undefined ? styles.trendSeg : `${styles.trendSeg} ${segment.className}`}
+                          style={segment.color === undefined ? { height: `${segment.height}%` } : { height: `${segment.height}%`, background: segment.color }}
+                        />
+                      ))}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           {hoveredBucket !== undefined && (
             <div
               className={styles.trendTooltip}

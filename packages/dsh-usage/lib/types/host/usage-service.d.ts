@@ -79,7 +79,9 @@ export declare class UsageService {
      * The smallest retention this process has seen applied.
      *
      * A lower setting than this means the user shrank the window on purpose, which
-     * the "clock jumped" guard in `pruneForWrite` must not veto.
+     * the "clock jumped" guard in `pruneForWrite` must not veto. Seeded from the
+     * retention the file itself records, so a setting changed while the app was
+     * closed is still recognised as a shrink instead of looking like a jump.
      */
     private retentionSeen;
     /**
@@ -89,6 +91,12 @@ export declare class UsageService {
      * name: a rename must not make this machine look like a second device.
      */
     private machine;
+    /**
+     * Ids this profile used before the current pin: a re-minted pin leaves files
+     * stamped with an older id, and those are this machine's own history, not a
+     * second device. Folded in (max merge) instead of summed.
+     */
+    private readonly machineAliases;
     /**
      * The deduped replay of this boot, kept so a flush that must not max-merge
      * (a file another process repaired) can still add the buckets only the replay
@@ -277,6 +285,22 @@ export declare class UsageService {
     private note;
     /** Drop a note whose condition no longer holds. */
     private clearNote;
+    /** Drop every note whose kind starts with `prefix` (peer notes, per scan). */
+    private clearNotesWithPrefix;
+    /**
+     * Whether a machine id taken from a file names this machine.
+     *
+     * Three cases count: the live pin, an id this profile used before (a lost
+     * `machine-id.json` mints a new one while older files keep the old stamp), and
+     * the derived digest that builds before the pin stamped into their files. All
+     * three hold this machine's own history; summing any of them as a second device
+     * would count those calls twice. Two machines whose host name, user and
+     * platform are identical share a digest — that undercounts, which is the lesser
+     * evil compared with a permanently doubled history.
+     */
+    private sameMachine;
+    /** Remember an id this profile has written under, so its old files fold in. */
+    private rememberMachine;
     /** The notes as one line, oldest first, capped so the panel stays readable. */
     private ledgerNoteText;
     /** Retry a ledger read that failed for a transient reason (lock, sharing). */
@@ -393,6 +417,17 @@ export declare class UsageService {
      */
     private flushLedger;
     private writeLedgerOnce;
+    /**
+     * Run `work` while holding the ledger lock file.
+     *
+     * The lock is advisory and best effort by design: a stale lock (a crashed
+     * process) must not block writing forever, so it is broken after
+     * `LOCK_STALE_MS`, and a run that cannot take it proceeds anyway — losing one
+     * interleaved write is recoverable on the next replay, while refusing to write
+     * at all loses every call made after it.
+     */
+    private withLedgerLock;
+    private writeLedgerLocked;
     /** This process's ledger as a file document: the identity travels with it. */
     private ledgerFileDocument;
     /**

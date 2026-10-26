@@ -41,4 +41,6 @@ export declare function TrendChart(props: {
     rows: ReadonlyArray<TrendRow>;
     colors?: Map<string, string>;
     labels?: Map<string, string>;
+    /** The window's own request failed, so the plot has no bars to draw. */
+    allFailed?: boolean;
 }): ReactNode;
