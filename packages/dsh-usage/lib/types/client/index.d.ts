@@ -10,6 +10,7 @@
 import type { Context as ClientContext } from '@deepseek-ai/cordis';
 import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client';
 import { type UsageSettings } from './UsageSectionCard.tsx';
+import { type ShortcutsServiceFace } from './foot-card-mount.tsx';
 /** Required services. */
 export declare const inject: string[];
 export type { UsageSectionProps, UsageSectionFace } from './UsageSectionCard.tsx';
@@ -37,6 +38,12 @@ declare module '@deepseek-ai/cordis' {
         webUiSettings?: {
             bind<S>(spec: UsageSettingsBindSpec<S>): ConfigForm<S>;
         };
+        /**
+         * Optional shell keyboard command service provided by dsh-client-shortcuts
+         * (ships no client types); absent when that plugin is not installed, so the
+         * foot card falls back to its visible account-menu path.
+         */
+        shortcuts?: ShortcutsServiceFace;
     }
 }
 /**

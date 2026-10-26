@@ -254,6 +254,26 @@ export interface UsageLedgerExport {
 }
 
 /**
+ * One window-aggregate query answered from the merged ledger: the summary the
+ * breakdown card renders, plus the per-day series the trend chart buckets.
+ * `series` lists every recorded day in `[from, to]` ascending — days the
+ * ledger pruned or never recorded are absent, and the chart renders those as
+ * empty slots rather than pretending they were zero-cost. Each row carries
+ * the day's per-model split (aggregated across providers) when the serving
+ * host computes it, so the chart can stack by model; optional so an older
+ * host document still renders (the chart then falls back to token-type
+ * stacking).
+ */
+export interface UsageRangeResponse {
+  ok: true
+  from: string
+  to: string
+  totals: UsageTokenTotals
+  providers: UsageProviderSummary[]
+  series: Array<{ date: string; totals: UsageTokenTotals; models?: Record<string, UsageTokenTotals> }>
+}
+
+/**
  * Host-side snapshot state: the wire view plus one error slot per probed
  * fact. A probe half only clears its own slot, so a plan success can no
  * longer mask a failing balance probe (and vice versa); the overview

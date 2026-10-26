@@ -2073,6 +2073,51 @@ var UsageService = class {
 	day(dateKey) {
 		return this.daySummary(dateKey);
 	}
+	/**
+	* One window aggregated per provider and model, plus the per-day series the
+	* trend chart buckets. Reads the merged ledger (local + imported peers), so
+	* a single request answers a window that would otherwise cost one small
+	* fetch per recorded day — the shape that makes multi-month windows viable.
+	* Each series row also carries the day's per-model split aggregated across
+	* providers, so the browser can stack the trend bars by model without one
+	* day fetch per recorded day.
+	* @param from - local date key `YYYY-MM-DD`, inclusive.
+	* @param to - local date key `YYYY-MM-DD`, inclusive.
+	*/
+	range(from, to) {
+		const merged = this.mergedLedger();
+		const keys = ledgerDayKeys(merged).filter((date) => date >= from && date <= to);
+		const { totals, providers } = summarizeDays(keys.map((key) => merged.days[key] ?? {}));
+		return {
+			from,
+			to,
+			totals,
+			providers,
+			series: keys.map((date) => {
+				const day = this.daySummaryIn(merged, date);
+				const models = {};
+				for (const row of day.providers) for (const model of row.models) {
+					const bucket = models[model.model] ?? emptyTotals();
+					addTotals(bucket, model.totals);
+					models[model.model] = bucket;
+				}
+				return {
+					date,
+					totals: day.totals,
+					models
+				};
+			})
+		};
+	}
+	/** One day of the merged ledger aggregated per provider. */
+	daySummaryIn(doc, dateKey) {
+		const { totals, providers } = summarizeDays([doc.days[dateKey] ?? {}]);
+		return {
+			date: dateKey,
+			totals,
+			providers
+		};
+	}
 	/** One local day aggregated per provider. */
 	daySummary(dateKey) {
 		const { totals, providers } = summarizeDays([this.mergedLedger().days[dateKey] ?? {}]);
@@ -2720,6 +2765,48 @@ function makeUsageDayRoute(ctx, service) {
 	};
 }
 /**
+* One window-aggregate route: `GET /api/dsh-usage/range?from=YYYY-MM-DD&to=YYYY-MM-DD`
+* answers the whole-window summary (per-provider, per-model breakdown) plus the
+* per-day series the trend chart buckets, in ONE request. This is what makes
+* the multi-month and multi-year windows viable — the per-day fetch path that
+* the short windows use would cost one request per recorded day, which for a
+* year-long window means hundreds of loopback round trips.
+* Same trust fence as the overview route; a malformed or inverted range is
+* refused with 400 rather than folded into a bogus span.
+* @param ctx - host context; may expose remoteWebUiPairing.
+* @param service - the usage service.
+* @returns the route.
+*/
+function makeUsageRangeRoute(ctx, service) {
+	return {
+		kind: "exact",
+		path: "/api/dsh-usage/range",
+		handler: (req, res) => {
+			if (!isUsageAllowed(ctx, req)) {
+				writeJson(res, 403, {
+					ok: false,
+					error: "forbidden: loopback-only"
+				});
+				return;
+			}
+			const query = new URL(req.url ?? "/", "http://127.0.0.1").searchParams;
+			const from = query.get("from") ?? "";
+			const to = query.get("to") ?? "";
+			if (!isLedgerDateKey(from) || !isLedgerDateKey(to) || from > to) {
+				writeJson(res, 400, {
+					ok: false,
+					error: "from and to must be YYYY-MM-DD dates with from <= to"
+				});
+				return;
+			}
+			writeJson(res, 200, {
+				ok: true,
+				...service.range(from, to)
+			}, { "cache-control": "no-store" });
+		}
+	};
+}
+/**
 * Manual refresh: forces one probe cycle now and answers with the fresh
 * overview. Same trust fence as the overview route.
 * @param ctx - host context; may expose remoteWebUiPairing.
@@ -2967,6 +3054,7 @@ const apply = mountOnce("@linxin666/dsh-usage", (ctx, config) => {
 			makeUsageOverviewRoute(ctx, next),
 			makeUsageDayRoute(ctx, next),
 			makeUsageRefreshRoute(ctx, next),
+			makeUsageRangeRoute(ctx, next),
 			makeUsageExportRoute(ctx, next),
 			makeUsageImportRoute(ctx, next)
 		].map((route) => ctx.webServer.register(route));

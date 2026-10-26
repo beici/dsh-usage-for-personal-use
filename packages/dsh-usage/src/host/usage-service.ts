@@ -23,7 +23,7 @@ import { createLedgerDocument, deserializeLedger, foldUsage, ledgerDayKeys, loca
 import { deviceIdOfFile, isDeviceId, LEGACY_LEDGER_FILE, ledgerFileName, localDeviceId, parsePeerLedger } from './device-ledger.ts'
 import type { LoadedLedgerFile } from './device-ledger.ts'
 import { collectSessionLogUsage } from './session-log-backfill.ts'
-import type { BalanceView, CredentialKind, DeviceLedgerEntryView, ObservedSpendView, PlanView, ProviderSnapshotState, ProviderSnapshotView, UsageDayView, UsageLedgerDocument, UsageLedgerExport, UsageOverviewView, UsageTokenTotals } from '../core/types.ts'
+import type { BalanceView, CredentialKind, DeviceLedgerEntryView, ObservedSpendView, PlanView, ProviderSnapshotState, ProviderSnapshotView, UsageDayView, UsageLedgerDocument, UsageLedgerExport, UsageOverviewView, UsageRangeResponse, UsageTokenTotals } from '../core/types.ts'
 import { addTotals, emptyTotals } from '../core/types.ts'
 
 /**
@@ -541,6 +541,43 @@ export class UsageService {
    */
   day(dateKey: string): UsageDayView {
     return this.daySummary(dateKey)
+  }
+
+  /**
+   * One window aggregated per provider and model, plus the per-day series the
+   * trend chart buckets. Reads the merged ledger (local + imported peers), so
+   * a single request answers a window that would otherwise cost one small
+   * fetch per recorded day — the shape that makes multi-month windows viable.
+   * Each series row also carries the day's per-model split aggregated across
+   * providers, so the browser can stack the trend bars by model without one
+   * day fetch per recorded day.
+   * @param from - local date key `YYYY-MM-DD`, inclusive.
+   * @param to - local date key `YYYY-MM-DD`, inclusive.
+   */
+  range(from: string, to: string): Omit<UsageRangeResponse, 'ok'> {
+    const merged = this.mergedLedger()
+    const keys = ledgerDayKeys(merged).filter((date) => date >= from && date <= to)
+    const { totals, providers } = summarizeDays(keys.map((key) => merged.days[key] ?? {}))
+    const series = keys.map((date) => {
+      const day = this.daySummaryIn(merged, date)
+      const models: Record<string, UsageTokenTotals> = {}
+      for (const row of day.providers) {
+        for (const model of row.models) {
+          const bucket = models[model.model] ?? emptyTotals()
+          addTotals(bucket, model.totals)
+          models[model.model] = bucket
+        }
+      }
+      return { date, totals: day.totals, models }
+    })
+    return { from, to, totals, providers, series }
+  }
+
+  /** One day of the merged ledger aggregated per provider. */
+  private daySummaryIn(doc: UsageLedgerDocument, dateKey: string): UsageDayView {
+    const day = doc.days[dateKey] ?? {}
+    const { totals, providers } = summarizeDays([day])
+    return { date: dateKey, totals, providers }
   }
 
   /** One local day aggregated per provider. */

@@ -38,13 +38,16 @@ export declare const zh: {
     'usage.tokens.input': string;
     'usage.tokens.output': string;
     'usage.tokens.cacheRead': string;
-    'usage.tokens.cacheWrite': string;
+    'usage.tokens.cacheHit': string;
     'usage.trend': string;
     'usage.range.title': string;
     'usage.range.today': string;
     'usage.range.yesterday': string;
     'usage.range.last7': string;
     'usage.range.last30': string;
+    'usage.range.last3': string;
+    'usage.range.last180': string;
+    'usage.range.all': string;
     'usage.range.custom': string;
     'usage.range.customFrom': string;
     'usage.range.customTo': string;
@@ -55,6 +58,7 @@ export declare const zh: {
     'usage.range.channels': string;
     'usage.range.cost': string;
     'usage.range.empty': string;
+    'usage.range.noRecord': string;
     'usage.range.loading': string;
     'usage.range.error': string;
     'usage.noData': string;

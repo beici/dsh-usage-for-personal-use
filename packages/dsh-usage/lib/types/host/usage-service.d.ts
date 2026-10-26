@@ -7,7 +7,7 @@
  * @module @linxin666/dsh-usage/host/usage-service
  */
 import type { Context } from '@deepseek-ai/cordis';
-import type { DeviceLedgerEntryView, UsageDayView, UsageLedgerExport, UsageOverviewView } from '../core/types.ts';
+import type { DeviceLedgerEntryView, UsageDayView, UsageLedgerExport, UsageOverviewView, UsageRangeResponse } from '../core/types.ts';
 /**
  * Persisted accrual state for the official DeepSeek family's real spend:
  * consecutive observations of the official CNY balance, decreases counted
@@ -145,6 +145,20 @@ export declare class UsageService {
      * panel. The route gates the key's shape before it gets here.
      */
     day(dateKey: string): UsageDayView;
+    /**
+     * One window aggregated per provider and model, plus the per-day series the
+     * trend chart buckets. Reads the merged ledger (local + imported peers), so
+     * a single request answers a window that would otherwise cost one small
+     * fetch per recorded day — the shape that makes multi-month windows viable.
+     * Each series row also carries the day's per-model split aggregated across
+     * providers, so the browser can stack the trend bars by model without one
+     * day fetch per recorded day.
+     * @param from - local date key `YYYY-MM-DD`, inclusive.
+     * @param to - local date key `YYYY-MM-DD`, inclusive.
+     */
+    range(from: string, to: string): Omit<UsageRangeResponse, 'ok'>;
+    /** One day of the merged ledger aggregated per provider. */
+    private daySummaryIn;
     /** One local day aggregated per provider. */
     private daySummary;
     /**

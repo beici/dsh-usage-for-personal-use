@@ -1,10 +1,10 @@
-import type { Context } from '@deepseek-ai/cordis'
+﻿import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 import { mountOnce } from './mount-once.ts'
 import { UsageService, type UsageServiceOptions } from './host/usage-service.ts'
-import { makeUsageDayRoute, makeUsageExportRoute, makeUsageImportRoute, makeUsageOverviewRoute, makeUsageRefreshRoute } from './host/routes.ts'
+import { makeUsageDayRoute, makeUsageExportRoute, makeUsageImportRoute, makeUsageOverviewRoute, makeUsageRangeRoute, makeUsageRefreshRoute } from './host/routes.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Events {
@@ -132,6 +132,7 @@ export const apply = mountOnce('@linxin666/dsh-usage', (ctx: Context, config?: U
       makeUsageOverviewRoute(ctx, next),
       makeUsageDayRoute(ctx, next),
       makeUsageRefreshRoute(ctx, next),
+      makeUsageRangeRoute(ctx, next),
       makeUsageExportRoute(ctx, next),
       makeUsageImportRoute(ctx, next),
     ]

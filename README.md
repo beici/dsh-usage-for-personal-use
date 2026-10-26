@@ -149,13 +149,16 @@ Upstream baseline and patch inventory: [`docs/upstream-and-local-patches.md`](do
 
 ## Current artifact hashes
 
-This workspace build, after merging upstream 0.4.8 (verified 2026-10-20):
+This workspace build, with the 8-window statistics strip, the cache-hit cell,
+the TrendChart, share-proportional channel bars, uniform sub-bar tracks, the
+channel-scale model sub-bars, the heavier channel headers and the
+registry-invoked settings opener (verified 2026-10-26):
 
 | File | Size | MD5 |
 | --- | --- | --- |
-| `lib/client.js` | 450,874 B | `5b4af24ec632d3637590dd340eda4e21` |
-| `lib/client.js.map` | 554,260 B | `94628b6db1b419b8d74446cd43ea5242` |
-| `lib/index.js` | 108,672 B | `1d68e04b3c5781bb9738f389f9577720` |
+| `lib/client.js` | 481,720 B | `8d75aa5e96692cf89bef548d161305fb` |
+| `lib/client.js.map` | 605,803 B | `d7e5dc9bbf589f2c8131a896009763e1` |
+| `lib/index.js` | 111,688 B | `8ff29bd29b0db52395b0e6458b2f6d87` |
 
 `lib/client.js.map` embeds the sources verbatim, so it is only reproducible when
 the source files use LF endings (`.gitattributes` enforces `eol=lf` in the

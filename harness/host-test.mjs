@@ -109,9 +109,12 @@ async function writeTranscript(home, lines) {
   await svc.loadPersisted()
   check('starts with one local file', (await readdir(join(home, 'dsh-usage'))).length === 0, 'no file before a fold')
 
-  const { createLedgerDocument, foldUsage } = await load('core/ledger.ts')
+  // The overview's `today` follows the wall clock, so this section folds into
+  // the real today key — a fixed date went stale the day after it was written.
+  const { createLedgerDocument, foldUsage, localDateKey } = await load('core/ledger.ts')
+  const todayKey = localDateKey(Date.now())
   svc.ledger = createLedgerDocument()
-  foldUsage(svc.ledger, new Date('2026-10-20T12:00:00').getTime(), 'buddy', 'm1', { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 2, cost: 0 })
+  foldUsage(svc.ledger, new Date(todayKey + 'T12:00:00').getTime(), 'buddy', 'm1', { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 2, cost: 0 })
   await svc.flushLedger()
   check('flush writes only this device file', JSON.stringify((await readdir(join(home, 'dsh-usage'))).sort()) === JSON.stringify([`usage-ledger.${svc.device}.json`]), (await readdir(join(home, 'dsh-usage'))).join(','))
 
@@ -124,7 +127,7 @@ async function writeTranscript(home, lines) {
     version: 1,
     deviceId: 'laptop-4f7b21',
     exportedAt: new Date().toISOString(),
-    ledger: { version: 1, days: { '2026-10-20': { buddy: { m1: { inputTokens: 500, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 1, cost: 0 } } } } },
+    ledger: { version: 1, days: { [todayKey]: { buddy: { m1: { inputTokens: 500, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 1, cost: 0 } } } } },
   }
   check('import installs the peer file', (await svc.importPeer(JSON.stringify(peer))).deviceId === 'laptop-4f7b21')
   check('peer file named by its device id', (await readdir(join(home, 'dsh-usage'))).includes('usage-ledger.laptop-4f7b21.json'))
@@ -139,11 +142,11 @@ async function writeTranscript(home, lines) {
   check('re-import is idempotent', again.calls === 3 && again.inputTokens === 1500, `calls=${again.calls} input=${again.inputTokens}`)
 
   // The local ledger itself must never absorb peer numbers.
-  check('local ledger untouched by peers', svc.ledger.days['2026-10-20'].buddy.m1.calls === 2, String(svc.ledger.days['2026-10-20'].buddy.m1.calls))
+  check('local ledger untouched by peers', svc.ledger.days[todayKey].buddy.m1.calls === 2, String(svc.ledger.days[todayKey].buddy.m1.calls))
   // ... and flushing after an import must not write the peer's numbers into it.
   await svc.flushLedger()
   const persisted = JSON.parse(await readFile(join(home, 'dsh-usage', `usage-ledger.${svc.device}.json`), 'utf8'))
-  check('flush never persists merged totals', persisted.days['2026-10-20'].buddy.m1.calls === 2, String(persisted.days['2026-10-20'].buddy.m1.calls))
+  check('flush never persists merged totals', persisted.days[todayKey].buddy.m1.calls === 2, String(persisted.days[todayKey].buddy.m1.calls))
 
   // Self-import is a mistake worth naming, not a silent no-op.
   try {
@@ -238,6 +241,49 @@ async function writeTranscript(home, lines) {
   await second.loadPersisted()
   const again = second.overview().usage.days.find((d) => d.date === '2026-10-17')
   check('backfill is idempotent across restarts', again?.totals.calls === 1, String(again?.totals.calls))
+}
+
+// ---- range aggregate (the multi-month windows' one-request path) --------
+{
+  const home = await freshHome()
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const { createLedgerDocument, foldUsage } = await load('core/ledger.ts')
+  svc.ledger = createLedgerDocument()
+  const bucket = (input, output, calls) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const at = (day) => new Date(day + 'T12:00:00').getTime()
+  foldUsage(svc.ledger, at('2026-10-18'), 'workbuddy', 'm2', bucket(700, 10, 1))
+  foldUsage(svc.ledger, at('2026-10-19'), 'buddy', 'm1', bucket(1000, 100, 2))
+  foldUsage(svc.ledger, at('2026-10-20'), 'buddy', 'm1', bucket(500, 50, 3))
+
+  const window = svc.range('2026-10-19', '2026-10-20')
+  check('range aggregates the window totals', window.totals.calls === 5 && window.totals.inputTokens === 1500 && window.totals.outputTokens === 150, JSON.stringify(window.totals))
+  check('range series lists the recorded days', JSON.stringify(window.series.map((row) => row.date)) === JSON.stringify(['2026-10-19', '2026-10-20']), JSON.stringify(window.series.map((r) => r.date)))
+  check('range series rows carry per-day totals', window.series[0].totals.calls === 2 && window.series[1].totals.calls === 3)
+  check('range series rows carry the per-model split', window.series[0].models?.m1?.calls === 2 && window.series[1].models?.m1?.calls === 3, JSON.stringify(window.series.map((r) => r.models)))
+  check('range providers break down per channel', window.providers.length === 1 && window.providers[0].provider === 'buddy', JSON.stringify(window.providers.map((p) => p.provider)))
+  const whole = svc.range('2026-10-01', '2026-10-31')
+  check('wider range adds the 10-18 day', whole.totals.calls === 6 && whole.providers.length === 2, `calls=${whole.totals.calls} providers=${whole.providers.length}`)
+  const outside = svc.range('2026-11-01', '2026-11-30')
+  check('range outside the ledger reads empty', outside.totals.calls === 0 && outside.series.length === 0 && outside.providers.length === 0)
+
+  // The route wraps the same aggregate: shape-checked bounds, the same
+  // loopback fence as the overview.
+  const { makeUsageRangeRoute } = await load('host/routes.ts')
+  const route = makeUsageRangeRoute(ctxStub, svc)
+  const call = async (url, headers = {}) => {
+    const req = { url, socket: { remoteAddress: '127.0.0.1' }, headers: { host: '127.0.0.1:9367', ...headers } }
+    const captured = { status: 0, body: '' }
+    await route.handler(req, { writeHead: (status) => { captured.status = status }, end: (payload) => { captured.body = String(payload) } })
+    return { status: captured.status, body: JSON.parse(captured.body) }
+  }
+  const ok = await call('/api/dsh-usage/range?from=2026-10-19&to=2026-10-20')
+  check('route answers the window aggregate', ok.status === 200 && ok.body.ok === true && ok.body.totals.calls === 5 && ok.body.series.length === 2, JSON.stringify(ok.body).slice(0, 200))
+  check('route refuses an inverted range', (await call('/api/dsh-usage/range?from=2026-10-20&to=2026-10-19')).status === 400)
+  check('route refuses a malformed date', (await call('/api/dsh-usage/range?from=not-a-date&to=2026-10-20')).status === 400)
+  check('route refuses a missing bound', (await call('/api/dsh-usage/range?to=2026-10-20')).status === 400)
+  check('route keeps the loopback fence', (await call('/api/dsh-usage/range?from=2026-10-19&to=2026-10-20', { 'x-forwarded-for': '203.0.113.7' })).status === 403)
 }
 
 // ---- the loopback fence (upstream 0.4.8 security fix) -------------------

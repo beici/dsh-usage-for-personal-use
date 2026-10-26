@@ -78,13 +78,16 @@ window.__ModuleLoader__.load({
 			"usage.tokens.input": "输入",
 			"usage.tokens.output": "输出",
 			"usage.tokens.cacheRead": "缓存读",
-			"usage.tokens.cacheWrite": "缓存写",
+			"usage.tokens.cacheHit": "缓存命中",
 			"usage.trend": "近 30 天",
 			"usage.range.title": "统计窗口",
 			"usage.range.today": "今日",
 			"usage.range.yesterday": "昨日",
 			"usage.range.last7": "近 7 天",
 			"usage.range.last30": "近 30 天",
+			"usage.range.last3": "近 3 天",
+			"usage.range.last180": "近 6 个月",
+			"usage.range.all": "全部",
 			"usage.range.custom": "自定义",
 			"usage.range.customFrom": "开始",
 			"usage.range.customTo": "结束",
@@ -95,6 +98,7 @@ window.__ModuleLoader__.load({
 			"usage.range.channels": "各渠道 / 各模型",
 			"usage.range.cost": "消费（估算）",
 			"usage.range.empty": "该时间范围内没有用量记录",
+			"usage.range.noRecord": "无记录",
 			"usage.range.loading": "正在加载该时间范围的用量…",
 			"usage.range.error": "部分日期加载失败：{error}",
 			"usage.noData": "暂无用量数据（统计自插件启用起）",
@@ -182,13 +186,16 @@ window.__ModuleLoader__.load({
 			"usage.tokens.input": "Input",
 			"usage.tokens.output": "Output",
 			"usage.tokens.cacheRead": "Cache read",
-			"usage.tokens.cacheWrite": "Cache write",
+			"usage.tokens.cacheHit": "Cache hit",
 			"usage.trend": "Last 30 days",
 			"usage.range.title": "Time window",
 			"usage.range.today": "Today",
 			"usage.range.yesterday": "Yesterday",
 			"usage.range.last7": "Last 7 days",
 			"usage.range.last30": "Last 30 days",
+			"usage.range.last3": "Last 3 days",
+			"usage.range.last180": "Last 6 months",
+			"usage.range.all": "All",
 			"usage.range.custom": "Custom",
 			"usage.range.customFrom": "From",
 			"usage.range.customTo": "To",
@@ -199,6 +206,7 @@ window.__ModuleLoader__.load({
 			"usage.range.channels": "By channel and model",
 			"usage.range.cost": "Spend (estimated)",
 			"usage.range.empty": "No usage recorded in this window",
+			"usage.range.noRecord": "No usage recorded",
 			"usage.range.loading": "Loading this window…",
 			"usage.range.error": "Some days failed to load: {error}",
 			"usage.noData": "No usage data yet (counting starts when the plugin is enabled)",
@@ -269,7 +277,7 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 		//#region \0dsh-css:packages/dsh-usage/src/client/usage.module.css.mjs
-		const css = ".cvtkAW_section{color:inherit;flex-direction:column;gap:16px;display:flex}.cvtkAW_header{justify-content:space-between;align-items:center;gap:12px;display:flex}.cvtkAW_currentProvider{opacity:.75;font-size:13px}.cvtkAW_refreshBtn{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.85;background:0 0;border:1px solid;border-radius:8px;padding:4px 12px;font-size:12px;transition:opacity .12s,background-color .12s}.cvtkAW_refreshBtn:hover:not(:disabled){opacity:1;background:color-mix(in srgb, currentColor 8%, transparent)}.cvtkAW_refreshBtn:disabled{cursor:default;opacity:.5}.cvtkAW_refreshBtn:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabs{border-bottom:1px solid color-mix(in srgb, currentColor 14%, transparent);gap:4px;display:flex}.cvtkAW_tab{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.65;background:0 0;border:none;border-bottom:2px solid #0000;margin-bottom:-1px;padding:6px 14px;font-size:13px}.cvtkAW_tab:hover{opacity:.9}.cvtkAW_tab:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabActive{opacity:1;border-bottom-color:currentColor;font-weight:600}.cvtkAW_card{border:1px solid color-mix(in srgb, currentColor 14%, transparent);border-radius:12px;flex-direction:column;gap:10px;padding:14px 16px;display:flex}.cvtkAW_cardTitle{letter-spacing:.04em;text-transform:uppercase;opacity:.6;font-size:12px;font-weight:600}.cvtkAW_dayPicker{align-items:center;gap:8px;display:flex}.cvtkAW_dayPickerLabel{opacity:.6;font-size:11px}.cvtkAW_daySelect{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_daySelect:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_daySelect option,.cvtkAW_settingItem select option{background-color:var(--dsw-alias-bg-multi-select,Canvas);color:var(--dsw-alias-label-primary,CanvasText)}.cvtkAW_statRow{flex-wrap:wrap;gap:18px;display:flex}.cvtkAW_stat{flex-direction:column;gap:2px;display:flex}.cvtkAW_statValue{font-variant-numeric:tabular-nums;font-size:18px;font-weight:600}.cvtkAW_statLabel{opacity:.6;font-size:11px}.cvtkAW_providerRow{border-top:1px solid color-mix(in srgb, currentColor 8%, transparent);flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;font-size:13px;display:flex}.cvtkAW_providerRow:first-of-type{border-top:none}.cvtkAW_providerName{align-items:center;gap:8px;min-width:0;display:flex}.cvtkAW_providerTokens{font-variant-numeric:tabular-nums;opacity:.75;white-space:nowrap}.cvtkAW_providerBalance{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}.cvtkAW_currentBadge{border:1px solid color-mix(in srgb, currentColor 35%, transparent);opacity:.8;border-radius:999px;flex:none;padding:1px 7px;font-size:10px;font-weight:600}.cvtkAW_chart{flex-direction:column;gap:12px;display:flex}.cvtkAW_chartProvider{flex-direction:column;gap:4px;display:flex}.cvtkAW_chartHead{justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;display:flex}.cvtkAW_chartTokens{font-variant-numeric:tabular-nums;opacity:.65;white-space:nowrap;font-size:11px}.cvtkAW_chartBar{background:color-mix(in srgb, currentColor 8%, transparent);border-radius:999px;height:8px;display:block;overflow:hidden}.cvtkAW_chartFill{background:color-mix(in srgb, currentColor 55%, transparent);border-radius:999px;height:100%;transition:width .3s;display:block}.cvtkAW_chartModel{opacity:.8;grid-template-columns:minmax(80px,180px) 1fr auto;align-items:center;gap:8px;padding-left:14px;font-size:11px;display:grid}.cvtkAW_chartModelName{text-overflow:ellipsis;white-space:nowrap;opacity:.8;overflow:hidden}.cvtkAW_chartModelBar{background:color-mix(in srgb, currentColor 6%, transparent);border-radius:999px;height:4px;display:block;overflow:hidden}.cvtkAW_chartModelFill{background:color-mix(in srgb, currentColor 35%, transparent);border-radius:999px;height:100%;transition:width .3s;display:block}.cvtkAW_trendAxis{opacity:.5;font-variant-numeric:tabular-nums;justify-content:space-between;font-size:10px;display:flex}.cvtkAW_rangeGrid{grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:8px;display:grid}.cvtkAW_rangeTile{appearance:none;border:1px solid color-mix(in srgb, currentColor 14%, transparent);color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border-radius:10px;flex-direction:column;gap:2px;padding:8px 10px;transition:background-color .12s,border-color .12s;display:flex}.cvtkAW_rangeTile:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_rangeTile:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_rangeTileActive{border-color:color-mix(in srgb, currentColor 45%, transparent);background:color-mix(in srgb, currentColor 9%, transparent)}.cvtkAW_rangeTileLabel{opacity:.65;font-size:11px}.cvtkAW_rangeTileValue{font-variant-numeric:tabular-nums;font-size:16px;font-weight:600}.cvtkAW_rangeTileMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_rangeControls{flex-wrap:wrap;align-items:center;gap:12px;display:flex}.cvtkAW_dateInput{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_dateInput:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_windowHead{flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_spanLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_dailyWrap{flex-direction:column;gap:4px;display:flex}.cvtkAW_dailyChart{border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);align-items:flex-end;gap:2px;height:72px;padding:2px 0;display:flex}.cvtkAW_dailyBar{flex:1 1 0;align-items:flex-end;min-width:2px;height:100%;display:flex}.cvtkAW_dailyFill{background:color-mix(in srgb, currentColor 45%, transparent);border-radius:2px 2px 0 0;width:100%;transition:height .3s;display:block}.cvtkAW_dailyBar:hover .cvtkAW_dailyFill{background:color-mix(in srgb, currentColor 70%, transparent)}.cvtkAW_dailyLabels{opacity:.5;font-variant-numeric:tabular-nums;justify-content:space-between;font-size:10px;display:flex}.cvtkAW_modelRows{flex-direction:column;gap:3px;display:flex}.cvtkAW_muted{opacity:.6;font-size:12px}.cvtkAW_voucherPreview canvas{border-radius:8px;width:100%;height:auto;display:block}.cvtkAW_buttonRow{gap:8px;display:flex}.cvtkAW_errorLine{opacity:.75;font-size:12px}.cvtkAW_planCard{flex-direction:column;gap:8px;display:flex}.cvtkAW_planHead{justify-content:space-between;align-items:baseline;gap:10px;display:flex}.cvtkAW_planName{font-size:14px;font-weight:600}.cvtkAW_windowRow{flex-direction:column;gap:4px;display:flex}.cvtkAW_windowLabel{opacity:.8;font-variant-numeric:tabular-nums;justify-content:space-between;font-size:12px;display:flex}.cvtkAW_bar{background:color-mix(in srgb, currentColor 10%, transparent);border-radius:999px;height:6px;overflow:hidden}.cvtkAW_barFill{background:color-mix(in srgb, currentColor 55%, transparent);border-radius:999px;height:100%;transition:width .3s}.cvtkAW_barWarn{background:#d97706}.cvtkAW_barLow{background:#dc2626}.cvtkAW_resetLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_settingsGrid{flex-wrap:wrap;align-items:center;gap:16px;display:flex}.cvtkAW_settingItem{align-items:center;gap:8px;font-size:13px;display:flex}.cvtkAW_settingItem input[type=checkbox]{accent-color:currentColor}.cvtkAW_settingItem input[type=number]{border:1px solid color-mix(in srgb, currentColor 25%, transparent);width:90px;color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem select{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem input:focus-visible,.cvtkAW_settingItem select:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footCard{box-sizing:border-box;background:color-mix(in srgb, currentColor 4%, transparent);width:100%;color:inherit;border:none;border-radius:12px;margin:2px 0 4px;transition:background-color .12s;position:relative}.cvtkAW_footCard:hover{background:var(--dsw-alias-interactive-bg-hover)}.cvtkAW_footCardCollapsed{background:0 0}.cvtkAW_footMain{appearance:none;box-sizing:border-box;width:100%;color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border:none;border-radius:12px;flex-direction:column;gap:4px;padding:8px;display:flex}.cvtkAW_footMain:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle{appearance:none;width:20px;height:20px;color:inherit;cursor:pointer;opacity:.55;background:0 0;border:none;border-radius:6px;justify-content:center;align-items:center;padding:0;transition:opacity .12s,background-color .12s;display:inline-flex;position:absolute;top:6px;right:6px}.cvtkAW_footCard:hover .cvtkAW_footToggle{opacity:.8}.cvtkAW_footToggle:hover{opacity:1;background:color-mix(in srgb, currentColor 10%, transparent)}.cvtkAW_footToggle:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle svg{display:block}.cvtkAW_footHead{justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_footTitle{opacity:.65;white-space:nowrap;align-items:center;gap:6px;min-width:0;font-size:12px;display:inline-flex}.cvtkAW_footTitle svg{flex:none;display:block}.cvtkAW_footValue{font-variant-numeric:tabular-nums;white-space:nowrap;margin-right:18px;font-size:15px;font-weight:600}.cvtkAW_footLine{opacity:.7;font-variant-numeric:tabular-nums;text-overflow:ellipsis;white-space:nowrap;font-size:11px;overflow:hidden}.cvtkAW_footMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_footCardCollapsed .cvtkAW_footMain{min-height:36px;padding:7px 8px}.cvtkAW_footStrip{white-space:nowrap;align-items:center;gap:6px;padding-right:20px;font-size:12px;display:flex;overflow:hidden}.cvtkAW_footStrip svg{opacity:.65;flex:none;display:block}.cvtkAW_footStripProvider{text-overflow:ellipsis;flex:none;max-width:38%;font-weight:500;overflow:hidden}.cvtkAW_footStripLabel{opacity:.65;text-overflow:ellipsis;overflow:hidden}.cvtkAW_footStripValue{font-variant-numeric:tabular-nums;margin-left:auto;font-weight:600}[data-dsh-frame][data-sidebar-collapsed] .cvtkAW_footCard,[data-sidebar-collapsed] .cvtkAW_footCard{display:none}.cvtkAW_peakBadge,.cvtkAW_peakLine{font-variant-numeric:tabular-nums;white-space:nowrap;align-items:center;gap:4px;font-size:11px;display:inline-flex}.cvtkAW_peakBadge{flex:none}.cvtkAW_peakLine{gap:6px}.cvtkAW_peakBadge[data-peak=on],.cvtkAW_peakLine[data-peak=on]{color:var(--dsw-alias-state-error-primary,#b42318)}.cvtkAW_peakBadge[data-peak=off],.cvtkAW_peakLine[data-peak=off]{color:var(--dsw-alias-state-success-primary,#067647)}.cvtkAW_peakDot{background:currentColor;border-radius:50%;flex:none;width:6px;height:6px}.cvtkAW_footPeak{white-space:nowrap;align-items:center;gap:5px;font-size:10px;display:flex;overflow:hidden}.cvtkAW_footPeakClock{opacity:.7;font-variant-numeric:tabular-nums}";
+		const css = ".cvtkAW_section{color:inherit;--dsw-chart-1:#509fff;--dsw-chart-2:#6d9a73;--dsw-chart-3:#d69159;--dsw-chart-4:#b68cf5;--dsw-chart-5:#e07db2;--dsw-chart-6:#56adad;--dsw-chart-7:#ca7162;--dsw-chart-8:#a2b15d;--dsw-chart-9:#8179de;--dsw-chart-10:#e1bd5d;--dsw-chart-11:#d48ca5;--dsw-chart-12:#90bb75;--dsw-chart-13:#6dbb9d;--dsw-chart-14:#57b6d9;--dsw-chart-15:#c288d9;--dsw-chart-16:#8da2d3;--dsw-chart-other:#9d9d9d;flex-direction:column;gap:16px;display:flex}body[data-ds-dark-theme] .cvtkAW_section{--dsw-chart-1:#5da6ff;--dsw-chart-2:#78a17d;--dsw-chart-3:#d99965;--dsw-chart-4:#bb94f6;--dsw-chart-5:#e286b8;--dsw-chart-6:#62b3b3;--dsw-chart-7:#ce7b6d;--dsw-chart-8:#a9b769;--dsw-chart-9:#8a82e0;--dsw-chart-10:#e3c168;--dsw-chart-11:#d794ab;--dsw-chart-12:#98c07f;--dsw-chart-13:#78c0a4;--dsw-chart-14:#63bbdc;--dsw-chart-15:#c691dc;--dsw-chart-16:#95a9d6;--dsw-chart-other:#a4a4a4}@media (prefers-color-scheme:dark){.cvtkAW_section{--dsw-chart-1:#5da6ff;--dsw-chart-2:#78a17d;--dsw-chart-3:#d99965;--dsw-chart-4:#bb94f6;--dsw-chart-5:#e286b8;--dsw-chart-6:#62b3b3;--dsw-chart-7:#ce7b6d;--dsw-chart-8:#a9b769;--dsw-chart-9:#8a82e0;--dsw-chart-10:#e3c168;--dsw-chart-11:#d794ab;--dsw-chart-12:#98c07f;--dsw-chart-13:#78c0a4;--dsw-chart-14:#63bbdc;--dsw-chart-15:#c691dc;--dsw-chart-16:#95a9d6;--dsw-chart-other:#a4a4a4}}.cvtkAW_header{justify-content:space-between;align-items:center;gap:12px;display:flex}.cvtkAW_currentProvider{opacity:.75;font-size:13px}.cvtkAW_refreshBtn{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.85;background:0 0;border:1px solid;border-radius:8px;padding:4px 12px;font-size:12px;transition:opacity .12s,background-color .12s}.cvtkAW_refreshBtn:hover:not(:disabled){opacity:1;background:color-mix(in srgb, currentColor 8%, transparent)}.cvtkAW_refreshBtn:disabled{cursor:default;opacity:.5}.cvtkAW_refreshBtn:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabs{border-bottom:1px solid color-mix(in srgb, currentColor 14%, transparent);gap:4px;display:flex}.cvtkAW_tab{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.65;background:0 0;border:none;border-bottom:2px solid #0000;margin-bottom:-1px;padding:6px 14px;font-size:13px}.cvtkAW_tab:hover{opacity:.9}.cvtkAW_tab:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabActive{opacity:1;border-bottom-color:currentColor;font-weight:600}.cvtkAW_card{border:1px solid color-mix(in srgb, currentColor 14%, transparent);border-radius:12px;flex-direction:column;gap:10px;padding:14px 16px;display:flex}.cvtkAW_cardTitle{letter-spacing:.04em;text-transform:uppercase;opacity:.6;font-size:12px;font-weight:600}.cvtkAW_dayPicker{align-items:center;gap:8px;display:flex}.cvtkAW_dayPickerLabel{opacity:.6;font-size:11px}.cvtkAW_daySelect{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_daySelect:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_daySelect option,.cvtkAW_settingItem select option{background-color:var(--dsw-alias-bg-multi-select,Canvas);color:var(--dsw-alias-label-primary,CanvasText)}.cvtkAW_statRow{flex-wrap:wrap;gap:18px;display:flex}.cvtkAW_stat{text-align:center;flex-direction:column;align-items:center;gap:2px;display:flex}.cvtkAW_statValue{font-variant-numeric:tabular-nums;font-size:18px;font-weight:600}.cvtkAW_statLabel{opacity:.6;font-size:11px}.cvtkAW_providerRow{border-top:1px solid color-mix(in srgb, currentColor 8%, transparent);flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;font-size:13px;display:flex}.cvtkAW_providerRow:first-of-type{border-top:none}.cvtkAW_providerName{align-items:center;gap:8px;min-width:0;display:flex}.cvtkAW_providerTokens{font-variant-numeric:tabular-nums;opacity:.75;white-space:nowrap}.cvtkAW_providerBalance{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}.cvtkAW_currentBadge{border:1px solid color-mix(in srgb, currentColor 35%, transparent);opacity:.8;border-radius:999px;flex:none;padding:1px 7px;font-size:10px;font-weight:600}.cvtkAW_chart{flex-direction:column;gap:12px;display:flex}.cvtkAW_chartProvider{flex-direction:column;gap:5px;display:flex}.cvtkAW_chartProvider+.cvtkAW_chartProvider{border-top:1px solid color-mix(in srgb, currentColor 7%, transparent);padding-top:10px}.cvtkAW_chartHead{justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;display:flex}.cvtkAW_chartHeadName{letter-spacing:.01em;font-weight:600}.cvtkAW_chartHeadTokens{font-variant-numeric:tabular-nums;opacity:.88;white-space:nowrap;font-size:11.5px;font-weight:600}.cvtkAW_chartTokens{font-variant-numeric:tabular-nums;opacity:.6;white-space:nowrap;font-size:11px}.cvtkAW_chartBar{background:color-mix(in srgb, currentColor 8%, transparent);border-radius:999px;height:8px;display:flex;overflow:hidden}.cvtkAW_chartSeg{flex:none;height:100%;display:block}.cvtkAW_chartModel{opacity:.8;grid-template-columns:180px 1fr 176px;align-items:center;gap:8px;padding-left:14px;font-size:11px;display:grid}.cvtkAW_chartModelName{text-overflow:ellipsis;white-space:nowrap;opacity:.95;overflow:hidden}.cvtkAW_chartModelBar{background:color-mix(in srgb, currentColor 6%, transparent);border-radius:999px;height:4px;display:block;overflow:hidden}.cvtkAW_chartModelFill{background:color-mix(in srgb, currentColor 35%, transparent);border-radius:999px;height:100%;transition:width .3s;display:block}.cvtkAW_trendWrap{flex-direction:column;gap:6px;display:flex}.cvtkAW_trendPlot{gap:6px;height:96px;display:flex}.cvtkAW_trendYLabels{flex:none;width:34px;position:relative}.cvtkAW_trendYLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;right:0;transform:translateY(50%)}.cvtkAW_trendArea{border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);flex:1 1 0;min-width:0;position:relative}.cvtkAW_trendGridline{background:color-mix(in srgb, currentColor 8%, transparent);height:1px;position:absolute;left:0;right:0}.cvtkAW_trendBars{align-items:flex-end;gap:2px;display:flex;position:absolute;inset:0}.cvtkAW_trendBar{border-radius:2px 2px 0 0;flex-direction:column-reverse;flex:1 1 0;min-width:2px;height:100%;display:flex;overflow:hidden}.cvtkAW_trendBar:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_trendSeg{width:100%;display:block}.cvtkAW_trendSegCache{background:color-mix(in srgb, currentColor 70%, transparent)}.cvtkAW_trendSegInput{background:color-mix(in srgb, currentColor 45%, transparent)}.cvtkAW_trendSegOutput{background:color-mix(in srgb, currentColor 22%, transparent)}.cvtkAW_trendBar:hover .cvtkAW_trendSeg{filter:saturate(1.15)brightness(1.06)}.cvtkAW_trendTooltip{z-index:2;border:1px solid color-mix(in srgb, currentColor 18%, transparent);background:var(--dsw-alias-bg-floating,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;box-shadow:0 4px 14px color-mix(in srgb, currentColor 18%, transparent);border-radius:8px;flex-direction:column;gap:2px;padding:6px 9px;font-size:11px;display:flex;position:absolute;transform:translate(-50%,-100%)}.cvtkAW_trendTooltipTitle{font-weight:600}.cvtkAW_trendTooltipLine{opacity:.8}.cvtkAW_trendXLabels{height:14px;margin-left:40px;position:relative}.cvtkAW_trendXLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;transform:translate(-50%)}.cvtkAW_trendLegend{opacity:.65;flex-wrap:wrap;gap:12px;font-size:10px;display:flex}.cvtkAW_trendLegendItem{align-items:center;gap:4px;display:inline-flex}.cvtkAW_trendSwatch{border-radius:2px;width:8px;height:8px;display:inline-block}.cvtkAW_rangeGrid{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;display:grid}.cvtkAW_rangeTile{appearance:none;border:1px solid color-mix(in srgb, currentColor 14%, transparent);color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border-radius:10px;flex-direction:column;gap:2px;padding:8px 10px;transition:background-color .12s,border-color .12s;display:flex}.cvtkAW_rangeTile:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_rangeTile:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_rangeTileActive{border-color:color-mix(in srgb, currentColor 45%, transparent);background:color-mix(in srgb, currentColor 9%, transparent)}.cvtkAW_rangeTileLabel{opacity:.65;font-size:11px}.cvtkAW_rangeTileValue{font-variant-numeric:tabular-nums;font-size:16px;font-weight:600}.cvtkAW_rangeTileMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_rangeControls{flex-wrap:wrap;align-items:center;gap:12px;display:flex}.cvtkAW_dateInput{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_dateInput:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_windowHead{flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_spanLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_modelRows{flex-direction:column;gap:4px;display:flex}.cvtkAW_muted{opacity:.6;font-size:12px}.cvtkAW_voucherPreview canvas{border-radius:8px;width:100%;height:auto;display:block}.cvtkAW_buttonRow{gap:8px;display:flex}.cvtkAW_errorLine{opacity:.75;font-size:12px}.cvtkAW_planCard{flex-direction:column;gap:8px;display:flex}.cvtkAW_planHead{justify-content:space-between;align-items:baseline;gap:10px;display:flex}.cvtkAW_planName{font-size:14px;font-weight:600}.cvtkAW_windowRow{flex-direction:column;gap:4px;display:flex}.cvtkAW_windowLabel{opacity:.8;font-variant-numeric:tabular-nums;justify-content:space-between;font-size:12px;display:flex}.cvtkAW_bar{background:color-mix(in srgb, currentColor 10%, transparent);border-radius:999px;height:6px;overflow:hidden}.cvtkAW_barFill{background:color-mix(in srgb, currentColor 55%, transparent);border-radius:999px;height:100%;transition:width .3s}.cvtkAW_barWarn{background:#d97706}.cvtkAW_barLow{background:#dc2626}.cvtkAW_resetLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_settingsGrid{flex-wrap:wrap;align-items:center;gap:16px;display:flex}.cvtkAW_settingItem{align-items:center;gap:8px;font-size:13px;display:flex}.cvtkAW_settingItem input[type=checkbox]{accent-color:currentColor}.cvtkAW_settingItem input[type=number]{border:1px solid color-mix(in srgb, currentColor 25%, transparent);width:90px;color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem select{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem input:focus-visible,.cvtkAW_settingItem select:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footCard{box-sizing:border-box;background:color-mix(in srgb, currentColor 4%, transparent);width:100%;color:inherit;border:none;border-radius:12px;margin:2px 0 4px;transition:background-color .12s;position:relative}.cvtkAW_footCard:hover{background:var(--dsw-alias-interactive-bg-hover)}.cvtkAW_footCardCollapsed{background:0 0}.cvtkAW_footMain{appearance:none;box-sizing:border-box;width:100%;color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border:none;border-radius:12px;flex-direction:column;gap:4px;padding:8px;display:flex}.cvtkAW_footMain:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle{appearance:none;width:20px;height:20px;color:inherit;cursor:pointer;opacity:.55;background:0 0;border:none;border-radius:6px;justify-content:center;align-items:center;padding:0;transition:opacity .12s,background-color .12s;display:inline-flex;position:absolute;top:6px;right:6px}.cvtkAW_footCard:hover .cvtkAW_footToggle{opacity:.8}.cvtkAW_footToggle:hover{opacity:1;background:color-mix(in srgb, currentColor 10%, transparent)}.cvtkAW_footToggle:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle svg{display:block}.cvtkAW_footHead{justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_footTitle{opacity:.65;white-space:nowrap;align-items:center;gap:6px;min-width:0;font-size:12px;display:inline-flex}.cvtkAW_footTitle svg{flex:none;display:block}.cvtkAW_footValue{font-variant-numeric:tabular-nums;white-space:nowrap;margin-right:18px;font-size:15px;font-weight:600}.cvtkAW_footLine{opacity:.7;font-variant-numeric:tabular-nums;text-overflow:ellipsis;white-space:nowrap;font-size:11px;overflow:hidden}.cvtkAW_footMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_footCardCollapsed .cvtkAW_footMain{min-height:36px;padding:7px 8px}.cvtkAW_footStrip{white-space:nowrap;align-items:center;gap:6px;padding-right:20px;font-size:12px;display:flex;overflow:hidden}.cvtkAW_footStrip svg{opacity:.65;flex:none;display:block}.cvtkAW_footStripProvider{text-overflow:ellipsis;flex:none;max-width:38%;font-weight:500;overflow:hidden}.cvtkAW_footStripLabel{opacity:.65;text-overflow:ellipsis;overflow:hidden}.cvtkAW_footStripValue{font-variant-numeric:tabular-nums;margin-left:auto;font-weight:600}[data-dsh-frame][data-sidebar-collapsed] .cvtkAW_footCard,[data-sidebar-collapsed] .cvtkAW_footCard{display:none}.cvtkAW_peakBadge,.cvtkAW_peakLine{font-variant-numeric:tabular-nums;white-space:nowrap;align-items:center;gap:4px;font-size:11px;display:inline-flex}.cvtkAW_peakBadge{flex:none}.cvtkAW_peakLine{gap:6px}.cvtkAW_peakBadge[data-peak=on],.cvtkAW_peakLine[data-peak=on]{color:var(--dsw-alias-state-error-primary,#b42318)}.cvtkAW_peakBadge[data-peak=off],.cvtkAW_peakLine[data-peak=off]{color:var(--dsw-alias-state-success-primary,#067647)}.cvtkAW_peakDot{background:currentColor;border-radius:50%;flex:none;width:6px;height:6px}.cvtkAW_footPeak{white-space:nowrap;align-items:center;gap:5px;font-size:10px;display:flex;overflow:hidden}.cvtkAW_footPeakClock{opacity:.7;font-variant-numeric:tabular-nums}";
 		const tagId = "@linxin666/dsh-usage/packages/dsh-usage/src/client/usage.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -288,21 +296,18 @@ window.__ModuleLoader__.load({
 			"cardTitle": "cvtkAW_cardTitle",
 			"chart": "cvtkAW_chart",
 			"chartBar": "cvtkAW_chartBar",
-			"chartFill": "cvtkAW_chartFill",
 			"chartHead": "cvtkAW_chartHead",
+			"chartHeadName": "cvtkAW_chartHeadName",
+			"chartHeadTokens": "cvtkAW_chartHeadTokens",
 			"chartModel": "cvtkAW_chartModel",
 			"chartModelBar": "cvtkAW_chartModelBar",
 			"chartModelFill": "cvtkAW_chartModelFill",
 			"chartModelName": "cvtkAW_chartModelName",
 			"chartProvider": "cvtkAW_chartProvider",
+			"chartSeg": "cvtkAW_chartSeg",
 			"chartTokens": "cvtkAW_chartTokens",
 			"currentBadge": "cvtkAW_currentBadge",
 			"currentProvider": "cvtkAW_currentProvider",
-			"dailyBar": "cvtkAW_dailyBar",
-			"dailyChart": "cvtkAW_dailyChart",
-			"dailyFill": "cvtkAW_dailyFill",
-			"dailyLabels": "cvtkAW_dailyLabels",
-			"dailyWrap": "cvtkAW_dailyWrap",
 			"dateInput": "cvtkAW_dateInput",
 			"dayPicker": "cvtkAW_dayPicker",
 			"dayPickerLabel": "cvtkAW_dayPickerLabel",
@@ -356,7 +361,26 @@ window.__ModuleLoader__.load({
 			"tab": "cvtkAW_tab",
 			"tabActive": "cvtkAW_tabActive",
 			"tabs": "cvtkAW_tabs",
-			"trendAxis": "cvtkAW_trendAxis",
+			"trendArea": "cvtkAW_trendArea",
+			"trendBar": "cvtkAW_trendBar",
+			"trendBars": "cvtkAW_trendBars",
+			"trendGridline": "cvtkAW_trendGridline",
+			"trendLegend": "cvtkAW_trendLegend",
+			"trendLegendItem": "cvtkAW_trendLegendItem",
+			"trendPlot": "cvtkAW_trendPlot",
+			"trendSeg": "cvtkAW_trendSeg",
+			"trendSegCache": "cvtkAW_trendSegCache",
+			"trendSegInput": "cvtkAW_trendSegInput",
+			"trendSegOutput": "cvtkAW_trendSegOutput",
+			"trendSwatch": "cvtkAW_trendSwatch",
+			"trendTooltip": "cvtkAW_trendTooltip",
+			"trendTooltipLine": "cvtkAW_trendTooltipLine",
+			"trendTooltipTitle": "cvtkAW_trendTooltipTitle",
+			"trendWrap": "cvtkAW_trendWrap",
+			"trendXLabel": "cvtkAW_trendXLabel",
+			"trendXLabels": "cvtkAW_trendXLabels",
+			"trendYLabel": "cvtkAW_trendYLabel",
+			"trendYLabels": "cvtkAW_trendYLabels",
 			"voucherPreview": "cvtkAW_voucherPreview",
 			"windowHead": "cvtkAW_windowHead",
 			"windowLabel": "cvtkAW_windowLabel",
@@ -389,6 +413,467 @@ window.__ModuleLoader__.load({
 					"aria-hidden": "true"
 				}), variant === "full" ? sentence : t(peak ? "usage.peak.tag.on" : "usage.peak.tag.off")]
 			});
+		}
+		//#endregion
+		//#region src/client/format.ts
+		/**
+		* Number formatting shared by the usage section, its foot card, and the trend
+		* chart — one home so a tile, a stat cell, and a tooltip always print the same
+		* magnitude the same way.
+		* @module @linxin666/dsh-usage/client/format
+		*/
+		/** Compact token count: 12345 -> 12.3k, 1234567 -> 1.23M. */
+		function formatTokens(value) {
+			if (!Number.isFinite(value) || value <= 0) return "0";
+			if (value < 1e3) return String(value);
+			if (value < 1e6) return trim(value / 1e3) + "k";
+			if (value < 1e9) return trim(value / 1e6) + "M";
+			return trim(value / 1e9) + "B";
+		}
+		function trim(value) {
+			return value >= 100 ? String(Math.round(value)) : value.toFixed(value >= 10 ? 1 : 2).replace(/\.?0+$/, "");
+		}
+		//#endregion
+		//#region src/core/types.ts
+		/** A zeroed totals bucket. */
+		function emptyTotals() {
+			return {
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				cacheWriteTokens: 0,
+				reasoningTokens: 0,
+				calls: 0,
+				cost: 0
+			};
+		}
+		/** Add `right` into `left` in place. */
+		function addTotals(left, right) {
+			left.inputTokens += right.inputTokens;
+			left.outputTokens += right.outputTokens;
+			left.cacheReadTokens += right.cacheReadTokens;
+			left.cacheWriteTokens += right.cacheWriteTokens;
+			left.reasoningTokens += right.reasoningTokens;
+			left.calls += right.calls;
+			left.cost += right.cost;
+			return left;
+		}
+		//#endregion
+		//#region src/core/ledger.ts
+		/** Local-date key (`YYYY-MM-DD`) for an epoch ms timestamp. */
+		function localDateKey(ms) {
+			const date = new Date(ms);
+			const month = String(date.getMonth() + 1).padStart(2, "0");
+			const day = String(date.getDate()).padStart(2, "0");
+			return `${date.getFullYear()}-${month}-${day}`;
+		}
+		/** Total tokens of a bucket (billed input + output; reasoning is inside output). */
+		function totalTokens(totals) {
+			return totals.inputTokens + totals.cacheReadTokens + totals.cacheWriteTokens + totals.outputTokens;
+		}
+		/** The color identity of a model: `prefix/`-stripped, trimmed, lower-cased. */
+		function normalizeModelName(model) {
+			return model.slice(model.lastIndexOf("/") + 1).trim().toLowerCase();
+		}
+		/** FNV-1a: a tiny deterministic string hash — same name, same slot, always. */
+		function hashOf(name) {
+			let hash = 2166136261;
+			for (let at = 0; at < name.length; at++) {
+				hash ^= name.charCodeAt(at);
+				hash = Math.imul(hash, 16777619);
+			}
+			return hash >>> 0;
+		}
+		/**
+		* Assign one palette color per normalized model name. Names walk in hash
+		* order (deterministic whatever order callers walk in) and each takes its
+		* hash's preferred slot, bumping forward past taken ones, so an assignment
+		* changes only when the collision chain it sits on changes. Names past the
+		* palette stay out of the map and fall back to MODEL_COLOR_OTHER.
+		*/
+		function assignModelColors(models) {
+			const names = [...new Set(models)].sort((left, right) => hashOf(left) - hashOf(right) || (left < right ? -1 : 1));
+			const taken = /* @__PURE__ */ new Set();
+			const colors = /* @__PURE__ */ new Map();
+			for (const name of names) {
+				if (colors.size >= 16) break;
+				let slot = hashOf(name) % 16;
+				while (taken.has(slot)) slot = (slot + 1) % 16;
+				taken.add(slot);
+				colors.set(name, `var(--dsw-chart-${slot + 1})`);
+			}
+			return colors;
+		}
+		/**
+		* Fold raw model rows into normalized buckets while remembering which raw
+		* spelling to show: the heaviest variant of each normalized name becomes its
+		* display name (ties break alphabetically so the pick is deterministic).
+		*/
+		function normalizeModelRows(rows) {
+			const buckets = /* @__PURE__ */ new Map();
+			for (const { model, total } of rows) {
+				const key = normalizeModelName(model);
+				const bucket = buckets.get(key) ?? {
+					display: model,
+					displayTotal: -1,
+					total: 0
+				};
+				bucket.total += total;
+				if (total > bucket.displayTotal || total === bucket.displayTotal && model < bucket.display) {
+					bucket.display = model;
+					bucket.displayTotal = total;
+				}
+				buckets.set(key, bucket);
+			}
+			const folded = /* @__PURE__ */ new Map();
+			for (const [key, bucket] of buckets) folded.set(key, {
+				display: bucket.display,
+				total: bucket.total
+			});
+			return folded;
+		}
+		//#endregion
+		//#region src/client/TrendChart.tsx
+		/**
+		* The window trend chart: one stacked bar per calendar day (or per week /
+		* month bucket once the window outgrows one readable bar per day). Bars
+		* stack BY MODEL — every model keeps one hue across the whole panel (see
+		* model-colors), so the day bars, the provider bars and the model rows all
+		* read as one color system; a day the model data is unknown for falls back to
+		* a neutral slate segment, and a window without any model data falls back to
+		* the token-type stack (cache reads / billed input / output).
+		*
+		* The plot is gridded with nice-number Y ticks, labels the X axis sparsely
+		* (first / last / even steps), and hovers a tooltip carrying the bucket's
+		* date span, totals, calls, cache-hit share and its heaviest models. A bucket
+		* the ledger recorded nothing for renders as a zero-height slot the tooltip
+		* reports as 无记录, so record gaps stay visible instead of disappearing.
+		* @module @linxin666/dsh-usage/client/TrendChart
+		*/
+		/** Longest span that still renders one readable bar per day. */
+		const DAILY_BUCKET_MAX_DAYS = 45;
+		/** Past this span (in days) buckets collapse to months; weeks in between. */
+		const WEEKLY_BUCKET_MAX_DAYS = 200;
+		/** Y ticks drawn above the baseline (plus the baseline itself). */
+		const GRIDLINE_FRACTIONS = [
+			.25,
+			.5,
+			.75,
+			1
+		];
+		/** Rough cap on X labels so they never collide, whatever the bucket count. */
+		const X_LABEL_MAX = 8;
+		/** Minimum on-screen height (%) of a bar with any usage at all. */
+		const BAR_MIN_HEIGHT_PCT = 2;
+		/** Legend entries shown in model mode before the tail is cut off. */
+		const LEGEND_MAX_MODELS = 12;
+		/** Models listed in the tooltip before it cuts to the totals line. */
+		const TOOLTIP_MAX_MODELS = 3;
+		/** Billed-scale token count of a bucket (all four fields). */
+		function totalOf$1(totals) {
+			return totals.inputTokens + totals.cacheReadTokens + totals.cacheWriteTokens + totals.outputTokens;
+		}
+		/** Whether a bucket holds anything worth drawing. */
+		function hasUse(totals) {
+			return totals.calls > 0 || totalOf$1(totals) > 0;
+		}
+		/** cacheRead / billed input in percent; undefined when nothing was billed. */
+		function cacheHitPercent(totals) {
+			const billed = totals.inputTokens + totals.cacheReadTokens + totals.cacheWriteTokens;
+			return billed === 0 ? void 0 : totals.cacheReadTokens / billed * 100;
+		}
+		/** Smallest 1/2/5×10^n not below `value` — the classic nice-axis ceiling. */
+		function niceCeil(value) {
+			if (!Number.isFinite(value) || value <= 0) return 1;
+			const base = Math.pow(10, Math.floor(Math.log10(value)));
+			for (const step of [
+				1,
+				2,
+				5
+			]) {
+				const candidate = step * base;
+				if (candidate >= value) return candidate;
+			}
+			return 10 * base;
+		}
+		function granularityOf(dayCount) {
+			if (dayCount <= DAILY_BUCKET_MAX_DAYS) return "day";
+			if (dayCount <= WEEKLY_BUCKET_MAX_DAYS) return "week";
+			return "month";
+		}
+		/** The Monday of `key`'s ISO week, as a local-date key. */
+		function mondayOfKey(key) {
+			const date = /* @__PURE__ */ new Date(key + "T12:00:00");
+			const weekday = date.getDay();
+			date.setDate(date.getDate() + (weekday === 0 ? -6 : 1 - weekday));
+			return localDateKey(date.getTime());
+		}
+		/**
+		* Collapse calendar-complete day rows into render buckets. Week buckets break
+		* on Mondays (label = that Monday); month buckets break on the 1st (label =
+		* YYYY-MM). Days arrive ascending and calendar-complete, so bucket bounds fall
+		* out of the walk and per-model totals accumulate alongside the totals.
+		*/
+		function buildBuckets(rows, granularity) {
+			if (granularity === "day") return rows.map((row) => ({
+				from: row.date,
+				to: row.date,
+				label: row.date.slice(5),
+				totals: row.totals,
+				models: new Map(Object.entries(row.models ?? {})),
+				recorded: hasUse(row.totals)
+			}));
+			const buckets = [];
+			let open;
+			for (const row of rows) {
+				const key = granularity === "week" ? mondayOfKey(row.date) : row.date.slice(0, 7);
+				if (open === void 0 || open.key !== key) {
+					open = {
+						key,
+						bucket: {
+							from: row.date,
+							to: row.date,
+							label: granularity === "week" ? key.slice(5) : key,
+							totals: emptyTotals(),
+							models: /* @__PURE__ */ new Map(),
+							recorded: false
+						}
+					};
+					buckets.push(open.bucket);
+				}
+				open.bucket.to = row.date;
+				addTotals(open.bucket.totals, row.totals);
+				for (const [model, totals] of Object.entries(row.models ?? {})) {
+					const bucket = open.bucket.models.get(model) ?? emptyTotals();
+					addTotals(bucket, totals);
+					open.bucket.models.set(model, bucket);
+				}
+				if (hasUse(row.totals)) open.bucket.recorded = true;
+			}
+			return buckets;
+		}
+		/**
+		* The window's model order for stacking and the legend: heaviest by total
+		* tokens first, so the dominant model anchors the bar bottoms.
+		*/
+		function modelOrderOf(buckets) {
+			const totals = /* @__PURE__ */ new Map();
+			for (const bucket of buckets) for (const [model, modelTotals] of bucket.models) totals.set(model, (totals.get(model) ?? 0) + totalOf$1(modelTotals));
+			return [...totals].sort((a, b) => b[1] - a[1]).map(([model]) => model);
+		}
+		/**
+		* Stack heights as plot percentages for one bucket. `values` are raw segment
+		* sizes on the axis scale; a non-empty bar below the floor is scaled up whole,
+		* proportions kept, so a small day never vanishes against a much larger axis.
+		*/
+		function stackHeights(values, axisMax) {
+			const heights = values.map((value) => value / axisMax * 100);
+			const sum = heights.reduce((left, right) => left + right, 0);
+			if (sum > 0 && sum < BAR_MIN_HEIGHT_PCT) {
+				const bump = BAR_MIN_HEIGHT_PCT / sum;
+				return heights.map((height) => height * bump);
+			}
+			return heights;
+		}
+		/** The token-type fallback stack: cache reads, billed input, output. */
+		function tokenStack(totals) {
+			return [
+				{
+					value: totals.cacheReadTokens,
+					className: usage_module_css_default.trendSegCache
+				},
+				{
+					value: totals.inputTokens + totals.cacheWriteTokens,
+					className: usage_module_css_default.trendSegInput
+				},
+				{
+					value: totals.outputTokens,
+					className: usage_module_css_default.trendSegOutput
+				}
+			];
+		}
+		/**
+		* The trend chart. `rows` is one row per calendar day of the window, ascending
+		* and gap-filled (missing days carry zeroed totals); fewer than two rows is
+		* nothing to chart and renders nothing. `rows` model keys and `colors` keys
+		* are normalized names (see model-colors); `labels` optionally maps them back
+		* to a raw display spelling. A model outside the color table draws in the
+		* neutral slate.
+		*/
+		function TrendChart(props) {
+			const { rows, colors, labels } = props;
+			const [hovered, setHovered] = (0, react.useState)(void 0);
+			if (rows.length < 2) return null;
+			const buckets = buildBuckets(rows, granularityOf(rows.length));
+			const axisMax = niceCeil(Math.max(1, ...buckets.map((bucket) => totalOf$1(bucket.totals))));
+			const labelStep = Math.max(1, Math.ceil(buckets.length / X_LABEL_MAX));
+			const hoveredBucket = hovered !== void 0 ? buckets[hovered] : void 0;
+			const order = modelOrderOf(buckets);
+			const modelMode = order.length > 0 && colors !== void 0 && colors.size > 0;
+			const colorOf = (model) => colors?.get(model) ?? "var(--dsw-chart-other)";
+			const labelOf = (model) => labels?.get(model) ?? model;
+			const legendEntries = modelMode ? order.slice(0, LEGEND_MAX_MODELS).map((model) => ({
+				key: model,
+				color: colorOf(model),
+				label: labelOf(model)
+			})) : [
+				{
+					key: "cache",
+					className: usage_module_css_default.trendSegCache,
+					label: t("usage.tokens.cacheRead")
+				},
+				{
+					key: "input",
+					className: usage_module_css_default.trendSegInput,
+					label: t("usage.tokens.input")
+				},
+				{
+					key: "output",
+					className: usage_module_css_default.trendSegOutput,
+					label: t("usage.tokens.output")
+				}
+			];
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				className: usage_module_css_default.trendWrap,
+				"data-dsh-part": "trend-chart",
+				children: [
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						className: usage_module_css_default.trendPlot,
+						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+							className: usage_module_css_default.trendYLabels,
+							"aria-hidden": "true",
+							children: GRIDLINE_FRACTIONS.map((fraction) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+								className: usage_module_css_default.trendYLabel,
+								style: { bottom: `${fraction * 100}%` },
+								children: formatTokens(fraction * axisMax)
+							}, fraction))
+						}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							className: usage_module_css_default.trendArea,
+							children: [
+								GRIDLINE_FRACTIONS.map((fraction) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									className: usage_module_css_default.trendGridline,
+									style: { bottom: `${fraction * 100}%` }
+								}, fraction)),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+									className: usage_module_css_default.trendBars,
+									onMouseLeave: () => {
+										setHovered(void 0);
+									},
+									children: buckets.map((bucket, index) => {
+										const segments = (modelMode ? stackHeights(order.map((model) => totalOf$1(bucket.models.get(model) ?? emptyTotals())), axisMax).map((height, at) => ({
+											height,
+											color: colorOf(order[at])
+										})) : (() => {
+											const tokens = tokenStack(bucket.totals);
+											return stackHeights(tokens.map((segment) => segment.value), axisMax).map((height, at) => ({
+												height,
+												className: tokens[at].className
+											}));
+										})()).filter((segment) => segment.height > 0);
+										return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+											className: usage_module_css_default.trendBar,
+											"data-dsh-part": "trend-bar",
+											"data-recorded": bucket.recorded ? "true" : "false",
+											onMouseEnter: () => {
+												setHovered(index);
+											},
+											children: segments.map((segment, at) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+												className: segment.className === void 0 ? usage_module_css_default.trendSeg : `${usage_module_css_default.trendSeg} ${segment.className}`,
+												style: segment.color === void 0 ? { height: `${segment.height}%` } : {
+													height: `${segment.height}%`,
+													background: segment.color
+												}
+											}, at))
+										}, bucket.from);
+									})
+								}),
+								hoveredBucket !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: usage_module_css_default.trendTooltip,
+									"data-dsh-part": "trend-tooltip",
+									style: tooltipStyle(hovered ?? 0, buckets.length, totalOf$1(hoveredBucket.totals), axisMax),
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: usage_module_css_default.trendTooltipTitle,
+										children: hoveredBucket.from === hoveredBucket.to ? hoveredBucket.from : `${hoveredBucket.from} ~ ${hoveredBucket.to}`
+									}), !hoveredBucket.recorded ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: usage_module_css_default.trendTooltipLine,
+										children: t("usage.range.noRecord")
+									}) : (() => {
+										const hit = cacheHitPercent(hoveredBucket.totals);
+										const topModels = modelMode ? order.map((model) => ({
+											model,
+											totals: hoveredBucket.models.get(model)
+										})).filter((entry) => entry.totals !== void 0 && totalOf$1(entry.totals) > 0).slice(0, TOOLTIP_MAX_MODELS) : [];
+										return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+											/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+												className: usage_module_css_default.trendTooltipLine,
+												children: [
+													t("usage.tokens.total"),
+													": ",
+													formatTokens(totalOf$1(hoveredBucket.totals))
+												]
+											}),
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+												className: usage_module_css_default.trendTooltipLine,
+												children: t("usage.calls", { n: hoveredBucket.totals.calls })
+											}),
+											/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+												className: usage_module_css_default.trendTooltipLine,
+												children: [
+													t("usage.tokens.cacheHit"),
+													": ",
+													hit === void 0 ? "—" : hit.toFixed(1) + "%"
+												]
+											}),
+											topModels.map((entry) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+												className: usage_module_css_default.trendTooltipLine,
+												children: [
+													/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+														className: usage_module_css_default.trendSwatch,
+														style: { background: colorOf(entry.model) }
+													}),
+													" ",
+													labelOf(entry.model),
+													" · ",
+													formatTokens(totalOf$1(entry.totals))
+												]
+											}, entry.model))
+										] });
+									})()]
+								})
+							]
+						})]
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						className: usage_module_css_default.trendXLabels,
+						"aria-hidden": "true",
+						children: buckets.map((bucket, index) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+							className: usage_module_css_default.trendXLabel,
+							style: { left: `${(index + .5) / buckets.length * 100}%` },
+							children: index === 0 || index === buckets.length - 1 || index % labelStep === 0 ? bucket.label : ""
+						}, bucket.from))
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						className: usage_module_css_default.trendLegend,
+						children: legendEntries.map((entry) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+							className: usage_module_css_default.trendLegendItem,
+							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+								className: entry.className === void 0 ? usage_module_css_default.trendSwatch : `${usage_module_css_default.trendSwatch} ${entry.className}`,
+								style: entry.color === void 0 ? void 0 : { background: entry.color }
+							}), entry.label]
+						}, entry.key))
+					})
+				]
+			});
+		}
+		/** Pin the tooltip above its bar's top, flipping the anchor at the plot edges. */
+		function tooltipStyle(index, count, total, axisMax) {
+			const leftPercent = (index + .5) / count * 100;
+			const transform = leftPercent < 12 ? "translate(0, -100%)" : leftPercent > 88 ? "translate(-100%, -100%)" : void 0;
+			return {
+				left: `${leftPercent}%`,
+				bottom: `${Math.min(100, Math.max(4, total / axisMax * 100 + 4))}%`,
+				...transform === void 0 ? {} : { transform }
+			};
 		}
 		//#endregion
 		//#region src/core/adapters.ts
@@ -1161,44 +1646,6 @@ window.__ModuleLoader__.load({
 			};
 		}
 		//#endregion
-		//#region src/core/types.ts
-		/** A zeroed totals bucket. */
-		function emptyTotals() {
-			return {
-				inputTokens: 0,
-				outputTokens: 0,
-				cacheReadTokens: 0,
-				cacheWriteTokens: 0,
-				reasoningTokens: 0,
-				calls: 0,
-				cost: 0
-			};
-		}
-		/** Add `right` into `left` in place. */
-		function addTotals(left, right) {
-			left.inputTokens += right.inputTokens;
-			left.outputTokens += right.outputTokens;
-			left.cacheReadTokens += right.cacheReadTokens;
-			left.cacheWriteTokens += right.cacheWriteTokens;
-			left.reasoningTokens += right.reasoningTokens;
-			left.calls += right.calls;
-			left.cost += right.cost;
-			return left;
-		}
-		//#endregion
-		//#region src/core/ledger.ts
-		/** Local-date key (`YYYY-MM-DD`) for an epoch ms timestamp. */
-		function localDateKey(ms) {
-			const date = new Date(ms);
-			const month = String(date.getMonth() + 1).padStart(2, "0");
-			const day = String(date.getDate()).padStart(2, "0");
-			return `${date.getFullYear()}-${month}-${day}`;
-		}
-		/** Total tokens of a bucket (billed input + output; reasoning is inside output). */
-		function totalTokens(totals) {
-			return totals.inputTokens + totals.cacheReadTokens + totals.cacheWriteTokens + totals.outputTokens;
-		}
-		//#endregion
 		//#region src/client/voucher-art.generated.ts
 		/**
 		* Generated asset: the Jingyuan note artwork as a JPEG data URL, inlined so
@@ -1519,18 +1966,20 @@ window.__ModuleLoader__.load({
 		//#region src/client/UsageSectionCard.tsx
 		/**
 		* The usage statistics settings section: three tabs (用量: one time window
-		* picked from 今日 / 昨日 / 近 7 天 / 近 30 天 / 自定义, rendered as window
-		* totals plus the per-channel and per-model breakdown and a per-day bar chart,
-		* with balances below; 个人套餐: per-provider plan quota windows; Token 银行:
-		* the whale-yuan voucher minted from the DeepSeek official family's usage)
-		* plus a compact settings row.
+		* picked from 今日 / 昨日 / 近 3 天 / 近 7 天 / 近 30 天 / 近 6 个月 / 近 1 年 /
+		* 自定义, rendered as window totals plus the per-channel and per-model
+		* breakdown and the trend chart, with balances below; 个人套餐: per-provider
+		* plan quota windows; Token 银行: the whale-yuan voucher minted from the
+		* DeepSeek official family's usage) plus a compact settings row.
 		*
 		* Data: today and the whole-ledger aggregates ride the host's loopback-fenced
-		* /api/dsh-usage/overview document. Any window that reaches past today is
-		* merged in the browser from one small `/api/dsh-usage/day` request per day
-		* the ledger recorded inside the window (the overview lists those days), so a
-		* window costs a handful of cheap loopback requests at most and the merged
-		* days are cached for the session. Polling runs only while the section is
+		* /api/dsh-usage/overview document. A window at most RANGE_FETCH_MAX_DAYS
+		* long is merged in the browser from one small `/api/dsh-usage/day` request
+		* per day the ledger recorded inside the window (the overview lists those
+		* days); a longer one reads a single `/api/dsh-usage/range` aggregate instead
+		* — one request answering the whole-window summary plus the per-day series,
+		* which is what makes the multi-month windows viable. Merged days and fetched
+		* ranges are cached for the session. Polling runs only while the section is
 		* mounted and the tab is visible.
 		* @module @linxin666/dsh-usage/client/UsageSectionCard
 		*/
@@ -1543,29 +1992,17 @@ window.__ModuleLoader__.load({
 		const BANK_ALL_DAYS = "all";
 		/** Longest window a custom date pair may describe (the ledger retains at most 730 days). */
 		const CUSTOM_MAX_DAYS = 366;
-		/** Widest window that still renders one readable bar per day. */
-		const DAILY_CHART_MAX_DAYS = 45;
 		/**
-		* The daily chart needs at least two columns to say anything: a single-day
+		* The trend chart needs at least two columns to say anything: a single-day
 		* window would paint one bar across the full width, which reads as a solid
 		* block rather than a chart, so those windows keep the totals and breakdown.
+		* Wider windows need no cap here — the chart buckets them per week/month.
 		*/
-		const DAILY_CHART_MIN_DAYS = 2;
+		const TREND_CHART_MIN_DAYS = 2;
 		/** Model rows kept per channel of a merged window (the host caps one day the same way). */
 		const WINDOW_MODEL_CAP = 12;
 		/** Per-day requests one window may keep in flight. */
 		const DAY_FETCH_CONCURRENCY = 6;
-		/** Compact token count: 12345 -> 12.3k, 1234567 -> 1.23M. */
-		function formatTokens(value) {
-			if (!Number.isFinite(value) || value <= 0) return "0";
-			if (value < 1e3) return String(value);
-			if (value < 1e6) return trim(value / 1e3) + "k";
-			if (value < 1e9) return trim(value / 1e6) + "M";
-			return trim(value / 1e9) + "B";
-		}
-		function trim(value) {
-			return value >= 100 ? String(Math.round(value)) : value.toFixed(value >= 10 ? 1 : 2).replace(/\.?0+$/, "");
-		}
 		function formatTime(ms) {
 			try {
 				return new Date(ms).toLocaleTimeString();
@@ -1616,10 +2053,18 @@ window.__ModuleLoader__.load({
 		const RANGE_LABEL_KEYS = {
 			today: "usage.range.today",
 			yesterday: "usage.range.yesterday",
+			last3: "usage.range.last3",
 			last7: "usage.range.last7",
 			last30: "usage.range.last30",
+			last180: "usage.range.last180",
+			all: "usage.range.all",
 			custom: "usage.range.custom"
 		};
+		/**
+		* Longest window the per-day fetch path serves. Past it the section switches to
+		* the host's range aggregate: one request instead of up to a few hundred.
+		*/
+		const RANGE_FETCH_MAX_DAYS = 45;
 		/**
 		* In-flight day requests, so two windows overlapping on one day (or React's
 		* development double-mount) share one request instead of racing.
@@ -1713,6 +2158,87 @@ window.__ModuleLoader__.load({
 			return load;
 		}
 		/**
+		* Session cache of fetched range aggregates, keyed `from:to`. Same lifetime
+		* reasoning as the day cache: refreshing clears it because a late backfill or
+		* peer import can still change a past window.
+		*/
+		const rangeResults = /* @__PURE__ */ new Map();
+		/** In-flight range requests, so overlapping windows share one fetch. */
+		const rangeRequests = /* @__PURE__ */ new Map();
+		function requestRange(loadRange, from, to) {
+			const key = `${from}:${to}`;
+			const pending = rangeRequests.get(key);
+			if (pending !== void 0) return pending;
+			const request = loadRange(from, to).then((response) => {
+				rangeRequests.delete(key);
+				rangeResults.set(key, {
+					summary: {
+						totals: response.totals,
+						providers: response.providers
+					},
+					series: response.series
+				});
+				return response;
+			}, (error) => {
+				rangeRequests.delete(key);
+				throw error;
+			});
+			rangeRequests.set(key, request);
+			return request;
+		}
+		/**
+		* Fetch one window's aggregate. An empty or absent window stays idle (the
+		* untouched custom range fetches nothing), a cached range resolves
+		* immediately, and a superseded window never lands because the effect
+		* cancels. `epoch` invalidates the cache the same way the day cache's does.
+		*/
+		function useRangeData(loadRange, window, epoch) {
+			const key = window === void 0 || window.from === "" || window.to === "" ? "" : `${window.from}:${window.to}`;
+			const [load, setLoad] = (0, react.useState)({ status: "idle" });
+			(0, react.useEffect)(() => {
+				if (key === "") {
+					setLoad((previous) => previous.status === "idle" ? previous : { status: "idle" });
+					return;
+				}
+				const cached = rangeResults.get(key);
+				if (cached !== void 0) {
+					setLoad({
+						status: "ready",
+						summary: cached.summary,
+						series: cached.series
+					});
+					return;
+				}
+				let cancelled = false;
+				setLoad({ status: "loading" });
+				requestRange(loadRange, key.slice(0, 10), key.slice(11)).then((response) => {
+					if (cancelled) return;
+					const stored = rangeResults.get(key);
+					setLoad({
+						status: "ready",
+						summary: stored?.summary ?? {
+							totals: response.totals,
+							providers: response.providers
+						},
+						series: response.series
+					});
+				}, (error) => {
+					if (!cancelled) setLoad({
+						status: "error",
+						error: error instanceof Error ? error.message : String(error)
+					});
+				});
+				return () => {
+					cancelled = true;
+				};
+			}, [
+				key,
+				loadRange,
+				epoch
+			]);
+			return load;
+		}
+		/**
 		* Merge per-day views into one window summary: disjoint bucket sums per
 		* provider, per-model rows heaviest first, providers heaviest first. Mirrors
 		* the host's own `summarizeDays`, so a window and a single day agree.
@@ -1761,6 +2287,59 @@ window.__ModuleLoader__.load({
 		function inWindow(window, date) {
 			return window.from !== "" && date >= window.from && date <= window.to;
 		}
+		/**
+		* One day's per-model totals aggregated across providers — the trend bars'
+		* stack input. Provider rows arrive heaviest-first with their models capped,
+		* which is the same view the breakdown renders.
+		*/
+		function modelSplitOf(view) {
+			const models = {};
+			for (const row of view.providers) for (const model of row.models) {
+				const bucket = models[model.model] ?? emptyTotals();
+				addTotals(bucket, model.totals);
+				models[model.model] = bucket;
+			}
+			return models;
+		}
+		/**
+		* Merge a per-model split onto normalized names (see model-colors) so the
+		* same model under different spellings or `provider/` routes stacks as one
+		* segment instead of slivering the bar with near-identical hues.
+		*/
+		function normalizedSplit(split) {
+			const models = {};
+			for (const [model, totals] of Object.entries(split)) {
+				const key = normalizeModelName(model);
+				const bucket = models[key] ?? emptyTotals();
+				addTotals(bucket, totals);
+				models[key] = bucket;
+			}
+			return models;
+		}
+		/**
+		* The same fold for a window summary's provider rows: model entries merge by
+		* normalized name, re-rank by size and re-apply the per-provider cap, so the
+		* breakdown bars and model rows read the merged view.
+		*/
+		function normalizedProviders(providers) {
+			return providers.map((row) => {
+				const models = /* @__PURE__ */ new Map();
+				for (const model of row.models) {
+					const key = normalizeModelName(model.model);
+					const bucket = models.get(key) ?? emptyTotals();
+					addTotals(bucket, model.totals);
+					models.set(key, bucket);
+				}
+				return {
+					provider: row.provider,
+					totals: row.totals,
+					models: [...models].map(([model, totals]) => ({
+						model,
+						totals
+					})).sort((a, b) => totalOf(b.totals) - totalOf(a.totals)).slice(0, WINDOW_MODEL_CAP)
+				};
+			});
+		}
 		/** The day views one window holds, including the live overview day. */
 		function viewsIn(window, dateKeys, load, todayView) {
 			const views = [];
@@ -1793,6 +2372,8 @@ window.__ModuleLoader__.load({
 		}
 		function TotalsRow(props) {
 			const { totals } = props;
+			const billedInput = totals.inputTokens + totals.cacheReadTokens + totals.cacheWriteTokens;
+			const cacheHit = billedInput === 0 ? void 0 : totals.cacheReadTokens / billedInput * 100;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: usage_module_css_default.statRow,
 				children: [
@@ -1840,10 +2421,10 @@ window.__ModuleLoader__.load({
 						className: usage_module_css_default.stat,
 						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 							className: usage_module_css_default.statValue,
-							children: formatTokens(totals.cacheWriteTokens)
+							children: cacheHit === void 0 ? "—" : cacheHit.toFixed(1) + "%"
 						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 							className: usage_module_css_default.statLabel,
-							children: t("usage.tokens.cacheWrite")
+							children: t("usage.tokens.cacheHit")
 						})]
 					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -2045,25 +2626,27 @@ window.__ModuleLoader__.load({
 		/**
 		* One channel bar with its model sub-bars and the share of the window it
 		* holds. Every model the host returned renders (the wire caps a provider at 12
-		* rows), so a window never hides a model behind a "top 3".
+		* rows), so a window never hides a model behind a "top 3". The provider bar is
+		* a stacked fill of its models' hues — heaviest model first — so a
+		* multi-model channel reads as the color mix it is, and each model keeps the
+		* one hue it carries everywhere else in the panel.
 		*/
 		function ChannelBreakdown(props) {
-			const { summary, providers, currentProvider } = props;
+			const { summary, providers, currentProvider, modelColors, modelLabels } = props;
 			const { totals } = summary;
 			const grand = totalOf(totals);
 			if (summary.providers.length === 0 || grand === 0) return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 				className: usage_module_css_default.muted,
 				children: t("usage.range.empty")
 			});
-			const maxProvider = Math.max(1, ...summary.providers.map((row) => totalOf(row.totals)));
 			const nameOf = (id) => providers.find((provider) => provider.provider === id)?.displayName ?? id;
+			const labelOf = (model) => modelLabels.get(model) ?? model;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 				className: usage_module_css_default.chart,
 				"data-dsh-part": "channel-breakdown",
 				children: summary.providers.map((row) => {
 					const total = totalOf(row.totals);
 					const share = Math.round(total / grand * 100);
-					const maxModel = Math.max(1, ...row.models.map((model) => totalOf(model.totals)));
 					return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: usage_module_css_default.chartProvider,
 						children: [
@@ -2071,12 +2654,15 @@ window.__ModuleLoader__.load({
 								className: usage_module_css_default.chartHead,
 								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 									className: usage_module_css_default.providerName,
-									children: [nameOf(row.provider), currentProvider === row.provider && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: usage_module_css_default.chartHeadName,
+										children: nameOf(row.provider)
+									}), currentProvider === row.provider && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: usage_module_css_default.currentBadge,
 										children: t("usage.current")
 									})]
 								}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
-									className: usage_module_css_default.chartTokens,
+									className: usage_module_css_default.chartHeadTokens,
 									children: [
 										formatTokens(total),
 										" · ",
@@ -2090,9 +2676,19 @@ window.__ModuleLoader__.load({
 							}),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 								className: usage_module_css_default.chartBar,
-								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-									className: usage_module_css_default.chartFill,
-									style: { width: `${Math.max(2, Math.round(total / maxProvider * 100))}%` }
+								children: (row.models.length > 0 ? row.models : [{
+									model: row.provider,
+									totals: row.totals
+								}]).map((segment) => {
+									const width = totalOf(segment.totals) / grand * 100;
+									if (width <= 0) return null;
+									return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: usage_module_css_default.chartSeg,
+										style: {
+											width: `${width}%`,
+											background: modelColors.get(segment.model) ?? "var(--dsw-chart-other)"
+										}
+									}, segment.model);
 								})
 							}),
 							row.models.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
@@ -2100,19 +2696,24 @@ window.__ModuleLoader__.load({
 								"data-dsh-part": "model-rows",
 								children: row.models.map((model) => {
 									const modelTotal = totalOf(model.totals);
+									const label = labelOf(model.model);
+									const sharePct = total > 0 ? modelTotal / total * 100 : 0;
 									return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 										className: usage_module_css_default.chartModel,
-										title: `${row.provider} · ${model.model}: ${formatTokens(modelTotal)}`,
+										title: `${row.provider} · ${label}: ${formatTokens(modelTotal)}`,
 										children: [
 											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 												className: usage_module_css_default.chartModelName,
-												children: model.model
+												children: label
 											}),
 											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 												className: usage_module_css_default.chartModelBar,
 												children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 													className: usage_module_css_default.chartModelFill,
-													style: { width: `${Math.max(3, Math.round(modelTotal / maxModel * 100))}%` }
+													style: {
+														width: `${Math.max(3, Math.round(sharePct))}%`,
+														background: modelColors.get(model.model) ?? "var(--dsw-chart-other)"
+													}
 												})
 											}),
 											/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
@@ -2120,7 +2721,10 @@ window.__ModuleLoader__.load({
 												children: [
 													formatTokens(modelTotal),
 													" · ",
-													t("usage.calls", { n: model.totals.calls })
+													t("usage.calls", { n: model.totals.calls }),
+													" · ",
+													Math.round(sharePct),
+													"%"
 												]
 											})
 										]
@@ -2132,40 +2736,9 @@ window.__ModuleLoader__.load({
 				})
 			});
 		}
-		/**
-		* One bar per calendar day of the window, so gaps in the record and the
-		* day-to-day rhythm are visible. A day the ledger did not record renders as an
-		* empty slot instead of a missing column.
-		*/
-		function DailyChart(props) {
-			const { days } = props;
-			if (days.length === 0) return null;
-			const max = Math.max(1, ...days.map((row) => totalOf(row.totals)));
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-				className: usage_module_css_default.dailyWrap,
-				"data-dsh-part": "daily-chart",
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-					className: usage_module_css_default.dailyChart,
-					children: days.map((row) => {
-						const total = totalOf(row.totals);
-						return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-							className: usage_module_css_default.dailyBar,
-							title: `${row.date} · ${formatTokens(total)} · ${t("usage.calls", { n: row.totals.calls })}`,
-							children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-								className: usage_module_css_default.dailyFill,
-								style: { height: total === 0 ? "0%" : `${Math.max(4, Math.round(total / max * 100))}%` }
-							})
-						}, row.date);
-					})
-				}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-					className: usage_module_css_default.dailyLabels,
-					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: days[0].date.slice(5) }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: days[days.length - 1].date.slice(5) })]
-				})]
-			});
-		}
 		/** The section component; the slot merges the face into these props. */
 		function UsageSectionCard(props) {
-			const { store, poll, refresh, loadDay, settings, deviceSync } = props;
+			const { store, poll, refresh, loadDay, loadRange, settings, deviceSync } = props;
 			const ui = (0, react.useSyncExternalStore)(store.subscribe, store.getSnapshot);
 			const settingsSnapshot = settings.getSnapshot();
 			const settingsValue = settingsSnapshot.value ?? {};
@@ -2215,12 +2788,24 @@ window.__ModuleLoader__.load({
 				from: shiftDateKey(todayDate, -6),
 				to: todayDate
 			};
+			const last3Window = {
+				from: shiftDateKey(todayDate, -2),
+				to: todayDate
+			};
 			const yesterdayWindow = {
 				from: shiftDateKey(todayDate, -1),
 				to: shiftDateKey(todayDate, -1)
 			};
 			const todayWindow = {
 				from: todayDate,
+				to: todayDate
+			};
+			const last180Window = {
+				from: shiftDateKey(todayDate, -179),
+				to: todayDate
+			};
+			const allWindow = {
+				from: recorded[0] ?? todayDate,
 				to: todayDate
 			};
 			const customPicked = customFrom !== void 0 || customTo !== void 0;
@@ -2234,8 +2819,12 @@ window.__ModuleLoader__.load({
 				to: pickedTo
 			};
 			const cache = dayCacheRef.current;
+			const customIsRange = (customPicked ? dateKeysBetween(customWindow.from, customWindow.to).length : 0) > RANGE_FETCH_MAX_DAYS;
 			const last30Days = useWindowDays(loadDay, recordedIn(last30Window, recorded, todayDate), cache, cacheEpoch);
-			const customDays = useWindowDays(loadDay, customPicked ? recordedIn(customWindow, recorded, todayDate) : [], cache, cacheEpoch);
+			const customDays = useWindowDays(loadDay, customPicked && !customIsRange ? recordedIn(customWindow, recorded, todayDate) : [], cache, cacheEpoch);
+			const last180Load = useRangeData(loadRange, last180Window, cacheEpoch);
+			const allLoad = useRangeData(loadRange, allWindow, cacheEpoch);
+			const customRangeLoad = useRangeData(loadRange, customPicked && customIsRange ? customWindow : void 0, cacheEpoch);
 			const dayOptions = snapshot === null ? [] : [...new Set([todayDate, ...snapshot.usage.availableDays ?? []].filter((date) => date !== void 0 && date !== ""))].sort().reverse();
 			const bankSelection = bankDay !== void 0 && dayOptions.includes(bankDay) ? bankDay : void 0;
 			const bankDayLoad = useDayView(loadDay, bankSelection, todayDate);
@@ -2249,6 +2838,7 @@ window.__ModuleLoader__.load({
 			const onRefresh = () => {
 				setRefreshing(true);
 				dayCacheRef.current.clear();
+				rangeResults.clear();
 				setCacheEpoch((epoch) => epoch + 1);
 				try {
 					refresh();
@@ -2277,34 +2867,65 @@ window.__ModuleLoader__.load({
 			const windowSlices = {
 				today: {
 					window: todayWindow,
+					kind: "days",
 					load: last30Days
 				},
 				yesterday: {
 					window: yesterdayWindow,
+					kind: "days",
+					load: last30Days
+				},
+				last3: {
+					window: last3Window,
+					kind: "days",
 					load: last30Days
 				},
 				last7: {
 					window: last7Window,
+					kind: "days",
 					load: last30Days
 				},
 				last30: {
 					window: last30Window,
+					kind: "days",
 					load: last30Days
 				},
-				custom: {
+				last180: {
+					window: last180Window,
+					kind: "range",
+					load: last180Load
+				},
+				all: {
+					window: allWindow,
+					kind: "range",
+					load: allLoad
+				},
+				custom: customIsRange ? {
 					window: customWindow,
+					kind: "range",
+					load: customRangeLoad
+				} : {
+					window: customWindow,
+					kind: "days",
 					load: customDays
 				}
 			};
 			const keysOf = (key) => recordedIn(windowSlices[key].window, recorded, todayDate);
-			const activeWindow = windowSlices[rangeKey].window;
-			const activeDays = windowSlices[rangeKey].load;
-			const summary = summaryIn(activeWindow, keysOf(rangeKey), activeDays, todayView);
+			const activeSlice = windowSlices[rangeKey];
+			const activeWindow = activeSlice.window;
+			const summaryRaw = activeSlice.kind === "range" ? {
+				from: activeWindow.from,
+				to: activeWindow.to,
+				...activeSlice.load.summary ?? {
+					totals: emptyTotals(),
+					providers: []
+				}
+			} : summaryIn(activeWindow, keysOf(rangeKey), activeSlice.load, todayView);
 			const tiles = Object.keys(windowSlices).map((key) => {
 				const slice = windowSlices[key];
-				const totals = totalsIn(slice.window, keysOf(key), slice.load, todayView);
+				const totals = slice.kind === "range" ? slice.load.summary?.totals ?? emptyTotals() : totalsIn(slice.window, keysOf(key), slice.load, todayView);
 				const loading = slice.load.status === "loading";
-				const hint = key === "custom" && !customPicked && !loading ? t("usage.range.customPick") : void 0;
+				const hint = key === "custom" && !customPicked && !loading ? t("usage.range.customPick") : slice.kind === "range" && slice.load.status === "error" ? "—" : void 0;
 				return {
 					key,
 					totals,
@@ -2313,18 +2934,50 @@ window.__ModuleLoader__.load({
 					...hint === void 0 ? {} : { hint }
 				};
 			});
-			const dailyKeys = rangeKey === "custom" && !customPicked ? [] : dateKeysBetween(activeWindow.from, activeWindow.to);
-			const dailyRows = dailyKeys.length >= DAILY_CHART_MIN_DAYS && dailyKeys.length <= DAILY_CHART_MAX_DAYS ? dailyKeys.map((date) => {
+			const seriesByDate = activeSlice.kind === "range" && activeSlice.load.series !== void 0 ? new Map(activeSlice.load.series.map((row) => [row.date, row])) : void 0;
+			const daysByDate = activeSlice.kind === "days" ? activeSlice.load.days : void 0;
+			const trendRowsRaw = rangeKey === "custom" && !customPicked ? [] : dateKeysBetween(activeWindow.from, activeWindow.to).map((date) => {
 				if (todayView !== void 0 && date === todayView.date) return {
 					date,
-					totals: todayView.totals
+					totals: todayView.totals,
+					models: modelSplitOf(todayView)
 				};
-				const view = activeDays.days[date];
-				return {
+				const seriesRow = seriesByDate?.get(date);
+				if (seriesRow !== void 0) return seriesRow.models !== void 0 ? {
 					date,
-					totals: view === void 0 ? emptyTotals() : view.totals
+					totals: seriesRow.totals,
+					models: seriesRow.models
+				} : {
+					date,
+					totals: seriesRow.totals
 				};
-			}) : [];
+				const view = daysByDate?.[date];
+				return view !== void 0 ? {
+					date,
+					totals: view.totals,
+					models: modelSplitOf(view)
+				} : {
+					date,
+					totals: emptyTotals()
+				};
+			});
+			const modelBuckets = normalizeModelRows([...summaryRaw.providers.flatMap((row) => row.models.map((model) => ({
+				model: model.model,
+				total: totalOf(model.totals)
+			}))), ...trendRowsRaw.flatMap((row) => Object.entries(row.models ?? {}).map(([model, totals]) => ({
+				model,
+				total: totalOf(totals)
+			})))]);
+			const modelColors = assignModelColors(modelBuckets.keys());
+			const modelLabels = new Map([...modelBuckets].map(([model, bucket]) => [model, bucket.display]));
+			const summary = {
+				...summaryRaw,
+				providers: normalizedProviders(summaryRaw.providers)
+			};
+			const trendRows = trendRowsRaw.map((row) => row.models === void 0 ? row : {
+				...row,
+				models: normalizedSplit(row.models)
+			});
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: usage_module_css_default.section,
 				"data-dsh-plugin": "usage",
@@ -2418,15 +3071,15 @@ window.__ModuleLoader__.load({
 									boundaryMs: deepseekPeriod.boundaryMs,
 									variant: "full"
 								}),
-								activeDays.error !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+								activeSlice.load.error !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 									className: usage_module_css_default.errorLine,
-									children: t("usage.range.error", { error: activeDays.error })
+									children: t("usage.range.error", { error: activeSlice.load.error })
 								}),
 								rangeKey === "custom" && !customPicked ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 									className: usage_module_css_default.muted,
 									"data-dsh-part": "custom-prompt",
 									children: t("usage.range.customPrompt")
-								}) : activeDays.status === "loading" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+								}) : activeSlice.load.status === "loading" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 									className: usage_module_css_default.muted,
 									children: t("usage.range.loading")
 								}) : isEmptyTotals(summary.totals) && summary.providers.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
@@ -2445,7 +3098,11 @@ window.__ModuleLoader__.load({
 											children: formatCost(summary.totals.cost)
 										})]
 									}),
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(DailyChart, { days: dailyRows }),
+									trendRows.length >= TREND_CHART_MIN_DAYS && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TrendChart, {
+										rows: trendRows,
+										colors: modelColors,
+										labels: modelLabels
+									}),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: usage_module_css_default.cardTitle,
 										children: t("usage.range.channels")
@@ -2453,7 +3110,9 @@ window.__ModuleLoader__.load({
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ChannelBreakdown, {
 										summary,
 										providers: snapshot.providers,
-										currentProvider: current.provider
+										currentProvider: current.provider,
+										modelColors,
+										modelLabels
 									})
 								] })
 							]
@@ -3234,15 +3893,22 @@ window.__ModuleLoader__.load({
 		}
 		/**
 		* Open the settings panel on the usage section. The shell owns the panel's
-		* open state and exposes no service for it, so the card replays the user's
-		* own path: activate the sidebar Settings trigger, then pick the nav row
-		* carrying the section's (localized) label. Every step degrades silently —
-		* with the panel already open only the nav pick runs, and a missing row
-		* leaves the panel on its default section.
+		* open state and seats the ACCOUNT menu at the sidebar foot, whose 设置
+		* (Ctrl+,) item is what opens the dialog.
+		*
+		* The fast path invokes the shell's own settings.open command through the
+		* shortcuts registry: on Desktop Windows/macOS real keys are routed through
+		* the native preload bridge and the DOM keydown listener returns before
+		* dispatch, so a synthetic Ctrl+, never lands there, while the registry call
+		* opens the dialog on every runtime with no menu flash. Only when no registry
+		* arrived — or the command never landed — does the card open the account menu
+		* and click its 设置 item, the visible fallback. Every step degrades silently.
+		*
 		* @param label - the usage section's nav label in the active locale.
+		* @param faces - optional host faces from the apply body (the shortcuts service).
 		*/
-		function openUsageSettings(label) {
-			/** Click the nav row carrying the usage label inside the open panel. */
+		function openUsageSettings(label, faces) {
+			/** Click the nav row carrying the usage label inside the open dialog. */
 			const pick = (panel) => {
 				const wanted = label();
 				for (const row of panel.querySelectorAll("nav button")) if (row.textContent !== null && row.textContent.includes(wanted)) {
@@ -3250,21 +3916,56 @@ window.__ModuleLoader__.load({
 					return;
 				}
 			};
-			const open = document.querySelector("[role=\"dialog\"]");
+			const settingsDialog = () => document.querySelector("[data-shortcut-modal=\"settings\"]");
+			/**
+			* The account menu's 设置 item, when that menu has opened. The item may
+			* carry its Ctrl+, shortcut glued to the word, so the hint is stripped
+			* before an exact match keeps generic 设置-prefixed rows out.
+			*/
+			const accountSettingsItem = () => {
+				const menus = document.querySelectorAll("[role=\"menu\"], [role=\"dialog\"]:not([data-shortcut-modal=\"settings\"])");
+				for (const menu of menus) for (const candidate of menu.querySelectorAll("button, [role=\"menuitem\"]")) {
+					const name = `${candidate.textContent ?? ""} ${candidate.getAttribute("aria-label") ?? ""}`.replace(/\s+/g, " ").replace(/\s*Ctrl\+.*$/, "").trim();
+					if (name === "设置" || name === "Settings") return candidate;
+				}
+				return null;
+			};
+			/** The sidebar's settings-area trigger: the old launcher, else the account entry. */
+			const trigger = () => {
+				const column = document.querySelector("[data-pane=\"sidebar\"], [class*=\"sidebarCol\"]");
+				return column?.querySelector("[class*=\"settingsArea\"] button[aria-haspopup=\"dialog\"]") ?? column?.querySelector("[class*=\"settingsArea\"] button") ?? null;
+			};
+			const open = settingsDialog();
 			if (open !== null) {
 				pick(open);
 				return;
 			}
-			(document.querySelector("[data-pane=\"sidebar\"], [class*=\"sidebarCol\"]")?.querySelector("[class*=\"settingsArea\"] button"))?.click();
+			try {
+				faces?.shortcuts?.registry?.invoke("settings.open", {
+					target: null,
+					region: "page",
+					modal: null
+				});
+			} catch {}
 			let tries = 0;
+			let openedMenu = false;
 			const attempt = () => {
-				const panel = document.querySelector("[role=\"dialog\"]");
-				if (panel !== null) {
-					pick(panel);
+				const dialog = settingsDialog();
+				if (dialog !== null) {
+					pick(dialog);
 					return;
 				}
+				if (tries >= 5) {
+					if (!openedMenu) {
+						const item = accountSettingsItem();
+						if (item !== null) {
+							item.click();
+							openedMenu = true;
+						} else trigger()?.click();
+					}
+				}
 				tries += 1;
-				if (tries <= 20) window.setTimeout(attempt, 50);
+				if (tries <= 24) window.setTimeout(attempt, 50);
 			};
 			window.setTimeout(attempt, 0);
 		}
@@ -3402,6 +4103,7 @@ window.__ModuleLoader__.load({
 		const usageApi = {
 			overview: () => usageFetch("api/dsh-usage/overview", "GET"),
 			day: async (date) => (await usageFetch("api/dsh-usage/day?date=" + encodeURIComponent(date), "GET")).day,
+			range: (from, to) => usageFetch(`api/dsh-usage/range?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, "GET"),
 			refresh: () => usageFetch("api/dsh-usage/refresh", "POST"),
 			exportLedger: async () => {
 				const response = await fetch("api/dsh-usage/export", { signal: AbortSignal.timeout(USAGE_FETCH_TIMEOUT_MS) });
@@ -3503,6 +4205,7 @@ window.__ModuleLoader__.load({
 				});
 			};
 			const loadDay = (date) => usageApi.day(date);
+			const loadRange = (from, to) => usageApi.range(from, to);
 			const deviceSync = {
 				exportLedger: () => usageApi.exportLedger(),
 				importLedger: (text) => usageApi.importLedger(text),
@@ -3513,6 +4216,7 @@ window.__ModuleLoader__.load({
 				poll,
 				refresh,
 				loadDay,
+				loadRange,
 				settings: settingsForm,
 				deviceSync
 			});
@@ -3521,7 +4225,7 @@ window.__ModuleLoader__.load({
 				poll,
 				settings: settingsForm,
 				onOpen: () => {
-					openUsageSettings(() => t("usage.title"));
+					openUsageSettings(() => t("usage.title"), { shortcuts: ctx.get("shortcuts") });
 				},
 				locale: ctx.locale
 			});

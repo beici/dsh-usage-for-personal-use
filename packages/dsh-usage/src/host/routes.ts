@@ -4,7 +4,7 @@ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { isUsageAllowed } from './access.ts'
 import { writeJson } from './http.ts'
 import { isLedgerDateKey } from '../core/ledger.ts'
-import type { UsageDayResponse } from '../core/types.ts'
+import type { UsageDayResponse, UsageRangeResponse } from '../core/types.ts'
 import { UsageImportError } from './usage-service.ts'
 import type { UsageService } from './usage-service.ts'
 
@@ -59,6 +59,40 @@ export function makeUsageDayRoute(ctx: Context, service: UsageService): WebRoute
         return
       }
       writeJson(res, 200, { ok: true, day: service.day(date) } satisfies UsageDayResponse, { 'cache-control': 'no-store' })
+    },
+  }
+}
+
+/**
+ * One window-aggregate route: `GET /api/dsh-usage/range?from=YYYY-MM-DD&to=YYYY-MM-DD`
+ * answers the whole-window summary (per-provider, per-model breakdown) plus the
+ * per-day series the trend chart buckets, in ONE request. This is what makes
+ * the multi-month and multi-year windows viable — the per-day fetch path that
+ * the short windows use would cost one request per recorded day, which for a
+ * year-long window means hundreds of loopback round trips.
+ * Same trust fence as the overview route; a malformed or inverted range is
+ * refused with 400 rather than folded into a bogus span.
+ * @param ctx - host context; may expose remoteWebUiPairing.
+ * @param service - the usage service.
+ * @returns the route.
+ */
+export function makeUsageRangeRoute(ctx: Context, service: UsageService): WebRoute {
+  return {
+    kind: 'exact',
+    path: USAGE_API_PREFIX + '/range',
+    handler: (req: IncomingMessage, res: ServerResponse): void => {
+      if (!isUsageAllowed(ctx, req)) {
+        writeJson(res, 403, { ok: false, error: 'forbidden: loopback-only' })
+        return
+      }
+      const query = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams
+      const from = query.get('from') ?? ''
+      const to = query.get('to') ?? ''
+      if (!isLedgerDateKey(from) || !isLedgerDateKey(to) || from > to) {
+        writeJson(res, 400, { ok: false, error: 'from and to must be YYYY-MM-DD dates with from <= to' })
+        return
+      }
+      writeJson(res, 200, { ok: true, ...service.range(from, to) } satisfies UsageRangeResponse, { 'cache-control': 'no-store' })
     },
   }
 }

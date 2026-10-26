@@ -122,6 +122,12 @@ ${bundle}
       poll: () => {},
       refresh: () => {},
       loadDay: async (date) => { const day = days[date]; if (day === undefined) throw new Error('no fixture ' + date); return day },
+      loadRange: async (from, to) => ({
+        ok: true, from, to,
+        totals: overview.usage.all.totals,
+        providers: overview.usage.all.providers,
+        series: overview.usage.days.map((row) => ({ date: row.date, totals: row.totals })),
+      }),
       close: () => {},
     }
     const root = window.ReactDOMClient.createRoot(document.getElementById('root'))
@@ -136,7 +142,7 @@ ${bundle}
         const click = (el) => el && el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
         if (want === 'last30' || want === 'yesterday' || want === 'custom') {
           const tiles = qa('[data-dsh-part="range-tiles"] button')
-          click(tiles[{ last30: 3, yesterday: 1, custom: 4 }[want]])
+          click(tiles[{ last30: 4, yesterday: 1, custom: 7 }[want]])
           if (want === 'custom') {
             window.setTimeout(() => {
               const inputs = qa('[data-dsh-part="custom-range"] input[type="date"]')

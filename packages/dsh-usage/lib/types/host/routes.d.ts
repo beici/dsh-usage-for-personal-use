@@ -25,6 +25,20 @@ export declare function makeUsageOverviewRoute(ctx: Context, service: UsageServi
  */
 export declare function makeUsageDayRoute(ctx: Context, service: UsageService): WebRoute;
 /**
+ * One window-aggregate route: `GET /api/dsh-usage/range?from=YYYY-MM-DD&to=YYYY-MM-DD`
+ * answers the whole-window summary (per-provider, per-model breakdown) plus the
+ * per-day series the trend chart buckets, in ONE request. This is what makes
+ * the multi-month and multi-year windows viable — the per-day fetch path that
+ * the short windows use would cost one request per recorded day, which for a
+ * year-long window means hundreds of loopback round trips.
+ * Same trust fence as the overview route; a malformed or inverted range is
+ * refused with 400 rather than folded into a bogus span.
+ * @param ctx - host context; may expose remoteWebUiPairing.
+ * @param service - the usage service.
+ * @returns the route.
+ */
+export declare function makeUsageRangeRoute(ctx: Context, service: UsageService): WebRoute;
+/**
  * Manual refresh: forces one probe cycle now and answers with the fresh
  * overview. Same trust fence as the overview route.
  * @param ctx - host context; may expose remoteWebUiPairing.

@@ -7,6 +7,70 @@
   flex-direction: column;
   gap: 16px;
   color: inherit;
+  /* 模型分类色:reasonix usage-stats 十色 + 同风格补足的六色(azure/leaf/
+     mint/rose/violet/steel,补全色轮空档)+ 中性灰 Other,由 model-colors.ts
+     按 token 排名分配;原始色相在浅色卡面上偏重,掺 30% 白提亮去饱和。 */
+  --dsw-chart-1: color-mix(in srgb, #0576ff 70%, white);
+  --dsw-chart-2: color-mix(in srgb, #2f6f37 70%, white);
+  --dsw-chart-3: color-mix(in srgb, #c46212 70%, white);
+  --dsw-chart-4: color-mix(in srgb, #975bf1 70%, white);
+  --dsw-chart-5: color-mix(in srgb, #d34591 70%, white);
+  --dsw-chart-6: color-mix(in srgb, #0d8a8a 70%, white);
+  --dsw-chart-7: color-mix(in srgb, #b3341f 70%, white);
+  --dsw-chart-8: color-mix(in srgb, #7a9018 70%, white);
+  --dsw-chart-9: color-mix(in srgb, #4b3fd0 70%, white);
+  --dsw-chart-10: color-mix(in srgb, #d4a017 70%, white);
+  --dsw-chart-11: color-mix(in srgb, #c25a7e 70%, white);
+  --dsw-chart-12: color-mix(in srgb, #619e3a 70%, white);
+  --dsw-chart-13: color-mix(in srgb, #2f9e73 70%, white);
+  --dsw-chart-14: color-mix(in srgb, #0f96c9 70%, white);
+  --dsw-chart-15: color-mix(in srgb, #a855c9 70%, white);
+  --dsw-chart-16: color-mix(in srgb, #5c7ac0 70%, white);
+  --dsw-chart-other: color-mix(in srgb, #737373 70%, white);
+}
+
+/* 深色皮肤:同样的色相换更厚的白纱(65%),段面读起来柔和明亮而不是沉进底色。
+   DSH 桌面端用 body[data-ds-dark-theme] 切换;浏览器场景退回系统偏好。 */
+body[data-ds-dark-theme] .section {
+  --dsw-chart-1: color-mix(in srgb, #0576ff 65%, white);
+  --dsw-chart-2: color-mix(in srgb, #2f6f37 65%, white);
+  --dsw-chart-3: color-mix(in srgb, #c46212 65%, white);
+  --dsw-chart-4: color-mix(in srgb, #975bf1 65%, white);
+  --dsw-chart-5: color-mix(in srgb, #d34591 65%, white);
+  --dsw-chart-6: color-mix(in srgb, #0d8a8a 65%, white);
+  --dsw-chart-7: color-mix(in srgb, #b3341f 65%, white);
+  --dsw-chart-8: color-mix(in srgb, #7a9018 65%, white);
+  --dsw-chart-9: color-mix(in srgb, #4b3fd0 65%, white);
+  --dsw-chart-10: color-mix(in srgb, #d4a017 65%, white);
+  --dsw-chart-11: color-mix(in srgb, #c25a7e 65%, white);
+  --dsw-chart-12: color-mix(in srgb, #619e3a 65%, white);
+  --dsw-chart-13: color-mix(in srgb, #2f9e73 65%, white);
+  --dsw-chart-14: color-mix(in srgb, #0f96c9 65%, white);
+  --dsw-chart-15: color-mix(in srgb, #a855c9 65%, white);
+  --dsw-chart-16: color-mix(in srgb, #5c7ac0 65%, white);
+  --dsw-chart-other: color-mix(in srgb, #737373 65%, white);
+}
+
+@media (prefers-color-scheme: dark) {
+  .section {
+    --dsw-chart-1: color-mix(in srgb, #0576ff 65%, white);
+    --dsw-chart-2: color-mix(in srgb, #2f6f37 65%, white);
+    --dsw-chart-3: color-mix(in srgb, #c46212 65%, white);
+    --dsw-chart-4: color-mix(in srgb, #975bf1 65%, white);
+    --dsw-chart-5: color-mix(in srgb, #d34591 65%, white);
+    --dsw-chart-6: color-mix(in srgb, #0d8a8a 65%, white);
+    --dsw-chart-7: color-mix(in srgb, #b3341f 65%, white);
+    --dsw-chart-8: color-mix(in srgb, #7a9018 65%, white);
+    --dsw-chart-9: color-mix(in srgb, #4b3fd0 65%, white);
+    --dsw-chart-10: color-mix(in srgb, #d4a017 65%, white);
+    --dsw-chart-11: color-mix(in srgb, #c25a7e 65%, white);
+    --dsw-chart-12: color-mix(in srgb, #619e3a 65%, white);
+    --dsw-chart-13: color-mix(in srgb, #2f9e73 65%, white);
+    --dsw-chart-14: color-mix(in srgb, #0f96c9 65%, white);
+    --dsw-chart-15: color-mix(in srgb, #a855c9 65%, white);
+    --dsw-chart-16: color-mix(in srgb, #5c7ac0 65%, white);
+    --dsw-chart-other: color-mix(in srgb, #737373 65%, white);
+  }
 }
 
 .header {
@@ -155,6 +219,8 @@
 .stat {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  text-align: center;
   gap: 2px;
 }
 
@@ -226,7 +292,15 @@
 .chartProvider {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
+}
+
+/* 渠道行是分组标题:名字与数字都比模型子行更重、更实,先读渠道、再读
+   明细;子行整体压暗、字号不变,避免两组文字抢同一种重量。渠道之间用
+   一条极淡的分隔线断句。 */
+.chartProvider + .chartProvider {
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, currentColor 7%, transparent);
 }
 
 .chartHead {
@@ -237,32 +311,50 @@
   font-size: 13px;
 }
 
+.chartHeadName {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.chartHeadTokens {
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  font-weight: 600;
+  opacity: 0.88;
+  white-space: nowrap;
+}
+
+/* 模型子行的数字:比渠道行淡一档,和子条一起退到背景层。 */
 .chartTokens {
   font-variant-numeric: tabular-nums;
-  opacity: 0.65;
+  opacity: 0.6;
   font-size: 11px;
   white-space: nowrap;
 }
 
+/* 渠道条:弹性排布的模型色段(每段 = 渠道内一个模型,同一模型在整张面板
+   同色),宽度即该模型在窗口里的占比。 */
 .chartBar {
-  display: block;
+  display: flex;
   height: 8px;
   border-radius: 999px;
   background: color-mix(in srgb, currentColor 8%, transparent);
   overflow: hidden;
 }
 
-.chartFill {
+.chartSeg {
   display: block;
   height: 100%;
-  border-radius: 999px;
-  background: color-mix(in srgb, currentColor 55%, transparent);
-  transition: width 300ms ease;
+  flex: none;
 }
 
+/* Both side columns are FIXED so every row's 1fr track measures the same
+   length — within a channel and across channels. Content-sized columns
+   (minmax/auto) resolved per row and shrank the gray track by each row's own
+   name and caption width, which read as bars of inconsistent length. */
 .chartModel {
   display: grid;
-  grid-template-columns: minmax(80px, 180px) 1fr auto;
+  grid-template-columns: 180px 1fr 176px;
   align-items: center;
   gap: 8px;
   padding-left: 14px;
@@ -274,7 +366,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  opacity: 0.8;
+  opacity: 0.95;
 }
 
 .chartModelBar {
@@ -293,19 +385,170 @@
   transition: width 300ms ease;
 }
 
-.trendAxis {
+/* 趋势图:窗口内一天/一周/一月一根堆叠柱,配 1/2/5×10ⁿ 整刻度网格线、左侧刻度、
+   稀疏 X 轴标签与悬浮明细;超过逐日宽度自动按周/按月分桶。三段用固定的分类色
+   (蓝/紫/琥珀,500 级在明暗两套主题上都可读)而不是 currentColor 灰阶——量大
+   的缓存读沉在底部用冷静的蓝,输出是最小的顶部段用暖色点出"生成"的部分。 */
+.trendWrap {
   display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-  opacity: 0.5;
-  font-variant-numeric: tabular-nums;
+  flex-direction: column;
+  gap: 6px;
 }
 
-/* 统计窗口条：五个窗口等宽排布，每块直接标出窗口总量和调用次数，切换前
-   就能横向比较；自定义窗口激活时在其下方展开两个日期输入。 */
+.trendPlot {
+  display: flex;
+  gap: 6px;
+  height: 96px;
+}
+
+/* Y 刻度列的宽度与 .trendXLabels 的让位距离 (34px + 6px gap) 保持一致。 */
+.trendYLabels {
+  position: relative;
+  width: 34px;
+  flex: none;
+}
+
+.trendYLabel {
+  position: absolute;
+  right: 0;
+  transform: translateY(50%);
+  font-size: 9px;
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.trendArea {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.trendGridline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.trendBars {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+/* column-reverse 让 DOM 顺序 (缓存读→输入→输出) 直接成为自底向上的堆叠。 */
+.trendBar {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column-reverse;
+  height: 100%;
+  min-width: 2px;
+  overflow: hidden;
+  border-radius: 2px 2px 0 0;
+}
+
+.trendBar:hover {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+.trendSeg {
+  display: block;
+  width: 100%;
+}
+
+/* token 回退栈(窗口无模型数据时的旧宿主兼容):中性 currentColor 灰阶,
+   不与模型色板争色。 */
+.trendSegCache {
+  background: color-mix(in srgb, currentColor 70%, transparent);
+}
+
+.trendSegInput {
+  background: color-mix(in srgb, currentColor 45%, transparent);
+}
+
+.trendSegOutput {
+  background: color-mix(in srgb, currentColor 22%, transparent);
+}
+
+.trendBar:hover .trendSeg {
+  filter: saturate(1.15) brightness(1.06);
+}
+
+/* 悬浮明细需要不透明底才能压住柱子:读皮肤 token,缺省回退 Canvas/CanvasText。 */
+.trendTooltip {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transform: translate(-50%, -100%);
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  background: var(--dsw-alias-bg-floating, Canvas);
+  color: var(--dsw-alias-label-primary, CanvasText);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 14px color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.trendTooltipTitle {
+  font-weight: 600;
+}
+
+.trendTooltipLine {
+  opacity: 0.8;
+}
+
+.trendXLabels {
+  position: relative;
+  height: 14px;
+  /* 与 .trendYLabels 宽度 + .trendPlot gap 对齐,标签才落在各自柱下。 */
+  margin-left: 40px;
+}
+
+.trendXLabel {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 9px;
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.trendLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 10px;
+  opacity: 0.65;
+}
+
+.trendLegendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.trendSwatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+/* 统计窗口条：八个窗口四列两行，每块直接标出窗口总量和调用次数，切换前就能
+   横向比较；自定义窗口激活时在其下方展开两个日期输入。 */
 .rangeGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -393,55 +636,11 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 每日柱状图：窗口内一天一根竖柱，没记录的日子留空槽，记录缺口一眼可见。 */
-.dailyWrap {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.dailyChart {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 72px;
-  padding: 2px 0;
-  border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
-}
-
-.dailyBar {
-  flex: 1 1 0;
-  display: flex;
-  align-items: flex-end;
-  height: 100%;
-  min-width: 2px;
-}
-
-.dailyFill {
-  display: block;
-  width: 100%;
-  border-radius: 2px 2px 0 0;
-  background: color-mix(in srgb, currentColor 45%, transparent);
-  transition: height 300ms ease;
-}
-
-.dailyBar:hover .dailyFill {
-  background: color-mix(in srgb, currentColor 70%, transparent);
-}
-
-.dailyLabels {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-  opacity: 0.5;
-  font-variant-numeric: tabular-nums;
-}
-
 /* 模型行不设条数上限，随渠道条一起铺开。 */
 .modelRows {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 
 .muted {

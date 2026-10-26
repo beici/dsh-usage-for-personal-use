@@ -22,6 +22,25 @@ import { UsageFootCard, type UsageFootCardProps } from './UsageFootCard.tsx'
 /** Stable data attribute identifying the injected card container. */
 export const FOOT_CARD_SELECTOR = '[data-dsh-usage-foot-card]'
 
+/**
+ * The shortcuts registry face the shell's settings.open command is invoked
+ * through; restated here because dsh-client-shortcuts ships no client types.
+ */
+export interface ShortcutsRegistryFace {
+  invoke(id: string, context: { target: unknown; region: string; modal: string | null }): void
+}
+
+/** The shortcuts service face the apply body hands in, when the host serves it. */
+export interface ShortcutsServiceFace {
+  registry?: ShortcutsRegistryFace
+}
+
+/** Optional host faces the settings opener consumes; every one may be absent. */
+export interface UsageSettingsOpenerFaces {
+  /** Shell keyboard command registry; absent when the host predates it. */
+  shortcuts?: ShortcutsServiceFace
+}
+
 /** The shell sidebar's foot area (footer actions + the Settings row), when mounted. */
 function footArea(): HTMLElement | undefined {
   const column = document.querySelector<HTMLElement>('[data-pane="sidebar"], [class*="sidebarCol"]')
@@ -30,15 +49,22 @@ function footArea(): HTMLElement | undefined {
 
 /**
  * Open the settings panel on the usage section. The shell owns the panel's
- * open state and exposes no service for it, so the card replays the user's
- * own path: activate the sidebar Settings trigger, then pick the nav row
- * carrying the section's (localized) label. Every step degrades silently —
- * with the panel already open only the nav pick runs, and a missing row
- * leaves the panel on its default section.
+ * open state and seats the ACCOUNT menu at the sidebar foot, whose 设置
+ * (Ctrl+,) item is what opens the dialog.
+ *
+ * The fast path invokes the shell's own settings.open command through the
+ * shortcuts registry: on Desktop Windows/macOS real keys are routed through
+ * the native preload bridge and the DOM keydown listener returns before
+ * dispatch, so a synthetic Ctrl+, never lands there, while the registry call
+ * opens the dialog on every runtime with no menu flash. Only when no registry
+ * arrived — or the command never landed — does the card open the account menu
+ * and click its 设置 item, the visible fallback. Every step degrades silently.
+ *
  * @param label - the usage section's nav label in the active locale.
+ * @param faces - optional host faces from the apply body (the shortcuts service).
  */
-export function openUsageSettings(label: () => string): void {
-  /** Click the nav row carrying the usage label inside the open panel. */
+export function openUsageSettings(label: () => string, faces?: UsageSettingsOpenerFaces): void {
+  /** Click the nav row carrying the usage label inside the open dialog. */
   const pick = (panel: Element): void => {
     const wanted = label()
     for (const row of panel.querySelectorAll<HTMLButtonElement>('nav button')) {
@@ -49,26 +75,78 @@ export function openUsageSettings(label: () => string): void {
     }
     // Panel open but the usage row is gone (plugin toggled off): stay put.
   }
-  // A panel that is already open must never be toggled shut by the trigger;
-  // only the nav pick runs.
-  const open = document.querySelector('[role="dialog"]')
+
+  // The settings dialog carries the shell's own modal marker; a bare
+  // [role=dialog] also matches the account menu and other popovers.
+  const settingsDialog = (): Element | null => document.querySelector('[data-shortcut-modal="settings"]')
+
+  /**
+   * The account menu's 设置 item, when that menu has opened. The item may
+   * carry its Ctrl+, shortcut glued to the word, so the hint is stripped
+   * before an exact match keeps generic 设置-prefixed rows out.
+   */
+  const accountSettingsItem = (): HTMLElement | null => {
+    const menus = document.querySelectorAll('[role="menu"], [role="dialog"]:not([data-shortcut-modal="settings"])')
+    for (const menu of menus) {
+      for (const candidate of menu.querySelectorAll<HTMLElement>('button, [role="menuitem"]')) {
+        const name = `${candidate.textContent ?? ''} ${candidate.getAttribute('aria-label') ?? ''}`.replace(/\s+/g, ' ').replace(/\s*Ctrl\+.*$/, '').trim()
+        if (name === '设置' || name === 'Settings') return candidate
+      }
+    }
+    return null
+  }
+
+  /** The sidebar's settings-area trigger: the old launcher, else the account entry. */
+  const trigger = (): HTMLButtonElement | null => {
+    const column = document.querySelector<HTMLElement>('[data-pane="sidebar"], [class*="sidebarCol"]')
+    return column?.querySelector<HTMLButtonElement>('[class*="settingsArea"] button[aria-haspopup="dialog"]')
+      ?? column?.querySelector<HTMLButtonElement>('[class*="settingsArea"] button')
+      ?? null
+  }
+
+  // A dialog that is already open must never be toggled shut; only the nav
+  // pick runs.
+  const open = settingsDialog()
   if (open !== null) {
     pick(open)
     return
   }
-  const column = document.querySelector<HTMLElement>('[data-pane="sidebar"], [class*="sidebarCol"]')
-  const trigger = column?.querySelector<HTMLButtonElement>('[class*="settingsArea"] button')
-  trigger?.click()
+
+  // Fast path: the shell's own settings.open command through the shortcuts
+  // registry. The command's resolve treats a null modal as "open", and its run
+  // flips the settings shell's store directly — the account menu never paints.
+  try {
+    faces?.shortcuts?.registry?.invoke('settings.open', { target: null, region: 'page', modal: null })
+  } catch {
+    // A host with an incompatible registry face: the menu fallback below runs.
+  }
+
   let tries = 0
+  let openedMenu = false
   const attempt = (): void => {
-    const panel = document.querySelector('[role="dialog"]')
-    if (panel !== null) {
-      pick(panel)
+    const dialog = settingsDialog()
+    if (dialog !== null) {
+      pick(dialog)
       return
+    }
+    // The command did not land (no registry face, unbound, or an incompatible
+    // host): fall back to the visible path — the account menu, then its 设置
+    // item. An already-open menu skips the trigger click, which would toggle
+    // it shut.
+    if (tries >= 5) {
+      if (!openedMenu) {
+        const item = accountSettingsItem()
+        if (item !== null) {
+          item.click()
+          openedMenu = true
+        } else {
+          trigger()?.click()
+        }
+      }
     }
     tries += 1
     // The panel mounts on the shell's next frames; wait briefly, then give up.
-    if (tries <= 20) window.setTimeout(attempt, 50)
+    if (tries <= 24) window.setTimeout(attempt, 50)
   }
   window.setTimeout(attempt, 0)
 }

@@ -1,17 +1,19 @@
 /**
  * The usage statistics settings section: three tabs (用量: one time window
- * picked from 今日 / 昨日 / 近 7 天 / 近 30 天 / 自定义, rendered as window
- * totals plus the per-channel and per-model breakdown and a per-day bar chart,
- * with balances below; 个人套餐: per-provider plan quota windows; Token 银行:
- * the whale-yuan voucher minted from the DeepSeek official family's usage)
- * plus a compact settings row.
+ * picked from 今日 / 昨日 / 近 3 天 / 近 7 天 / 近 30 天 / 近 6 个月 / 近 1 年 /
+ * 自定义, rendered as window totals plus the per-channel and per-model
+ * breakdown and the trend chart, with balances below; 个人套餐: per-provider
+ * plan quota windows; Token 银行: the whale-yuan voucher minted from the
+ * DeepSeek official family's usage) plus a compact settings row.
  *
  * Data: today and the whole-ledger aggregates ride the host's loopback-fenced
- * /api/dsh-usage/overview document. Any window that reaches past today is
- * merged in the browser from one small `/api/dsh-usage/day` request per day
- * the ledger recorded inside the window (the overview lists those days), so a
- * window costs a handful of cheap loopback requests at most and the merged
- * days are cached for the session. Polling runs only while the section is
+ * /api/dsh-usage/overview document. A window at most RANGE_FETCH_MAX_DAYS
+ * long is merged in the browser from one small `/api/dsh-usage/day` request
+ * per day the ledger recorded inside the window (the overview lists those
+ * days); a longer one reads a single `/api/dsh-usage/range` aggregate instead
+ * — one request answering the whole-window summary plus the per-day series,
+ * which is what makes the multi-month windows viable. Merged days and fetched
+ * ranges are cached for the session. Polling runs only while the section is
  * mounted and the tab is visible.
  * @module @linxin666/dsh-usage/client/UsageSectionCard
  */
@@ -22,12 +24,19 @@ import type { UsageStoreInstance } from './usage-store.ts'
 import { t } from './locales.ts'
 import styles from './usage.module.css'
 import { PeakBadge } from './PeakBadge.tsx'
+import { TrendChart, type TrendRow } from './TrendChart.tsx'
+import { assignModelColors, MODEL_COLOR_OTHER, normalizeModelName, normalizeModelRows } from './model-colors.ts'
 import { isDeepSeekProviderRoute } from '../core/adapters.ts'
 import { deepseekPeriodAt } from '../core/pricing.ts'
 import { localDateKey } from '../core/ledger.ts'
 import { voucherData, drawVoucher, faceValue, formatDay, formatDenomination, loadVoucherArt } from './voucher.ts'
 import { DeviceSyncCard, type DeviceSyncApi } from './DeviceSyncCard.tsx'
-import { addTotals, emptyTotals, type ObservedSpendView, type ProviderSnapshotView, type UsageDayView, type UsageOverviewView, type UsageProviderSummary, type UsageTokenTotals, type UsageWindowSummary } from '../core/types.ts'
+import { addTotals, emptyTotals, type ObservedSpendView, type ProviderSnapshotView, type UsageDayView, type UsageOverviewView, type UsageProviderSummary, type UsageRangeResponse, type UsageTokenTotals, type UsageWindowSummary } from '../core/types.ts'
+import { formatTokens } from './format.ts'
+
+// Re-exported for the foot card's imports; the implementation lives in
+// ./format.ts so TrendChart shares it without a cycle back through this file.
+export { formatTokens } from './format.ts'
 
 /** The settings fields this section edits (immediate-apply semantics). */
 export interface UsageSettings {
@@ -49,6 +58,13 @@ export interface UsageSectionFace {
    * reaches past today is one small on-demand request per recorded day.
    */
   loadDay: (date: string) => Promise<UsageDayView>
+  /**
+   * Fetch one window aggregate (from/to local-date keys) from the host:
+   * whole-window totals, the per-provider per-model breakdown, and the
+   * per-day series, in one request. Windows past RANGE_FETCH_MAX_DAYS read
+   * this instead of one request per recorded day.
+   */
+  loadRange: (from: string, to: string) => Promise<UsageRangeResponse>
   /** The shared configuration form this section's settings row reads and writes. */
   settings: ConfigForm<UsageSettings>
   /** Manual cross-device ledger export/import (absent on an older host face). */
@@ -72,34 +88,19 @@ const BANK_ALL_DAYS = 'all'
 /** Longest window a custom date pair may describe (the ledger retains at most 730 days). */
 const CUSTOM_MAX_DAYS = 366
 
-/** Widest window that still renders one readable bar per day. */
-const DAILY_CHART_MAX_DAYS = 45
-
 /**
- * The daily chart needs at least two columns to say anything: a single-day
+ * The trend chart needs at least two columns to say anything: a single-day
  * window would paint one bar across the full width, which reads as a solid
  * block rather than a chart, so those windows keep the totals and breakdown.
+ * Wider windows need no cap here — the chart buckets them per week/month.
  */
-const DAILY_CHART_MIN_DAYS = 2
+const TREND_CHART_MIN_DAYS = 2
 
 /** Model rows kept per channel of a merged window (the host caps one day the same way). */
 const WINDOW_MODEL_CAP = 12
 
 /** Per-day requests one window may keep in flight. */
 const DAY_FETCH_CONCURRENCY = 6
-
-/** Compact token count: 12345 -> 12.3k, 1234567 -> 1.23M. */
-export function formatTokens(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return '0'
-  if (value < 1000) return String(value)
-  if (value < 1_000_000) return trim(value / 1000) + 'k'
-  if (value < 1_000_000_000) return trim(value / 1_000_000) + 'M'
-  return trim(value / 1_000_000_000) + 'B'
-}
-
-function trim(value: number): string {
-  return value >= 100 ? String(Math.round(value)) : value.toFixed(value >= 10 ? 1 : 2).replace(/\.?0+$/, '')
-}
 
 function formatTime(ms: number): string {
   try {
@@ -163,17 +164,28 @@ interface RangeWindow {
   to: string
 }
 
-/** The fixed windows the section offers, plus the user-picked custom range. */
-type RangeKey = 'today' | 'yesterday' | 'last7' | 'last30' | 'custom'
+/** The fixed windows the section offers, plus the user-picked custom range.
+ *  Windows at most 45 days long read per-day views; longer ones fetch a
+ *  single window aggregate from the host (see RANGE_FETCH_MAX_DAYS). */
+type RangeKey = 'today' | 'yesterday' | 'last3' | 'last7' | 'last30' | 'last180' | 'all' | 'custom'
 
 /** Locale key of each window's label. */
 const RANGE_LABEL_KEYS: Record<RangeKey, string> = {
   today: 'usage.range.today',
   yesterday: 'usage.range.yesterday',
+  last3: 'usage.range.last3',
   last7: 'usage.range.last7',
   last30: 'usage.range.last30',
+  last180: 'usage.range.last180',
+  all: 'usage.range.all',
   custom: 'usage.range.custom',
 }
+
+/**
+ * Longest window the per-day fetch path serves. Past it the section switches to
+ * the host's range aggregate: one request instead of up to a few hundred.
+ */
+const RANGE_FETCH_MAX_DAYS = 45
 
 /** Session cache of fetched day views: a past day does not change within one.
  * Refreshing the panel clears it, because a late backfill can still land. */
@@ -273,6 +285,100 @@ function useWindowDays(
   return load
 }
 
+/** One fetched window aggregate, minus the wire envelope's identity fields. */
+interface RangeResult {
+  summary: { totals: UsageTokenTotals; providers: UsageProviderSummary[] }
+  series: Array<{ date: string; totals: UsageTokenTotals; models?: Record<string, UsageTokenTotals> }>
+}
+
+/**
+ * Session cache of fetched range aggregates, keyed `from:to`. Same lifetime
+ * reasoning as the day cache: refreshing clears it because a late backfill or
+ * peer import can still change a past window.
+ */
+const rangeResults = new Map<string, RangeResult>()
+
+/** In-flight range requests, so overlapping windows share one fetch. */
+const rangeRequests = new Map<string, Promise<UsageRangeResponse>>()
+
+function requestRange(loadRange: (from: string, to: string) => Promise<UsageRangeResponse>, from: string, to: string): Promise<UsageRangeResponse> {
+  const key = `${from}:${to}`
+  const pending = rangeRequests.get(key)
+  if (pending !== undefined) return pending
+  const request = loadRange(from, to).then(
+    (response) => {
+      rangeRequests.delete(key)
+      rangeResults.set(key, { summary: { totals: response.totals, providers: response.providers }, series: response.series })
+      return response
+    },
+    (error: unknown) => {
+      rangeRequests.delete(key)
+      throw error
+    },
+  )
+  rangeRequests.set(key, request)
+  return request
+}
+
+/** How one window's range aggregate fetch is going. */
+interface RangeLoad {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  summary?: { totals: UsageTokenTotals; providers: UsageProviderSummary[] }
+  series?: Array<{ date: string; totals: UsageTokenTotals; models?: Record<string, UsageTokenTotals> }>
+  /** Transport error message, on a failed load. */
+  error?: string
+}
+
+/**
+ * Fetch one window's aggregate. An empty or absent window stays idle (the
+ * untouched custom range fetches nothing), a cached range resolves
+ * immediately, and a superseded window never lands because the effect
+ * cancels. `epoch` invalidates the cache the same way the day cache's does.
+ */
+function useRangeData(
+  loadRange: (from: string, to: string) => Promise<UsageRangeResponse>,
+  window: RangeWindow | undefined,
+  epoch: number,
+): RangeLoad {
+  const key = window === undefined || window.from === '' || window.to === '' ? '' : `${window.from}:${window.to}`
+  const [load, setLoad] = useState<RangeLoad>({ status: 'idle' })
+  useEffect(() => {
+    if (key === '') {
+      setLoad((previous) => (previous.status === 'idle' ? previous : { status: 'idle' }))
+      return undefined
+    }
+    const cached = rangeResults.get(key)
+    if (cached !== undefined) {
+      setLoad({ status: 'ready', summary: cached.summary, series: cached.series })
+      return undefined
+    }
+    let cancelled = false
+    setLoad({ status: 'loading' })
+    requestRange(loadRange, key.slice(0, 10), key.slice(11)).then(
+      (response) => {
+        if (cancelled) return
+        const stored = rangeResults.get(key)
+        setLoad({
+          status: 'ready',
+          summary: stored?.summary ?? { totals: response.totals, providers: response.providers },
+          series: response.series,
+        })
+      },
+      (error: unknown) => {
+        if (!cancelled) setLoad({ status: 'error', error: error instanceof Error ? error.message : String(error) })
+      },
+    )
+    return () => { cancelled = true }
+  // `key` carries the window bounds; `epoch` invalidates the cache.
+  }, [key, loadRange, epoch])
+  return load
+}
+
+/** How one window's detail is served: per-day views merged in the browser, or one host-side range aggregate. */
+type WindowSlice =
+  | { window: RangeWindow; kind: 'days'; load: WindowDays }
+  | { window: RangeWindow; kind: 'range'; load: RangeLoad }
+
 /**
  * Merge per-day views into one window summary: disjoint bucket sums per
  * provider, per-model rows heaviest first, providers heaviest first. Mirrors
@@ -314,6 +420,64 @@ function inWindow(window: RangeWindow, date: string): boolean {
   return window.from !== '' && date >= window.from && date <= window.to
 }
 
+/**
+ * One day's per-model totals aggregated across providers — the trend bars'
+ * stack input. Provider rows arrive heaviest-first with their models capped,
+ * which is the same view the breakdown renders.
+ */
+function modelSplitOf(view: UsageDayView): Record<string, UsageTokenTotals> {
+  const models: Record<string, UsageTokenTotals> = {}
+  for (const row of view.providers) {
+    for (const model of row.models) {
+      const bucket = models[model.model] ?? emptyTotals()
+      addTotals(bucket, model.totals)
+      models[model.model] = bucket
+    }
+  }
+  return models
+}
+
+/**
+ * Merge a per-model split onto normalized names (see model-colors) so the
+ * same model under different spellings or `provider/` routes stacks as one
+ * segment instead of slivering the bar with near-identical hues.
+ */
+function normalizedSplit(split: Record<string, UsageTokenTotals>): Record<string, UsageTokenTotals> {
+  const models: Record<string, UsageTokenTotals> = {}
+  for (const [model, totals] of Object.entries(split)) {
+    const key = normalizeModelName(model)
+    const bucket = models[key] ?? emptyTotals()
+    addTotals(bucket, totals)
+    models[key] = bucket
+  }
+  return models
+}
+
+/**
+ * The same fold for a window summary's provider rows: model entries merge by
+ * normalized name, re-rank by size and re-apply the per-provider cap, so the
+ * breakdown bars and model rows read the merged view.
+ */
+function normalizedProviders(providers: readonly UsageProviderSummary[]): UsageProviderSummary[] {
+  return providers.map((row) => {
+    const models = new Map<string, UsageTokenTotals>()
+    for (const model of row.models) {
+      const key = normalizeModelName(model.model)
+      const bucket = models.get(key) ?? emptyTotals()
+      addTotals(bucket, model.totals)
+      models.set(key, bucket)
+    }
+    return {
+      provider: row.provider,
+      totals: row.totals,
+      models: [...models]
+        .map(([model, totals]) => ({ model, totals }))
+        .sort((a, b) => totalOf(b.totals) - totalOf(a.totals))
+        .slice(0, WINDOW_MODEL_CAP),
+    }
+  })
+}
+
 /** The day views one window holds, including the live overview day. */
 function viewsIn(window: RangeWindow, dateKeys: readonly string[], load: WindowDays, todayView: UsageDayView | undefined): UsageDayView[] {
   const views: UsageDayView[] = []
@@ -348,6 +512,10 @@ function recordedIn(window: RangeWindow, recorded: readonly string[], today: str
 
 function TotalsRow(props: { totals: UsageTokenTotals }): ReactNode {
   const { totals } = props
+  // Cache-hit share: of everything billed as input, the part served from
+  // cache. Nothing billed yet reads as an em dash rather than a bogus 0%.
+  const billedInput = totals.inputTokens + totals.cacheReadTokens + totals.cacheWriteTokens
+  const cacheHit = billedInput === 0 ? undefined : (totals.cacheReadTokens / billedInput) * 100
   return (
     <div className={styles.statRow}>
       <div className={styles.stat}>
@@ -367,8 +535,8 @@ function TotalsRow(props: { totals: UsageTokenTotals }): ReactNode {
         <span className={styles.statLabel}>{t('usage.tokens.cacheRead')}</span>
       </div>
       <div className={styles.stat}>
-        <span className={styles.statValue}>{formatTokens(totals.cacheWriteTokens)}</span>
-        <span className={styles.statLabel}>{t('usage.tokens.cacheWrite')}</span>
+        <span className={styles.statValue}>{cacheHit === undefined ? '—' : cacheHit.toFixed(1) + '%'}</span>
+        <span className={styles.statLabel}>{t('usage.tokens.cacheHit')}</span>
       </div>
       <div className={styles.stat}>
         <span className={styles.statValue}>{formatTokens(totals.calls)}</span>
@@ -539,46 +707,72 @@ function RangeStrip(props: {
 /**
  * One channel bar with its model sub-bars and the share of the window it
  * holds. Every model the host returned renders (the wire caps a provider at 12
- * rows), so a window never hides a model behind a "top 3".
+ * rows), so a window never hides a model behind a "top 3". The provider bar is
+ * a stacked fill of its models' hues — heaviest model first — so a
+ * multi-model channel reads as the color mix it is, and each model keeps the
+ * one hue it carries everywhere else in the panel.
  */
-function ChannelBreakdown(props: { summary: UsageWindowSummary; providers: ProviderSnapshotView[]; currentProvider?: string }): ReactNode {
-  const { summary, providers, currentProvider } = props
+function ChannelBreakdown(props: { summary: UsageWindowSummary; providers: ProviderSnapshotView[]; currentProvider?: string; modelColors: Map<string, string>; modelLabels: Map<string, string> }): ReactNode {
+  const { summary, providers, currentProvider, modelColors, modelLabels } = props
   const { totals } = summary
   const grand = totalOf(totals)
   if (summary.providers.length === 0 || grand === 0) return <span className={styles.muted}>{t('usage.range.empty')}</span>
-  const maxProvider = Math.max(1, ...summary.providers.map((row) => totalOf(row.totals)))
   const nameOf = (id: string): string => providers.find((provider) => provider.provider === id)?.displayName ?? id
+  const labelOf = (model: string): string => modelLabels.get(model) ?? model
   return (
     <div className={styles.chart} data-dsh-part="channel-breakdown">
       {summary.providers.map((row) => {
         const total = totalOf(row.totals)
         const share = Math.round((total / grand) * 100)
-        const maxModel = Math.max(1, ...row.models.map((model) => totalOf(model.totals)))
         return (
           <div key={row.provider} className={styles.chartProvider}>
             <span className={styles.chartHead}>
               <span className={styles.providerName}>
-                {nameOf(row.provider)}
+                <span className={styles.chartHeadName}>{nameOf(row.provider)}</span>
                 {currentProvider === row.provider && <span className={styles.currentBadge}>{t('usage.current')}</span>}
               </span>
-              <span className={styles.chartTokens}>
+              <span className={styles.chartHeadTokens}>
                 {formatTokens(total)} · {t('usage.calls', { n: row.totals.calls })} · {share}%{row.totals.cost > 0 ? ' · ' + formatCost(row.totals.cost) : ''}
               </span>
             </span>
             <span className={styles.chartBar}>
-              <span className={styles.chartFill} style={{ width: `${Math.max(2, Math.round((total / maxProvider) * 100))}%` }} />
+              {(row.models.length > 0 ? row.models : [{ model: row.provider, totals: row.totals }]).map((segment) => {
+                // Segment widths share the WINDOW total as denominator, so a
+                // bar's full length reads as the channel's own share of the
+                // window — matching the percent in the row header instead of
+                // always stretching the heaviest channel to 100%.
+                const width = (totalOf(segment.totals) / grand) * 100
+                if (width <= 0) return null
+                return (
+                  <span
+                    key={segment.model}
+                    className={styles.chartSeg}
+                    style={{ width: `${width}%`, background: modelColors.get(segment.model) ?? MODEL_COLOR_OTHER }}
+                  />
+                )
+              })}
             </span>
             {row.models.length > 0 && (
               <div className={styles.modelRows} data-dsh-part="model-rows">
                 {row.models.map((model) => {
                   const modelTotal = totalOf(model.totals)
+                  const label = labelOf(model.model)
+                  // Sub-bar widths share the CHANNEL total — the mother bar's
+                  // own 100 % — so a row reads as that model's slice of its
+                  // channel and a single-model channel fills its track, the
+                  // same proportion its segment holds inside the bar above.
+                  // The window scale belongs to the mother row, not here.
+                  const sharePct = total > 0 ? (modelTotal / total) * 100 : 0
                   return (
-                    <span key={model.model} className={styles.chartModel} title={`${row.provider} · ${model.model}: ${formatTokens(modelTotal)}`}>
-                      <span className={styles.chartModelName}>{model.model}</span>
+                    <span key={model.model} className={styles.chartModel} title={`${row.provider} · ${label}: ${formatTokens(modelTotal)}`}>
+                      <span className={styles.chartModelName}>{label}</span>
                       <span className={styles.chartModelBar}>
-                        <span className={styles.chartModelFill} style={{ width: `${Math.max(3, Math.round((modelTotal / maxModel) * 100))}%` }} />
+                        <span
+                          className={styles.chartModelFill}
+                          style={{ width: `${Math.max(3, Math.round(sharePct))}%`, background: modelColors.get(model.model) ?? MODEL_COLOR_OTHER }}
+                        />
                       </span>
-                      <span className={styles.chartTokens}>{formatTokens(modelTotal)} · {t('usage.calls', { n: model.totals.calls })}</span>
+                      <span className={styles.chartTokens}>{formatTokens(modelTotal)} · {t('usage.calls', { n: model.totals.calls })} · {Math.round(sharePct)}%</span>
                     </span>
                   )
                 })}
@@ -591,45 +785,9 @@ function ChannelBreakdown(props: { summary: UsageWindowSummary; providers: Provi
   )
 }
 
-/**
- * One bar per calendar day of the window, so gaps in the record and the
- * day-to-day rhythm are visible. A day the ledger did not record renders as an
- * empty slot instead of a missing column.
- */
-function DailyChart(props: { days: Array<{ date: string; totals: UsageTokenTotals }> }): ReactNode {
-  const { days } = props
-  if (days.length === 0) return null
-  const max = Math.max(1, ...days.map((row) => totalOf(row.totals)))
-  return (
-    <div className={styles.dailyWrap} data-dsh-part="daily-chart">
-      <div className={styles.dailyChart}>
-        {days.map((row) => {
-          const total = totalOf(row.totals)
-          return (
-            <span
-              key={row.date}
-              className={styles.dailyBar}
-              title={`${row.date} · ${formatTokens(total)} · ${t('usage.calls', { n: row.totals.calls })}`}
-            >
-              <span
-                className={styles.dailyFill}
-                style={{ height: total === 0 ? '0%' : `${Math.max(4, Math.round((total / max) * 100))}%` }}
-              />
-            </span>
-          )
-        })}
-      </div>
-      <div className={styles.dailyLabels}>
-        <span>{days[0].date.slice(5)}</span>
-        <span>{days[days.length - 1].date.slice(5)}</span>
-      </div>
-    </div>
-  )
-}
-
 /** The section component; the slot merges the face into these props. */
 export function UsageSectionCard(props: UsageSectionProps): ReactNode {
-  const { store, poll, refresh, loadDay, settings, deviceSync } = props
+  const { store, poll, refresh, loadDay, loadRange, settings, deviceSync } = props
   const ui = useSyncExternalStore(store.subscribe, store.getSnapshot)
   const settingsSnapshot = settings.getSnapshot()
   const settingsValue = settingsSnapshot.value ?? {}
@@ -688,12 +846,19 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   // Every retained day the ledger recorded. The overview serves it as
   // `availableDays`; the trend's day rows carry the same keys on an older host.
   const recorded = snapshot === null ? [] : snapshot.usage.availableDays ?? snapshot.usage.days.map((row) => row.date)
-  // The four fixed windows all sit inside the last-30 one, so one load feeds
-  // them: fetch the recorded days of that window once, then slice it per tile.
+  // The fixed windows inside the last-30 one share that window's per-day load
+  // (today, yesterday, last3 and last7 are all slices of it), so one fetch
+  // feeds five tiles; the two multi-month windows each read one range
+  // aggregate instead.
   const last30Window: RangeWindow = { from: shiftDateKey(todayDate, -29), to: todayDate }
   const last7Window: RangeWindow = { from: shiftDateKey(todayDate, -6), to: todayDate }
+  const last3Window: RangeWindow = { from: shiftDateKey(todayDate, -2), to: todayDate }
   const yesterdayWindow: RangeWindow = { from: shiftDateKey(todayDate, -1), to: shiftDateKey(todayDate, -1) }
   const todayWindow: RangeWindow = { from: todayDate, to: todayDate }
+  const last180Window: RangeWindow = { from: shiftDateKey(todayDate, -179), to: todayDate }
+  // The whole retained ledger: the oldest day the overview still lists through
+  // today. An empty ledger collapses to today, which reads as an empty window.
+  const allWindow: RangeWindow = { from: recorded[0] ?? todayDate, to: todayDate }
   // Custom range: the user's pair when set, else a sensible seven-day default.
   // Until the user picks anything the tile shows a prompt instead of the
   // default's total, which would only repeat the 近 7 天 tile above it. Once one
@@ -707,11 +872,18 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
     : { from: pickedFrom, to: pickedTo }
 
   const cache = dayCacheRef.current
+  // A custom span past the per-day path's width reads the range aggregate
+  // instead — one request for however long the span is.
+  const customSpanDays = customPicked ? dateKeysBetween(customWindow.from, customWindow.to).length : 0
+  const customIsRange = customSpanDays > RANGE_FETCH_MAX_DAYS
   const last30Days = useWindowDays(loadDay, recordedIn(last30Window, recorded, todayDate), cache, cacheEpoch)
   // An untouched custom range has nothing to fetch: the prompt state renders
   // instead, so opening the section never fires requests for a window the user
   // has not asked for yet.
-  const customDays = useWindowDays(loadDay, customPicked ? recordedIn(customWindow, recorded, todayDate) : [], cache, cacheEpoch)
+  const customDays = useWindowDays(loadDay, customPicked && !customIsRange ? recordedIn(customWindow, recorded, todayDate) : [], cache, cacheEpoch)
+  const last180Load = useRangeData(loadRange, last180Window, cacheEpoch)
+  const allLoad = useRangeData(loadRange, allWindow, cacheEpoch)
+  const customRangeLoad = useRangeData(loadRange, customPicked && customIsRange ? customWindow : undefined, cacheEpoch)
 
   const dayOptions = snapshot === null
     ? []
@@ -732,9 +904,10 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
 
   const onRefresh = (): void => {
     setRefreshing(true)
-    // A late host backfill can still change a past day, so a manual refresh
-    // drops the day cache and refetches every window.
+    // A late host backfill or peer import can still change a past window, so a
+    // manual refresh drops both caches and refetches every window.
     dayCacheRef.current.clear()
+    rangeResults.clear()
     setCacheEpoch((epoch) => epoch + 1)
     try {
       refresh()
@@ -777,27 +950,36 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   // unconfigured routes (credential 'none') never appear here.
   const planProviders = snapshot.providers.filter((provider) => isConfigured(provider) && (provider.planSupported === true || (provider.planSupported === undefined && provider.plan !== undefined)))
 
-  // The window the detail card renders: the custom pair when picked, else the
-  // fixed window on the last-30 load (which already fetched those days).
-  // Slicing input of each window: which day views it may read, and which
-  // recorded days still need a fetch.
-  const windowSlices: Record<RangeKey, { window: RangeWindow; load: WindowDays }> = {
-    today: { window: todayWindow, load: last30Days },
-    yesterday: { window: yesterdayWindow, load: last30Days },
-    last7: { window: last7Window, load: last30Days },
-    last30: { window: last30Window, load: last30Days },
-    custom: { window: customWindow, load: customDays },
+  // The window the detail card renders, per range: the short windows slice
+  // the last-30 (or custom) per-day load, the multi-month ones read their own
+  // range aggregate.
+  const windowSlices: Record<RangeKey, WindowSlice> = {
+    today: { window: todayWindow, kind: 'days', load: last30Days },
+    yesterday: { window: yesterdayWindow, kind: 'days', load: last30Days },
+    last3: { window: last3Window, kind: 'days', load: last30Days },
+    last7: { window: last7Window, kind: 'days', load: last30Days },
+    last30: { window: last30Window, kind: 'days', load: last30Days },
+    last180: { window: last180Window, kind: 'range', load: last180Load },
+    all: { window: allWindow, kind: 'range', load: allLoad },
+    custom: customIsRange
+      ? { window: customWindow, kind: 'range', load: customRangeLoad }
+      : { window: customWindow, kind: 'days', load: customDays },
   }
   const keysOf = (key: RangeKey): string[] => recordedIn(windowSlices[key].window, recorded, todayDate)
-  const activeWindow = windowSlices[rangeKey].window
-  const activeDays = windowSlices[rangeKey].load
-  const summary = summaryIn(activeWindow, keysOf(rangeKey), activeDays, todayView)
+  const activeSlice = windowSlices[rangeKey]
+  const activeWindow = activeSlice.window
+  const summaryRaw: UsageWindowSummary = activeSlice.kind === 'range'
+    ? { from: activeWindow.from, to: activeWindow.to, ...(activeSlice.load.summary ?? { totals: emptyTotals(), providers: [] }) }
+    : summaryIn(activeWindow, keysOf(rangeKey), activeSlice.load, todayView)
   const tiles: Array<{ key: RangeKey; totals: UsageTokenTotals; meta: string; loading: boolean; hint?: string }> = (Object.keys(windowSlices) as RangeKey[]).map((key) => {
     const slice = windowSlices[key]
-    const totals = totalsIn(slice.window, keysOf(key), slice.load, todayView)
+    const totals = slice.kind === 'range' ? slice.load.summary?.totals ?? emptyTotals() : totalsIn(slice.window, keysOf(key), slice.load, todayView)
     const loading = slice.load.status === 'loading'
-    // The custom tile has no window of its own until the user picks one.
-    const hint = key === 'custom' && !customPicked && !loading ? t('usage.range.customPick') : undefined
+    // The custom tile has no window of its own until the user picks one; a
+    // failed range fetch reads as an em dash rather than a fake zero.
+    const hint = key === 'custom' && !customPicked && !loading
+      ? t('usage.range.customPick')
+      : slice.kind === 'range' && slice.load.status === 'error' ? '—' : undefined
     return {
       key,
       totals,
@@ -806,17 +988,47 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
       ...(hint === undefined ? {} : { hint }),
     }
   })
-  // The daily chart reads one bar per calendar day; a window past the readable
-  // width falls back to the totals and the breakdown alone. An untouched custom
-  // range has no calendar to draw yet.
-  const dailyKeys = rangeKey === 'custom' && !customPicked ? [] : dateKeysBetween(activeWindow.from, activeWindow.to)
-  const dailyRows = dailyKeys.length >= DAILY_CHART_MIN_DAYS && dailyKeys.length <= DAILY_CHART_MAX_DAYS
-    ? dailyKeys.map((date) => {
-        if (todayView !== undefined && date === todayView.date) return { date, totals: todayView.totals }
-        const view = activeDays.days[date]
-        return { date, totals: view === undefined ? emptyTotals() : view.totals }
+  // The trend chart reads one row per calendar day — a days-kind window slices
+  // its fetched day views (which carry per-provider per-model rows), a
+  // range-kind window reads the fetched series with today overlaid live from
+  // the overview (fresher than the fetch snapshot). An untouched custom range
+  // has no calendar to draw yet.
+  const seriesByDate = activeSlice.kind === 'range' && activeSlice.load.series !== undefined
+    ? new Map(activeSlice.load.series.map((row) => [row.date, row]))
+    : undefined
+  const daysByDate = activeSlice.kind === 'days' ? activeSlice.load.days : undefined
+  const trendRowsRaw: TrendRow[] = rangeKey === 'custom' && !customPicked
+    ? []
+    : dateKeysBetween(activeWindow.from, activeWindow.to).map((date) => {
+        if (todayView !== undefined && date === todayView.date) {
+          return { date, totals: todayView.totals, models: modelSplitOf(todayView) }
+        }
+        const seriesRow = seriesByDate?.get(date)
+        if (seriesRow !== undefined) {
+          return seriesRow.models !== undefined
+            ? { date, totals: seriesRow.totals, models: seriesRow.models }
+            : { date, totals: seriesRow.totals }
+        }
+        const view = daysByDate?.[date]
+        return view !== undefined
+          ? { date, totals: view.totals, models: modelSplitOf(view) }
+          : { date, totals: emptyTotals() }
       })
-    : []
+  // One hue per model for the whole panel: the trend bars, the provider bars
+  // and the model rows all read from this table. Names fold onto their
+  // normalized identity first (variant spellings of one model count as that
+  // model, keeping its heaviest raw spelling as the display name), and the
+  // palette slot comes from a stable hash of that name — not from usage rank,
+  // which used to pin chart-1's blue onto whatever model led the window and
+  // reshuffle every hue whenever the tile changed.
+  const modelBuckets = normalizeModelRows([
+    ...summaryRaw.providers.flatMap((row) => row.models.map((model) => ({ model: model.model, total: totalOf(model.totals) }))),
+    ...trendRowsRaw.flatMap((row) => Object.entries(row.models ?? {}).map(([model, totals]) => ({ model, total: totalOf(totals) }))),
+  ])
+  const modelColors = assignModelColors(modelBuckets.keys())
+  const modelLabels = new Map([...modelBuckets].map(([model, bucket]) => [model, bucket.display]))
+  const summary: UsageWindowSummary = { ...summaryRaw, providers: normalizedProviders(summaryRaw.providers) }
+  const trendRows: TrendRow[] = trendRowsRaw.map((row) => row.models === undefined ? row : { ...row, models: normalizedSplit(row.models) })
 
   return (
     <div className={styles.section} data-dsh-plugin="usage">
@@ -868,10 +1080,10 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
             {deepseekVisible && (
               <PeakBadge peak={deepseekPeriod.peak} boundaryMs={deepseekPeriod.boundaryMs} variant="full" />
             )}
-            {activeDays.error !== undefined && <span className={styles.errorLine}>{t('usage.range.error', { error: activeDays.error })}</span>}
+            {activeSlice.load.error !== undefined && <span className={styles.errorLine}>{t('usage.range.error', { error: activeSlice.load.error })}</span>}
             {rangeKey === 'custom' && !customPicked
               ? <span className={styles.muted} data-dsh-part="custom-prompt">{t('usage.range.customPrompt')}</span>
-              : activeDays.status === 'loading'
+              : activeSlice.load.status === 'loading'
                 ? <span className={styles.muted}>{t('usage.range.loading')}</span>
                 : isEmptyTotals(summary.totals) && summary.providers.length === 0
                   ? <span className={styles.muted}>{t('usage.range.empty')}</span>
@@ -883,9 +1095,9 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
                           <span className={styles.providerTokens}>{formatCost(summary.totals.cost)}</span>
                         </div>
                       )}
-                      <DailyChart days={dailyRows} />
+                      {trendRows.length >= TREND_CHART_MIN_DAYS && <TrendChart rows={trendRows} colors={modelColors} labels={modelLabels} />}
                       <span className={styles.cardTitle}>{t('usage.range.channels')}</span>
-                      <ChannelBreakdown summary={summary} providers={snapshot.providers} currentProvider={current.provider} />
+                      <ChannelBreakdown summary={summary} providers={snapshot.providers} currentProvider={current.provider} modelColors={modelColors} modelLabels={modelLabels} />
                     </>}
           </div>
 

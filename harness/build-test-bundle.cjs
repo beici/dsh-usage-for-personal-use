@@ -4,9 +4,10 @@
  *
  * The shipped `lib/client.js` only exports `apply` and `inject`, because the
  * plugin shell loads it for its side effects. The render test needs the
- * `UsageSectionCard` component itself, so this script copies the built bundle
- * and inserts exactly one export line — the measured behaviour under test is
- * therefore the shipped bundle's, not a re-bundled variant.
+ * `UsageSectionCard` component and the settings opener, so this script copies
+ * the built bundle and inserts exactly those export lines — the measured
+ * behaviour under test is therefore the shipped bundle's, not a re-bundled
+ * variant.
  *
  * Run after every rebuild:  node harness/build-test-bundle.cjs
  */
@@ -18,7 +19,7 @@ const SOURCE = path.join(ROOT, 'packages/dsh-usage/lib/client.js')
 const TARGET = path.join(__dirname, 'client.test.cjs')
 
 const EXPORT_ANCHOR = '\t\texports.apply = apply;'
-const EXPORT_LINE = '\t\texports.UsageSectionCard = UsageSectionCard;\n'
+const EXPORT_LINE = '\t\texports.UsageSectionCard = UsageSectionCard;\n\t\texports.openUsageSettings = openUsageSettings;\n'
 
 const source = fs.readFileSync(SOURCE, 'utf8')
 if (source.includes('\t\texports.UsageSectionCard = UsageSectionCard;')) {

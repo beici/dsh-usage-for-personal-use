@@ -19,10 +19,10 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { createUsageStore, type UsageStoreInstance } from './usage-store.ts'
 import { UsageSectionCard, type UsageSectionFace, type UsageSettings } from './UsageSectionCard.tsx'
-import { mountUsageFootCard, openUsageSettings } from './foot-card-mount.tsx'
+import { mountUsageFootCard, openUsageSettings, type ShortcutsServiceFace } from './foot-card-mount.tsx'
 import { NS, en, zh, t } from './locales.ts'
 import { createServedEntryForm } from './settings-entry-form.ts'
-import type { DeviceLedgerEntryView, UsageDayResponse, UsageDayView, UsageOverviewView } from '../core/types.ts'
+import type { DeviceLedgerEntryView, UsageDayResponse, UsageDayView, UsageOverviewView, UsageRangeResponse } from '../core/types.ts'
 import type { DeviceSyncApi } from './DeviceSyncCard.tsx'
 
 /** The host usage API as the browser sees it (same-origin JSON endpoints). */
@@ -30,6 +30,8 @@ interface UsageHttpApi {
   overview(): Promise<UsageOverviewView>
   /** One retained local day (YYYY-MM-DD), the day pickers' detail fetch. */
   day(date: string): Promise<UsageDayView>
+  /** One window aggregate (from/to local-date keys): totals, providers, series. */
+  range(from: string, to: string): Promise<UsageRangeResponse>
   refresh(): Promise<UsageOverviewView>
   /** Download this device's ledger envelope as a JSON file. */
   exportLedger(): Promise<void>
@@ -57,6 +59,7 @@ const usageApi: UsageHttpApi = {
   // entry directory instead of escaping to the origin root.
   overview: () => usageFetch('api/dsh-usage/overview', 'GET'),
   day: async (date: string) => (await usageFetch<UsageDayResponse>('api/dsh-usage/day?date=' + encodeURIComponent(date), 'GET')).day,
+  range: (from: string, to: string) => usageFetch(`api/dsh-usage/range?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, 'GET'),
   refresh: () => usageFetch('api/dsh-usage/refresh', 'POST'),
   // The export route answers with a document-disposition attachment, so the
   // browser hands it to a download instead of rendering raw JSON. The blob is
@@ -147,6 +150,12 @@ declare module '@deepseek-ai/cordis' {
      * per-entry forms (`ctx.configForms`).
      */
     webUiSettings?: { bind<S>(spec: UsageSettingsBindSpec<S>): ConfigForm<S> }
+    /**
+     * Optional shell keyboard command service provided by dsh-client-shortcuts
+     * (ships no client types); absent when that plugin is not installed, so the
+     * foot card falls back to its visible account-menu path.
+     */
+    shortcuts?: ShortcutsServiceFace
   }
 }
 
@@ -216,13 +225,17 @@ export function apply(ctx: ClientContext): void {
   // small local request the 10 s poll has no reason to repeat.
   const loadDay = (date: string): Promise<UsageDayView> => usageApi.day(date)
 
+  // The multi-month windows read one aggregate per window: whole-span totals,
+  // the provider breakdown, and the per-day series the trend chart buckets.
+  const loadRange = (from: string, to: string): Promise<UsageRangeResponse> => usageApi.range(from, to)
+
   const deviceSync: DeviceSyncApi = {
     exportLedger: () => usageApi.exportLedger(),
     importLedger: (text: string) => usageApi.importLedger(text),
     rescan: () => usageApi.rescan(),
   }
 
-  const face = (): UsageSectionFace => ({ store, poll, refresh, loadDay, settings: settingsForm, deviceSync })
+  const face = (): UsageSectionFace => ({ store, poll, refresh, loadDay, loadRange, settings: settingsForm, deviceSync })
 
   // Sidebar foot card: the compact usage glance seated below the shell's
   // Settings row. It shares the section's store and poll path (the sequence
@@ -232,7 +245,10 @@ export function apply(ctx: ClientContext): void {
     store,
     poll,
     settings: settingsForm,
-    onOpen: () => { openUsageSettings(() => t('usage.title')) },
+    // The shortcuts service (soft-probed like webUiSettings above) lets the
+    // opener invoke settings.open directly; without it the card degrades to
+    // the account-menu path.
+    onOpen: () => { openUsageSettings(() => t('usage.title'), { shortcuts: ctx.get('shortcuts') as ShortcutsServiceFace | undefined }) },
     locale: ctx.locale,
   })
   ctx.effect(() => () => {

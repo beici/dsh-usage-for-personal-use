@@ -17,15 +17,42 @@ import { type UsageFootCardProps } from './UsageFootCard.tsx';
 /** Stable data attribute identifying the injected card container. */
 export declare const FOOT_CARD_SELECTOR = "[data-dsh-usage-foot-card]";
 /**
- * Open the settings panel on the usage section. The shell owns the panel's
- * open state and exposes no service for it, so the card replays the user's
- * own path: activate the sidebar Settings trigger, then pick the nav row
- * carrying the section's (localized) label. Every step degrades silently —
- * with the panel already open only the nav pick runs, and a missing row
- * leaves the panel on its default section.
- * @param label - the usage section's nav label in the active locale.
+ * The shortcuts registry face the shell's settings.open command is invoked
+ * through; restated here because dsh-client-shortcuts ships no client types.
  */
-export declare function openUsageSettings(label: () => string): void;
+export interface ShortcutsRegistryFace {
+    invoke(id: string, context: {
+        target: unknown;
+        region: string;
+        modal: string | null;
+    }): void;
+}
+/** The shortcuts service face the apply body hands in, when the host serves it. */
+export interface ShortcutsServiceFace {
+    registry?: ShortcutsRegistryFace;
+}
+/** Optional host faces the settings opener consumes; every one may be absent. */
+export interface UsageSettingsOpenerFaces {
+    /** Shell keyboard command registry; absent when the host predates it. */
+    shortcuts?: ShortcutsServiceFace;
+}
+/**
+ * Open the settings panel on the usage section. The shell owns the panel's
+ * open state and seats the ACCOUNT menu at the sidebar foot, whose 设置
+ * (Ctrl+,) item is what opens the dialog.
+ *
+ * The fast path invokes the shell's own settings.open command through the
+ * shortcuts registry: on Desktop Windows/macOS real keys are routed through
+ * the native preload bridge and the DOM keydown listener returns before
+ * dispatch, so a synthetic Ctrl+, never lands there, while the registry call
+ * opens the dialog on every runtime with no menu flash. Only when no registry
+ * arrived — or the command never landed — does the card open the account menu
+ * and click its 设置 item, the visible fallback. Every step degrades silently.
+ *
+ * @param label - the usage section's nav label in the active locale.
+ * @param faces - optional host faces from the apply body (the shortcuts service).
+ */
+export declare function openUsageSettings(label: () => string, faces?: UsageSettingsOpenerFaces): void;
 /**
  * Mount the sidebar foot card directly above the Settings row.
  * @param props - the store/poll/settings/open inputs of the apply body.

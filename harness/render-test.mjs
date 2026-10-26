@@ -122,6 +122,21 @@ const loadDay = async (date) => {
   if (day === undefined) throw new Error('no fixture for ' + date)
   return day
 }
+// The range stub answers any window from the saved overview: the whole-ledger
+// aggregate as the window summary, the trend rows as the per-day series. The
+// real route computes both from the merged ledger the same way.
+const rangeCalls = []
+const loadRange = async (from, to) => {
+  rangeCalls.push(from + ':' + to)
+  return {
+    ok: true,
+    from,
+    to,
+    totals: overview.usage.all.totals,
+    providers: overview.usage.all.providers,
+    series: overview.usage.days.map((row) => ({ date: row.date, totals: row.totals })),
+  }
+}
 
 const { act } = require('react-dom/test-utils')
 const container = window.document.getElementById('root')
@@ -133,6 +148,7 @@ await act(async () => {
     poll: () => {},
     refresh: () => {},
     loadDay,
+    loadRange,
     settings,
     deviceSync,
     close: () => {},
@@ -153,12 +169,21 @@ function check(name, ok, detail) {
 
 // ---- assertions ---------------------------------------------------------
 const tiles = qa('[data-dsh-part="range-tiles"] button')
-check('five range tiles', tiles.length === 5, 'got ' + tiles.length)
-if (tiles.length === 5) {
+check('eight range tiles', tiles.length === 8, 'got ' + tiles.length)
+if (tiles.length === 8) {
   const labels = tiles.map((b) => text(b.querySelector('span')))
-  check('tile order + labels', JSON.stringify(labels) === JSON.stringify(['今日', '昨日', '近 7 天', '近 30 天', '自定义']), JSON.stringify(labels))
+  check('tile order + labels', JSON.stringify(labels) === JSON.stringify(['今日', '昨日', '近 3 天', '近 7 天', '近 30 天', '近 6 个月', '全部', '自定义']), JSON.stringify(labels))
   check('today tile active', tiles[0].getAttribute('aria-pressed') === 'true')
   for (const b of tiles) console.log('   tile:', text(b))
+  // 近 3 天 = today + 2026-10-19 (10-18 未记录): 85.8M + 45.0M ≈ 131M, 1188 次调用.
+  check('last3 tile sums today + 10-19', text(tiles[2]).includes('131M') && text(tiles[2]).includes('1188'), text(tiles[2]))
+  // 近 6 个月 / 全部 read the range aggregate: the stub answers with the
+  // whole-ledger totals (135M, 1251 次调用), fetched once per window on mount.
+  check('last180 tile reads the range aggregate', text(tiles[5]).includes('135M') && text(tiles[5]).includes('1251'), text(tiles[5]))
+  check('all tile reads the range aggregate', text(tiles[6]).includes('135M') && text(tiles[6]).includes('1251'), text(tiles[6]))
+  check('range fetches fired for both long windows',
+    rangeCalls.includes('2026-04-24:2026-10-20') && rangeCalls.includes('2026-09-21:2026-10-20'),
+    JSON.stringify(rangeCalls))
 }
 
 const windowCard = q('[data-dsh-part="window-card"]')
@@ -167,29 +192,61 @@ console.log('   window card text:', text(windowCard))
 
 const stats = qa('[data-dsh-part="window-card"] [class*="statValue"]').map(text)
 check('six stat cells', stats.length === 6, JSON.stringify(stats))
+// 今日: cacheRead 81839616 / billed input (2914311 + 81839616) = 96.6%.
+check('cache-hit cell computed', stats[4] === '96.6%', stats[4])
 
-const chart = q('[data-dsh-part="daily-chart"]')
-check('no daily chart for a single-day window', chart === null)
+const chart = q('[data-dsh-part="trend-chart"]')
+check('no trend chart for a single-day window', chart === null)
 
 const breakdown = q('[data-dsh-part="channel-breakdown"]')
 check('channel breakdown rendered', breakdown !== null)
 const modelRows = qa('[data-dsh-part="model-rows"] [class*="chartModel"]')
 console.log('   breakdown text:', text(breakdown).slice(0, 400))
 check('model rows visible', modelRows.length >= 1, 'rows=' + modelRows.length)
+// Provider bars stack their models' hues; every model keeps its panel-wide color.
+const providerSegments = qa('[data-dsh-part="channel-breakdown"] [class*="chartSeg"]')
+check('provider bars stack model colors', providerSegments.length >= 1 && providerSegments.every((seg) => (seg.getAttribute('style') ?? '').includes('background')), 'segments=' + providerSegments.length)
 
 // ---- switch to 近 30 天 --------------------------------------------------
-const last30 = tiles[3]
+const last30 = tiles[4]
 await act(async () => { last30.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
 await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
 const card30 = q('[data-dsh-part="window-card"]')
 console.log('   last30 card:', text(card30).slice(0, 500))
 const stats30 = qa('[data-dsh-part="window-card"] [class*="statValue"]').map(text)
 check('last30 six stat cells', stats30.length === 6, JSON.stringify(stats30))
-const bars30 = qa('[data-dsh-part="daily-chart"] [class*="dailyBar"]')
-check('last30 daily bars = 30 calendar days', bars30.length === 30, 'bars=' + bars30.length)
+const bars30 = qa('[data-dsh-part="trend-chart"] [data-dsh-part="trend-bar"]')
+check('last30 trend bars = 30 calendar days', bars30.length === 30, 'bars=' + bars30.length)
+const gridlines = qa('[data-dsh-part="trend-chart"] [class*="trendGridline"]')
+check('trend gridlines = 4', gridlines.length === 4, 'lines=' + gridlines.length)
+const legend = qa('[data-dsh-part="trend-chart"] [class*="trendLegendItem"]')
+// The 逐日 windows carry per-model rows, so the bars stack BY MODEL and the
+// legend names the models instead of the token kinds.
+check('trend legend lists the window models', legend.length >= 1 && legend.length <= 8, 'items=' + legend.length)
+check('trend legend names the models', legend.some((item) => text(item).includes('deepseek-v4.1-flash')), legend.map(text).join(' | '))
+const todaySegments = [...bars30[29].querySelectorAll('span')]
+check('today bar stacks by model', todaySegments.length === 1 && (todaySegments[0].getAttribute('style') ?? '').includes('background'), 'segments=' + todaySegments.length)
 const spans = q('[data-dsh-part="window-card"] [class*="spanLine"]')
 check('last30 span line', text(spans) === '2026-09-21 ~ 2026-10-20', text(spans))
 console.log('   last30 fetched days:', JSON.stringify([...new Set(fetched)]))
+
+// Hover a recorded day (today, bar 30): the tooltip states the date, the
+// totals, the calls, and the cache-hit share.
+await act(async () => { bars30[29].dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true })) })
+const tip = q('[data-dsh-part="trend-tooltip"]')
+check('trend tooltip on hover', tip !== null)
+if (tip !== null) {
+  console.log('   tooltip:', text(tip))
+  check('tooltip shows date + totals + calls + hit',
+    text(tip).includes('2026-10-20') && text(tip).includes('85.8M') && text(tip).includes('667') && text(tip).includes('96.6%'),
+    text(tip))
+}
+// Hover an empty slot: the tooltip says so instead of pretending zero usage.
+await act(async () => { bars30[2].dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true })) })
+const tipEmpty = q('[data-dsh-part="trend-tooltip"]')
+check('empty bucket tooltip reports no record', tipEmpty !== null && text(tipEmpty).includes('无记录'), text(tipEmpty))
+await act(async () => { bars30[2].dispatchEvent(new window.MouseEvent('mouseout', { bubbles: true })) })
+check('tooltip leaves with the hover', q('[data-dsh-part="trend-tooltip"]') === null)
 
 // ---- yesterday -----------------------------------------------------------
 const yesterday = tiles[1]
@@ -205,15 +262,17 @@ const statsY = qa('[data-dsh-part="window-card"] [class*="statValue"]').map(text
 const yDay = days['2026-10-19'].totals
 const yTotal = yDay.inputTokens + yDay.cacheReadTokens + yDay.cacheWriteTokens + yDay.outputTokens
 const yInput = yDay.inputTokens + yDay.cacheReadTokens + yDay.cacheWriteTokens
+const yHit = ((yDay.cacheReadTokens / yInput) * 100).toFixed(1) + '%'
 check('yesterday totals match fixture', statsY[0] === '45M' && statsY[1] === '44.6M' && statsY[2] === '386k' && statsY[5] === '521', JSON.stringify(statsY) + ' expected total=' + yTotal + ' billedInput=' + yInput)
+check('yesterday cache-hit matches fixture', statsY[4] === yHit, statsY[4] + ' expected ' + yHit)
 
 // ---- custom --------------------------------------------------------------
-const custom = tiles[4]
+const custom = tiles[7]
 await act(async () => { custom.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
 await act(async () => { await new Promise((r) => setTimeout(r, 80)) })
 // Until a date is picked the tile prompts and the card explains, instead of
 // silently showing the seven-day default's numbers.
-check('untouched custom tile prompts', text(tiles[4]).includes('选择日期'), text(tiles[4]))
+check('untouched custom tile prompts', text(tiles[7]).includes('选择日期'), text(tiles[7]))
 check('untouched custom card explains', q('[data-dsh-part="custom-prompt"]') !== null, text(q('[data-dsh-part="custom-prompt"]')))
 const controls = q('[data-dsh-part="custom-range"]')
 check('custom date inputs appear', controls !== null)
@@ -237,9 +296,26 @@ if (dateInputs.length === 2) {
   const spanC = q('[data-dsh-part="window-card"] [class*="spanLine"]')
   console.log('   custom span:', text(spanC))
   check('custom span follows the picked pair', text(spanC) === '2026-09-01 ~ 2026-09-30', text(spanC))
-  const barsC = qa('[data-dsh-part="daily-chart"] [class*="dailyBar"]')
-  check('custom daily bars = 30', barsC.length === 30, 'bars=' + barsC.length)
+  const barsC = qa('[data-dsh-part="trend-chart"] [data-dsh-part="trend-bar"]')
+  check('custom trend bars = 30', barsC.length === 30, 'bars=' + barsC.length)
   console.log('   custom card:', text(q('[data-dsh-part="window-card"]')).slice(0, 400))
+
+  // Widen the pair past the per-day path's width: the window switches to the
+  // range aggregate (one fetch for the whole span) and the chart buckets by
+  // month — 2026-01 .. 2026-09 = 9 bars.
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(dateInputs[0], '2026-01-01')
+    dateInputs[0].dispatchEvent(new window.Event('input', { bubbles: true }))
+    dateInputs[0].dispatchEvent(new window.Event('change', { bubbles: true }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
+  const spanLong = q('[data-dsh-part="window-card"] [class*="spanLine"]')
+  check('long custom span renders', text(spanLong) === '2026-01-01 ~ 2026-09-30', text(spanLong))
+  check('long custom fetches one range aggregate', rangeCalls.includes('2026-01-01:2026-09-30'), JSON.stringify(rangeCalls))
+  const barsLong = qa('[data-dsh-part="trend-chart"] [data-dsh-part="trend-bar"]')
+  check('long custom buckets by month', barsLong.length === 9, 'bars=' + barsLong.length)
+  check('long custom tile reads the aggregate', text(tiles[7]).includes('135M'), text(tiles[7]))
 }
 
 // ---- multi-device card ---------------------------------------------------
@@ -279,7 +355,7 @@ if (deviceCard !== null) {
   importAnswer = 'same'
   const fileInput2 = deviceCard.querySelector('input[type="file"]')
   if (fileInput2 !== null) {
-    const file2 = new window.File(['{"deviceId":"scrip-desktop-9c1f2a"}'], 'self.json', { type: 'application/json' })
+    const file2 = new window.File(['{"deviceId":"desktop-9c1f2a"}'], 'self.json', { type: 'application/json' })
     Object.defineProperty(fileInput2, 'files', { value: [file2], configurable: true })
     await act(async () => { fileInput2.dispatchEvent(new window.Event('change', { bubbles: true })) })
     await act(async () => { await new Promise((r) => setTimeout(r, 60)) })
@@ -321,6 +397,7 @@ console.log('   plans tab text:', text(container).slice(0, 200))
         poll: () => {},
         refresh: () => {},
         loadDay,
+        loadRange,
         settings,
         deviceSync,
         close: () => {},
@@ -358,6 +435,140 @@ console.log('   plans tab text:', text(container).slice(0, 200))
   await act(async () => { buddy.localRoot.unmount() })
   deepseek.host.remove()
   buddy.host.remove()
+}
+
+// ---- settings opener: registry fast path + account-menu fallback ----------
+// Regression: Desktop Windows/macOS route real keys through the native preload
+// bridge and the DOM keydown listener returns before dispatch there, so the
+// old synthetic Ctrl+, never landed and every click flashed the account menu
+// before the dialog opened. The opener must invoke the shell's settings.open
+// command through the shortcuts registry when that face arrives, and keep the
+// visible account-menu path only as the fallback.
+{
+  const { openUsageSettings } = captured
+  if (typeof openUsageSettings !== 'function') throw new Error('openUsageSettings export missing')
+
+  // Fast path: the registry command fires synchronously with the exact
+  // settings.open identity and a null-modal page context.
+  const invoked = []
+  openUsageSettings(() => '使用统计', {
+    shortcuts: { registry: { invoke: (id, context) => invoked.push([id, context]) } },
+  })
+  check('settings opener invokes settings.open via the registry',
+    invoked.length === 1 && invoked[0][0] === 'settings.open',
+    JSON.stringify(invoked.map(([id]) => id)))
+  check('settings opener passes a null-modal page context',
+    invoked.length === 1 && invoked[0][1].region === 'page' && invoked[0][1].modal === null,
+    JSON.stringify(invoked[0]?.[1] ?? null))
+
+  // An already-open dialog must only pick the nav row: no second open gesture.
+  const dialog = window.document.createElement('div')
+  dialog.setAttribute('data-shortcut-modal', 'settings')
+  dialog.innerHTML = '<nav><button>使用统计</button><button>插件</button></nav>'
+  window.document.body.append(dialog)
+  let picked = false
+  dialog.querySelector('nav button').addEventListener('click', () => { picked = true })
+  const reopened = []
+  openUsageSettings(() => '使用统计', {
+    shortcuts: { registry: { invoke: (id, context) => reopened.push([id, context]) } },
+  })
+  check('open dialog is picked, never re-opened', picked && reopened.length === 0)
+  dialog.remove()
+
+  // Fallback: with no registry face the visible path still works — the
+  // account-menu trigger is clicked and the dialog's usage nav row picked.
+  const column = window.document.createElement('div')
+  column.className = 'sidebarCol'
+  column.innerHTML = '<div class="settingsArea"><button aria-haspopup="dialog">menu</button></div>'
+  window.document.body.append(column)
+  let triggerClicked = false
+  column.querySelector('button').addEventListener('click', () => {
+    triggerClicked = true
+    const openedDialog = window.document.createElement('div')
+    openedDialog.setAttribute('data-shortcut-modal', 'settings')
+    openedDialog.innerHTML = '<nav><button>使用统计</button></nav>'
+    window.document.body.append(openedDialog)
+  })
+  openUsageSettings(() => '使用统计')
+  await new Promise((r) => setTimeout(r, 500))
+  const fallbackDialog = window.document.querySelector('[data-shortcut-modal="settings"] nav button')
+  check('account-menu fallback opens and picks the usage row',
+    triggerClicked && fallbackDialog !== null,
+    'trigger=' + triggerClicked)
+  fallbackDialog?.closest('[data-shortcut-modal="settings"]')?.remove()
+  column.remove()
+}
+
+// ---- model sub-bars share the CHANNEL total, with percent text -------------
+// Regression (sub-bar widths): the per-model rows under a channel used to
+// divide by the channel's HEAVIEST model, so the top model always read 100 %;
+// a later fix over-corrected to the window total, which shrank every row by
+// the channel's own window share and read as "based on the grand total" in
+// wide windows. Sub-bars now share the channel total — the mother bar's own
+// 100 % — and state that share as text. The saved fixture has no multi-model
+// channel, so this block mounts a fresh card on a snapshot variant whose
+// buddy channel carries two models.
+{
+  const variant = JSON.parse(JSON.stringify(overview))
+  const today = variant.usage.today
+  // Inject into `workbuddy` — 1.6 % of the window — sized at 35 % of its first
+  // model, so the channel splits 74/26. On the window scale those same models
+  // are ~1.6 % / ~0.5 %, i.e. both would clamp to the 3 % floor: the two
+  // denominators are unmistakable here, whereas a 98 %-of-window channel would
+  // read ~74/26 either way.
+  const channel = today.providers.find((p) => p.provider === 'workbuddy')
+  const first = channel.models[0]
+  const totalsOf = (x) => (x.inputTokens || 0) + (x.outputTokens || 0) + (x.cacheReadTokens || 0)
+  const second = {
+    model: 'glm-5.3-flash',
+    totals: { inputTokens: Math.round(totalsOf(first.totals) * 0.35), outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 1000, calls: 15, cost: 0 },
+  }
+  channel.models.push(second)
+  for (const field of ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens']) {
+    channel.totals[field] += second.totals[field]
+    today.totals[field] += second.totals[field]
+  }
+  channel.totals.calls += second.totals.calls
+  today.totals.calls += second.totals.calls
+
+  const channelTotal = totalsOf(channel.totals)
+  const expectFirst = Math.max(3, Math.round(100 * totalsOf(first.totals) / channelTotal))
+  const expectSecond = Math.max(3, Math.round(100 * totalsOf(second.totals) / channelTotal))
+  const shareFirst = Math.round(100 * totalsOf(first.totals) / channelTotal) + '%'
+  const shareSecond = Math.round(100 * totalsOf(second.totals) / channelTotal) + '%'
+
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const state = { snapshot: variant, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
+
+  const rows = [...host.querySelectorAll('[data-dsh-part="channel-breakdown"] [class*="chartProvider"]')].filter(
+    (row) => text(row).includes('WorkBuddy'))
+  const fills = rows.flatMap((row) => [...row.querySelectorAll('[class*="chartModelFill"]')])
+  const widths = fills.map((fill) => (fill.getAttribute('style') ?? '').match(/width:\s*(\d+)%/)?.[1])
+  check('sub-bars sized on the channel scale, not the window',
+    rows.length === 1 && widths[0] === String(expectFirst) && widths[1] === String(expectSecond),
+    'widths=' + JSON.stringify(widths) + ' expected=[' + expectFirst + ',' + expectSecond + ']')
+  check('sub-bar rows state their channel share',
+    rows.length === 1 && text(rows[0]).includes(shareFirst) && text(rows[0]).includes(shareSecond),
+    'text has ' + shareFirst + ' and ' + shareSecond)
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
 }
 
 const failed = report.filter((row) => !row.ok)
