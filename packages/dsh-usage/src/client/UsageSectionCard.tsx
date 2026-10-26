@@ -33,7 +33,7 @@ import { deepseekPeriodAt } from '../core/pricing.ts'
 import { localDateKey } from '../core/ledger.ts'
 import { voucherData, drawVoucher, faceValue, formatDay, formatDenomination, loadVoucherArt } from './voucher.ts'
 import { DeviceSyncCard, type DeviceSyncApi } from './DeviceSyncCard.tsx'
-import { addTotals, emptyTotals, type ObservedSpendView, type ProviderSnapshotView, type UsageDayView, type UsageOverviewView, type UsageProviderSummary, type UsageRangeResponse, type UsageTokenTotals, type UsageWindowSummary } from '../core/types.ts'
+import { addTotals, emptyTotals, type ObservedSpendView, type PlanWindowView, type ProviderSnapshotView, type UsageDayView, type UsageOverviewView, type UsageProviderSummary, type UsageRangeResponse, type UsageTokenTotals, type UsageWindowSummary } from '../core/types.ts'
 import { formatTokens } from './format.ts'
 
 // Re-exported for the foot card's imports; the implementation lives in
@@ -198,9 +198,34 @@ function roundShares(exact: readonly number[]): number[] {
  * act on, so the network-shaped ones read as one localized sentence instead.
  */
 function describeError(error: string): string {
-  return /failed to fetch|networkerror|network error|econnrefused|timeout|timed out/i.test(error)
+  return /failed to fetch|networkerror|network error|econnrefused|econnreset|enotfound|socket hang up|load failed|timeout|timed out/i.test(error)
     ? t('usage.error.network')
     : error
+}
+
+/** Units for plan-window keys the dictionary does not name (`7_day`, `12_hour`). */
+const PLAN_WINDOW_UNIT_KEYS: Record<string, string> = {
+  hour: 'usage.plan.unit.hour',
+  day: 'usage.plan.unit.day',
+  week: 'usage.plan.unit.week',
+  month: 'usage.plan.unit.month',
+}
+
+/**
+ * The label of one plan window. Providers either name their windows or leave a
+ * key behind (`5h`, `week`, `7_day`); the dictionary knows a handful of those,
+ * and an unknown one used to be printed verbatim (`usage.plan.windows.7_day`).
+ * A duration-shaped key is spelled out in the reader's language, anything else
+ * falls back to a generic label instead of leaking an internal key.
+ */
+function planWindowLabel(window: PlanWindowView): string {
+  if (window.name !== undefined && window.name !== '') return window.name
+  const key = `usage.plan.windows.${window.key}`
+  const known = t(key)
+  if (known !== key) return known
+  const duration = /^(\d+)_(hour|day|week|month)$/.exec(window.key)
+  if (duration !== null) return `${duration[1]} ${t(PLAN_WINDOW_UNIT_KEYS[duration[2]])}`
+  return t('usage.plan.windows.other')
 }
 
 /** One selectable time window, as local-date keys. */
@@ -289,6 +314,12 @@ interface WindowDays {
   status: 'loading' | 'ready'
   /** Fetched day views keyed by date; a day the host recorded nothing for is absent. */
   days: Record<string, UsageDayView>
+  /**
+   * Days whose fetch failed. Kept apart from "absent" on purpose: an empty day
+   * is a fact about the ledger, a failed day is a fact about the request, and
+   * painting the second as "no usage recorded" is a lie the panel cannot undo.
+   */
+  failedDates: string[]
   /** First transport error, when a day failed; the window still renders what loaded. */
   error?: string
 }
@@ -307,10 +338,11 @@ function useWindowDays(
   retry: number,
 ): WindowDays {
   const signature = dateKeys.join(',')
-  const [load, setLoad] = useState<WindowDays>(() => ({ status: dateKeys.length === 0 ? 'ready' : 'loading', days: {} }))
+  const [load, setLoad] = useState<WindowDays>(() => ({ status: dateKeys.length === 0 ? 'ready' : 'loading', days: {}, failedDates: [] }))
   useEffect(() => {
     const wanted = signature === '' ? [] : signature.split(',')
     const days: Record<string, UsageDayView> = {}
+    const failedDates: string[] = []
     const missing: string[] = []
     for (const date of wanted) {
       const cached = cache.get(date)
@@ -318,11 +350,11 @@ function useWindowDays(
       else days[date] = cached
     }
     if (missing.length === 0) {
-      setLoad({ status: 'ready', days })
+      setLoad({ status: 'ready', days, failedDates })
       return undefined
     }
     let cancelled = false
-    setLoad({ status: 'loading', days })
+    setLoad({ status: 'loading', days, failedDates })
     let failed = 0
     let firstError: string | undefined
     void mapPool(missing, DAY_FETCH_CONCURRENCY, async (date) => {
@@ -331,14 +363,15 @@ function useWindowDays(
         // Publish each day as it lands: a window whose own dates are all here
         // can show its total while a slower day elsewhere in the shared load is
         // still in flight (a stuck day would otherwise hold every tile at "…").
-        if (!cancelled) setLoad({ status: 'loading', days: { ...days } })
+        if (!cancelled) setLoad({ status: 'loading', days: { ...days }, failedDates: [...failedDates] })
       } catch (error) {
         failed += 1
+        failedDates.push(date)
         firstError ??= error instanceof Error ? error.message : String(error)
       }
     }).then(() => {
       if (cancelled) return
-      setLoad({ status: 'ready', days, ...(failed > 0 ? { error: firstError ?? '' } : {}) })
+      setLoad({ status: 'ready', days, failedDates, ...(failed > 0 ? { error: firstError ?? '' } : {}) })
     })
     return () => { cancelled = true }
   // `signature` carries the key list; `epoch` invalidates the cache; `retry`
@@ -701,17 +734,34 @@ interface DayLoad {
  * today is instant and keeps counting with the poll. A superseded selection
  * never lands (the effect cancels), and a failed load reports its own message
  * instead of leaving the card on a stale day.
+ *
+ * The fetch goes through `requestDay`, not `loadDay`, so picking a day the
+ * window already loaded costs nothing; `retry` is in the deps so the poll tick
+ * retries a day that failed, instead of leaving the error up until the user
+ * picks something else and comes back.
  */
-function useDayView(loadDay: (date: string) => Promise<UsageDayView>, date: string | undefined, today: string | undefined, epoch: number): DayLoad | undefined {
+function useDayView(
+  loadDay: (date: string) => Promise<UsageDayView>,
+  date: string | undefined,
+  today: string | undefined,
+  cache: DayCache,
+  epoch: number,
+  retry: number,
+): DayLoad | undefined {
   const [load, setLoad] = useState<DayLoad | undefined>(undefined)
   useEffect(() => {
     if (date === undefined || date === today) {
       setLoad((previous) => (previous === undefined ? previous : undefined))
       return undefined
     }
+    const cached = cache.get(date)
+    if (cached !== undefined) {
+      setLoad({ status: 'ready', view: cached })
+      return undefined
+    }
     let cancelled = false
     setLoad({ status: 'loading' })
-    loadDay(date).then(
+    requestDay(loadDay, date, cache).then(
       (view) => { if (!cancelled) setLoad({ status: 'ready', view }) },
       (error: unknown) => { if (!cancelled) setLoad({ status: 'error', error: error instanceof Error ? error.message : String(error) }) },
     )
@@ -719,7 +769,7 @@ function useDayView(loadDay: (date: string) => Promise<UsageDayView>, date: stri
   // `epoch` is in the deps so a manual refresh re-reads the selected day too: the
   // window prefetch has already refetched it, and a ticket left on the pre-refresh
   // number is a stale receipt for a day the panel no longer believes.
-  }, [date, today, loadDay, epoch])
+  }, [date, today, loadDay, cache, epoch, retry])
   return load
 }
 
@@ -1050,7 +1100,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   // A selection retention no longer holds falls back to the tab's default
   // window, so the picker can never keep displaying a day the host dropped.
   const bankSelection = bankDay !== undefined && dayOptions.includes(bankDay) ? bankDay : undefined
-  const bankDayLoad = useDayView(loadDay, bankSelection, todayDate, cacheEpoch)
+  const bankDayLoad = useDayView(loadDay, bankSelection, todayDate, cache, cacheEpoch, retryTick)
   const bankDayView = bankSelection === undefined
     ? undefined
     : bankSelection === todayDate ? snapshot?.usage.today : bankDayLoad?.view
@@ -1133,7 +1183,10 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   // already holds it), and a window whose own dates arrived is done even while
   // the rest of the 30 days is still landing. Tiles and card judge by this.
   const slicePending = (slice: WindowSlice, key: RangeKey): boolean => {
-    if (slice.kind === 'range') return slice.load.status === 'loading'
+    // 'idle' is the first frame of a range load, before its effect has started:
+    // counting it as done would print "no usage recorded" over a fetch that has
+    // not been made yet.
+    if (slice.kind === 'range') return slice.load.status === 'loading' || slice.load.status === 'idle'
     if (slice.load.status !== 'loading') return false
     return keysOf(key).some((date) => slice.load.days[date] === undefined)
   }
@@ -1181,6 +1234,9 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
     ? new Map(activeSlice.load.series.map((row) => [row.date, row]))
     : undefined
   const daysByDate = activeSlice.kind === 'days' ? activeSlice.load.days : undefined
+  // A day whose fetch failed is unknown, not empty: the trend chart has to say
+  // "load failed" there instead of "no usage recorded".
+  const failedDates = activeSlice.kind === 'days' ? new Set(activeSlice.load.failedDates) : undefined
   const trendRowsRaw: TrendRow[] = rangeKey === 'custom' && !customPicked
     ? []
     : dateKeysBetween(activeWindow.from, activeWindow.to).map((date) => {
@@ -1196,7 +1252,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
         const view = daysByDate?.[date]
         return view !== undefined
           ? { date, totals: view.totals, models: modelSplitOf(view) }
-          : { date, totals: emptyTotals() }
+          : { date, totals: emptyTotals(), ...(failedDates?.has(date) === true ? { failed: true } : {}) }
       })
   // One hue per model for the whole panel: the trend bars, the provider bars
   // and the model rows all read from this table. Names fold onto their
@@ -1242,6 +1298,13 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
       {snapshot.usage.ledgerError !== undefined && (
         <span className={styles.errorLine} role="status" data-dsh-part="ledger-error">
           {t('usage.ledger.error', { error: snapshot.usage.ledgerError })}
+        </span>
+      )}
+      {/* Not an error: what the totals below leave out. Said out loud because a
+          replay cut short or a skipped retention otherwise reads as lost history. */}
+      {snapshot.usage.ledgerError === undefined && snapshot.usage.ledgerNote !== undefined && (
+        <span className={styles.noteLine} role="status" data-dsh-part="ledger-note">
+          {t('usage.ledger.note', { note: snapshot.usage.ledgerNote })}
         </span>
       )}
 
@@ -1495,10 +1558,10 @@ function PlanCard(props: { provider: ProviderSnapshotView; current?: string }): 
         ? <span className={styles.muted}>{t('usage.balance.noCredential')}</span>
         : provider.plan === undefined || provider.plan.windows.length === 0
           ? <span className={styles.muted}>{t('usage.plan.noPlan')}</span>
-          : provider.plan.windows.map((window) => (
-            <div key={window.key} className={styles.windowRow} data-dsh-part="plan-window">
+          : provider.plan.windows.map((window, windowAt) => (
+            <div key={`${window.key}#${windowAt}`} className={styles.windowRow} data-dsh-part="plan-window">
               <span className={styles.windowLabel}>
-                <span>{window.name ?? t(`usage.plan.windows.${window.key}`)}</span>
+                <span>{planWindowLabel(window)}</span>
                 <span>{window.percent !== undefined ? `${window.percent >= 10 ? Math.round(window.percent) : window.percent.toFixed(1)}%` : ''}</span>
               </span>
               {window.percent !== undefined && (

@@ -61,6 +61,15 @@ export declare class UsageService {
      * empty this boot.
      */
     private ledgerError;
+    /**
+     * A condition the user should know about that is not an error: a replay cut
+     * short by the per-start cap, or a file that turned out to belong to another
+     * device. Shown next to `ledgerError`, because a silently shortened history
+     * reads exactly like a complete one.
+     */
+    private ledgerNote;
+    /** Timestamp of the last duplicate repair written by this process. */
+    private repairedAt;
     private ledger;
     /**
      * The document this process last wrote to disk. Another process on this
@@ -68,6 +77,12 @@ export declare class UsageService {
      * this snapshot — adding the whole document would count its calls twice.
      */
     private ledgerWritten;
+    /**
+     * Newest `repairedAt` this process has already accounted for. A file carrying
+     * a later stamp was corrected by another process after we loaded, and its
+     * (lower) buckets must not be raised again by our stale copy.
+     */
+    private seenRepairedAt;
     private readonly snapshots;
     /** The official DeepSeek family's real-spend watch (see SpendWatch). */
     private spendWatch;
@@ -227,6 +242,8 @@ export declare class UsageService {
     private ledgerFromJson;
     private loadPersisted;
     private loadPersistedOnce;
+    /** Append a non-fatal note to the one the panel shows beside the numbers. */
+    private note;
     /** Retry a ledger read that failed for a transient reason (lock, sharing). */
     private scheduleLoadRetry;
     /** Revive the probe cache and the spend watch; both are best-effort. */
@@ -236,10 +253,12 @@ export declare class UsageService {
      *
      * `session/event` only carries records appended while an instance is
      * mounted, so calls made before the first mount — or during a remount
-     * window — exist nowhere else. A bucket keeps whichever total is larger:
-     * replay never shrinks a live bucket, and a ledger rebuilt from an older
-     * transcript never loses a newer live fold, so running this on every start
-     * is idempotent.
+     * window — exist nowhere else. Every bucket is merged field by field with the
+     * larger value winning: replay never shrinks a live bucket, and a ledger
+     * rebuilt from an older transcript never loses a newer live fold, so running
+     * this on every start is idempotent. (Field by field, because the two sides
+     * can each carry a field the other lacks — a cost estimate, cache-read
+     * tokens — and picking one bucket wholesale would delete them.)
      *
      * The pass also reports the duplicate copies it dropped, so the repair below
      * can use them without walking the transcripts (287 MB, ~18 s) again.
@@ -312,6 +331,13 @@ export declare class UsageService {
      * "importing" a device is just dropping its file in — and re-importing the
      * same file changes nothing, because the totals are derived from the set of
      * files rather than accumulated into state.
+     *
+     * A file only counts as a device when its own document proves which machine
+     * wrote it: this build stamps `deviceId` and `machine` into every ledger it
+     * writes, so a file without them is a copy (a renamed backup, a hand-placed
+     * duplicate) and summing it would count this machine's calls twice. Every
+     * refusal is reported rather than swallowed, because a silently missing
+     * device reads exactly like a device that never existed.
      */
     private refreshPeers;
     private scheduleFlush;
@@ -322,6 +348,18 @@ export declare class UsageService {
      */
     private flushLedger;
     private writeLedgerOnce;
+    /** This process's ledger as a file document: the identity travels with it. */
+    private ledgerFileDocument;
+    /**
+     * Prune a document about to be written, refusing a prune that would delete
+     * most of the history at once.
+     *
+     * Retention is measured against the clock, so one jump forward (a dead BIOS
+     * battery, an NTP correction, a timezone change read as a new date) would
+     * otherwise drop every day outside the window in a single flush — silently,
+     * because the panel simply shows fewer days.
+     */
+    private pruneForWrite;
     /** The ledger file as another writer left it: absent, parsed, or unreadable. */
     private readDiskLedger;
     /**
@@ -331,6 +369,9 @@ export declare class UsageService {
      * this one spent ~18 s replaying the transcripts, so the correction is applied
      * to the file's own document: a bucket is capped at its repaired value only
      * while it still carries the inflated total.
+     *
+     * Returns only the buckets that were really written, so the marker records a
+     * correction that happened rather than one that was intended.
      */
     private persistRepair;
     /**
@@ -339,6 +380,14 @@ export declare class UsageService {
      * live settings changes both honor retention.
      */
     private pruneIfNeeded;
+    /**
+     * Persist the probe snapshots and the spend watch.
+     *
+     * Two processes on one machine share this file too, and the watch is an
+     * accrual: a blind overwrite lets the slower writer erase the spend the faster
+     * one already counted. The merge keeps the larger accrual (it can only grow),
+     * its own `since`, and its own last balance, so the pair stays consistent.
+     */
     private persistSnapshots;
     private rearmPoll;
     /**

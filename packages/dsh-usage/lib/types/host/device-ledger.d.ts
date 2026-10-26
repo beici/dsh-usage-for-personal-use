@@ -47,6 +47,16 @@ export declare function isDeviceId(value: string): boolean;
  * (`DESKTOP-XXXX`) still differ.
  */
 export declare function localDeviceId(): string;
+/**
+ * Full digest of this machine's identity, written into every ledger file.
+ *
+ * The device id is that digest truncated, so a hostname rename (or a change of
+ * user) mints a NEW id while the old file keeps the old one — and the old file
+ * then looks like a peer device holding a copy of this machine's own history.
+ * The untruncated digest is what lets a reader recognise that copy: two files
+ * with the same `machine` are one machine, whatever their ids say.
+ */
+export declare function localMachineId(): string;
 /** File name a device's ledger lives under. */
 export declare function ledgerFileName(deviceId: string): string;
 /**
@@ -58,9 +68,29 @@ export declare function deviceIdOfFile(name: string): string | undefined;
 /** One parsed ledger file. */
 export interface LoadedLedgerFile {
     deviceId: string;
+    /** Full machine digest the writer recorded, when it recorded one. */
+    machine?: string;
     doc: UsageLedgerDocument;
     updatedAt?: number;
 }
+/**
+ * The document as it is written to disk: the ledger plus the identity of the
+ * machine that wrote it.
+ *
+ * `days` stays at the top level on purpose. An older build reads a document
+ * whose `days` is missing as an empty ledger, so nesting the payload (the
+ * `/export` envelope does exactly that) would let a downgrade overwrite the
+ * history with nothing. `repairedAt` marks the last correction, so a process
+ * that loaded before the correction cannot raise a bucket a newer write
+ * lowered.
+ */
+export declare function ledgerFileDocument(doc: Readonly<UsageLedgerDocument>, extra?: {
+    repairedAt?: number;
+}): UsageLedgerDocument & {
+    deviceId: string;
+    machine: string;
+    repairedAt?: number;
+};
 /**
  * Parse one peer ledger document from untrusted JSON.
  *

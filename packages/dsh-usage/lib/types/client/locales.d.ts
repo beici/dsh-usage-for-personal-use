@@ -41,6 +41,7 @@ export declare const zh: {
     'usage.tokens.cacheRead': string;
     'usage.tokens.cacheHit': string;
     'usage.trend': string;
+    'usage.trend.label': string;
     'usage.range.title': string;
     'usage.range.today': string;
     'usage.range.yesterday': string;
@@ -60,6 +61,7 @@ export declare const zh: {
     'usage.range.cost': string;
     'usage.range.empty': string;
     'usage.range.noRecord': string;
+    'usage.range.loadFailed': string;
     'usage.range.loading': string;
     'usage.range.error': string;
     'usage.noData': string;
@@ -74,6 +76,11 @@ export declare const zh: {
     'usage.plan.windows.5h': string;
     'usage.plan.windows.week': string;
     'usage.plan.windows.month': string;
+    'usage.plan.windows.other': string;
+    'usage.plan.unit.hour': string;
+    'usage.plan.unit.day': string;
+    'usage.plan.unit.week': string;
+    'usage.plan.unit.month': string;
     'usage.provider.error': string;
     'usage.errorListSeparator': string;
     'usage.config.title': string;
@@ -106,6 +113,7 @@ export declare const zh: {
     'usage.device.none': string;
     'usage.device.error': string;
     'usage.ledger.error': string;
+    'usage.ledger.note': string;
     'usage.stale': string;
     'usage.device.export': string;
     'usage.device.import': string;

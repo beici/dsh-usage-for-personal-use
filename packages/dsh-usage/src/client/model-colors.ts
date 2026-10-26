@@ -43,22 +43,20 @@ function hashOf(name: string): number {
 }
 
 /**
- * Assign one palette color per normalized model name. Names walk in hash
- * order (deterministic whatever order callers walk in) and each takes its
- * hash's preferred slot, bumping forward past taken ones, so an assignment
- * changes only when the collision chain it sits on changes. Names past the
- * palette stay out of the map and fall back to MODEL_COLOR_OTHER.
+ * Assign one palette color per normalized model name.
+ *
+ * The slot is `hash(name) % paletteSize` and nothing else — deliberately not
+ * "the next free slot", which made a name's hue depend on which other names
+ * happened to be in the same window: two models took chart-1 and chart-2, and a
+ * window showing only the second recolored it to chart-1. Stability is the whole
+ * promise of this table (the trend bars, the channel bars and the model rows
+ * share it, and the user learns the colors), so a collision between two of the
+ * sixteen hues is accepted rather than resolved by shifting someone else's hue.
  */
 export function assignModelColors(models: Iterable<string>): Map<string, string> {
-  const names = [...new Set(models)].sort((left, right) => hashOf(left) - hashOf(right) || (left < right ? -1 : 1))
-  const taken = new Set<number>()
   const colors = new Map<string, string>()
-  for (const name of names) {
-    if (colors.size >= MODEL_PALETTE_SIZE) break
-    let slot = hashOf(name) % MODEL_PALETTE_SIZE
-    while (taken.has(slot)) slot = (slot + 1) % MODEL_PALETTE_SIZE
-    taken.add(slot)
-    colors.set(name, `var(--dsw-chart-${slot + 1})`)
+  for (const name of new Set(models)) {
+    colors.set(name, `var(--dsw-chart-${(hashOf(name) % MODEL_PALETTE_SIZE) + 1})`)
   }
   return colors
 }

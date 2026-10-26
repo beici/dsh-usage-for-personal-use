@@ -49,7 +49,9 @@ days, not a calendar window, and the host offers no arbitrary-range route.
   user who slows the host down also slows the panel; the sidebar card does the
   same with its own 30 s floor.
 - Percentages are rounded with the largest-remainder method — channel headers to
-  100 % together, and the model rows inside one channel likewise.
+  100 % together, and the model rows inside one channel likewise, as long as the
+  host did not truncate the list (it keeps 12 models per channel); when it did,
+  the rows state the share of what is shown.
 
 ## Window definitions
 
@@ -124,42 +126,57 @@ transcript opens with a verbatim copy of its parent's `assistant/message`
 records (same `data.message.id`, time and usage), and folding every file used to
 count those calls twice — yesterday read 17 % high on the real ledger, and no
 later run could bring it back down. `foldTranscript` now shares one `seen` set
-across all files, keyed by `data.message.id` (records without an id still fold;
-the older single-session format has none). The already-inflated buckets are
-corrected by `repairDuplicatedReplay`, which subtracts the extra copies, reprices
-them at the day's noon rate and writes the result over the file verbatim — the
-merge-based flush keeps the larger total and would drop the correction.
+across all files, keyed by `data.message.id`; a record without an id falls back to
+a content key (provider, model, time and every token field), and a repeat is
+skipped only when the key came from a *different* file, so two identical records
+inside one transcript still count. The already-inflated buckets are corrected by
+`repairDuplicatedReplay`, which subtracts the extra copies, reprices them at the
+day's noon rate and writes the corrected document back — the merge-based flush
+keeps the larger total and would drop the correction.
 
 Two rules make that correction safe to repeat on every start:
 
 - It is judged, not blind, and the yardstick is *where the bucket stood before*
   this repair: the total an earlier start already left behind (read back from the
-  marker), or — on the first start — what the deduped replay bills. A copy sits on
-  top of exactly that, so only a bucket still carrying `base + copies` is touched.
-  A lower bucket holds real calls the replay cannot see (they must stay), and a
-  bucket already at `base` was corrected once — subtracting again on every start is
-  how a repair turns into a slow leak of real usage.
+  marker), or — on the first start — what the deduped replay bills. The bucket has
+  to still carry *exactly* `base + copies`. A lower bucket holds real calls the
+  replay cannot see (they must stay); a bucket that grew by more than the copies is
+  not explained by them; a bucket already at `base` was corrected once. Only an
+  exact match is rewritten, and anything else is left alone — a repair that cannot
+  explain a bucket must not touch it.
 - `usage-dedupe-marker.json` is a record, not a gate. Version 2 stores the totals
   the repair left in each bucket (`after`), which is the floor the next start
-  compares against; it is written only after the corrected file landed (a crash in
-  between re-runs an idempotent pass instead of leaving a claim over an inflated
-  ledger). A ledger restored from a backup is therefore corrected again instead of
-  staying inflated forever.
+  compares against; a later pass merges its own floors into the existing map
+  instead of replacing it, so an older day keeps its floor. The marker is written
+  only after the corrected file landed (a crash in between re-runs an idempotent
+  pass instead of leaving a claim over an inflated ledger). A ledger restored from
+  a backup is therefore corrected again instead of staying inflated forever.
 
 The correction is applied to the file's own document rather than written over it
 verbatim: reading, replaying ~18 s of transcripts and writing leaves a window in
 which another process folds real calls into the same buckets, and a verbatim
-overwrite would drop them.
+overwrite would drop them. The written document carries `repairedAt`; a second
+process that loaded the inflated copy sees the newer stamp on disk and adopts the
+corrected document whole, instead of max-merging its own stale totals back in.
+
+Retention is guarded the same way: a flush that would drop more than 30 % of the
+recorded days (with at least four days on file) is refused and reported as a note,
+so a clock jump cannot erase the history.
 
 Two more things the ledger file must survive, because both end in a silent wipe:
 
 - A `/export` envelope (`{schema, version, deviceId, exportedAt, ledger}`) is a
   legitimate way to restore a backup, and `importPeer` refuses this device's own
-  export. `ledgerFromJson` unwraps the envelope, and a file naming *another*
-  device is quarantined instead of adopted as an empty ledger.
-- `usage-ledger.<id>.bak.json` is a copy, not a second machine. Peer discovery
-  skips any name carrying this device's prefix (and any `.corrupt-` quarantine),
-  so a backup dropped beside the live file no longer doubles every number.
+  export. `ledgerFromJson` unwraps the envelope; a file naming *another* device is
+  adopted under that device's name as a peer, and a document without a top-level
+  `days` object is quarantined instead of being read as an empty ledger.
+- `usage-ledger.<id>.bak.json` is a copy, not a second machine. Device ids never
+  contain a dot, so peer discovery skips any name carrying this device's prefix
+  (and any `.corrupt-` quarantine), and a peer document is trusted only when the
+  `deviceId` inside it matches its file name and its `machine` differs from this
+  machine's id. Every written document carries both fields, so renaming the host no
+  longer makes one machine look like two — the id is a host slug plus a digest of
+  host, platform and user.
 
 The pre-rename `usage-ledger.json` is read when this device's file is missing,
 and so is the `.migrated` sibling a successful migration leaves behind: that
@@ -178,12 +195,21 @@ Two more write-path rules:
   processes on one machine (two windows, or the CLI beside the desktop app) share
   one file and each writes the whole document; `mergeLedgerDelta(disk, ledger,
   ledgerWritten)` adds only what this process folded since its last write, and
-  the merged document is adopted, so neither window's calls are lost.
+  the merged document is adopted, so neither window's calls are lost. Buckets are
+  merged field by field (`mergeLedgerMax`), never by "larger total wins": the
+  total ignores fields like `reasoningTokens` and `cost`, so comparing totals
+  would silently drop them.
+- Peer discovery is not allowed to lose data either. A scan that fails keeps the
+  peers it already knows and reports `usage.devicesError`; a peer document whose
+  `deviceId` does not match its file name, or whose `machine` is this machine, is
+  skipped with a named failure. Non-fatal trouble (a skipped retention pass, a
+  transcript set that hit the discovery cap, a quarantined file) travels to the
+  panel as `usage.ledgerNote` instead of being swallowed.
 
 The replay runs before `pruneIfNeeded`: pruning first only resurrects the days
-the replay then re-adds. Peer files are trusted only when the `deviceId` inside
-the document matches the name it arrived under — a renamed copy of this machine's
-own ledger would otherwise double every call.
+the replay then re-adds. One discovery pass feeds both the deduped replay and the
+repair, newest transcripts first, and the count that did not fit the cap is
+reported rather than dropped in silence.
 
 `data-dsh-part` attributes (`range-tiles`, `range-card`, `window-card`,
 `trend-chart`, `trend-bar`, `trend-tooltip`, `channel-breakdown`,
@@ -266,7 +292,7 @@ only ever nav-picked, never re-opened.
 ## Verification
 
 - `node harness/render-test.mjs` — jsdom, real bundle, saved live fixtures,
-  **71/71 checks**: eight tiles with correct labels/values/`aria-pressed`
+  **76/76 checks**: eight tiles with correct labels/values/`aria-pressed`
   (近 3 天 sums 今日 + 10-19; 近 6 个月 / 全部 read the range aggregate, which the
   stub answers only up to yesterday — 49.2 M / 584 calls — so their 135 M / 1251
   tiles prove the panel folded the live today in itself, and no range fetch may
@@ -291,7 +317,7 @@ only ever nav-picked, never re-opened.
   models in one channel whose rows add up to exactly 100 %, a typed future
   custom date clamped back to today, and a refresh that refetches days it had
   cached.
-- `node --experimental-strip-types harness/host-test.mjs` — 142 checks: range
+- `node --experimental-strip-types harness/host-test.mjs` — 151 checks: range
   aggregate + per-model series, route guards, device ledger, loopback fence,
   peak clock, the record-carried route of the live fold, transcript dedupe and
   the judged repair, ledger quarantine and unreadable-file protection, and the

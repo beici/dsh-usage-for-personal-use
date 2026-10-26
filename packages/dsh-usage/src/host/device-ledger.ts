@@ -62,25 +62,50 @@ export function isDeviceId(value: string): boolean {
  * (`DESKTOP-XXXX`) still differ.
  */
 export function localDeviceId(): string {
-  let user = ''
-  try {
-    user = userInfo().username
-  } catch {
-    user = ''
-  }
-  let host = ''
-  try {
-    host = hostname()
-  } catch {
-    host = 'dsh'
-  }
-  const slug = host
+  return `${machineSlug()}-${machineDigest().slice(0, 6)}`
+}
+
+/**
+ * Full digest of this machine's identity, written into every ledger file.
+ *
+ * The device id is that digest truncated, so a hostname rename (or a change of
+ * user) mints a NEW id while the old file keeps the old one — and the old file
+ * then looks like a peer device holding a copy of this machine's own history.
+ * The untruncated digest is what lets a reader recognise that copy: two files
+ * with the same `machine` are one machine, whatever their ids say.
+ */
+export function localMachineId(): string {
+  return machineDigest()
+}
+
+/** The slug half of the device id (host name, made filename-safe). */
+function machineSlug(): string {
+  return readHost()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 24) || 'dsh'
-  const digest = createHash('sha256').update(`${host}\u0000${platform()}\u0000${user}`).digest('hex').slice(0, 6)
-  return `${slug}-${digest}`
+}
+
+/** sha256 over host, platform and user — the whole identity, not a truncation. */
+function machineDigest(): string {
+  return createHash('sha256').update(`${readHost()}\u0000${platform()}\u0000${readUser()}`).digest('hex')
+}
+
+function readHost(): string {
+  try {
+    return hostname()
+  } catch {
+    return 'dsh'
+  }
+}
+
+function readUser(): string {
+  try {
+    return userInfo().username
+  } catch {
+    return ''
+  }
 }
 
 /** File name a device's ledger lives under. */
@@ -102,8 +127,33 @@ export function deviceIdOfFile(name: string): string | undefined {
 /** One parsed ledger file. */
 export interface LoadedLedgerFile {
   deviceId: string
+  /** Full machine digest the writer recorded, when it recorded one. */
+  machine?: string
   doc: UsageLedgerDocument
   updatedAt?: number
+}
+
+/**
+ * The document as it is written to disk: the ledger plus the identity of the
+ * machine that wrote it.
+ *
+ * `days` stays at the top level on purpose. An older build reads a document
+ * whose `days` is missing as an empty ledger, so nesting the payload (the
+ * `/export` envelope does exactly that) would let a downgrade overwrite the
+ * history with nothing. `repairedAt` marks the last correction, so a process
+ * that loaded before the correction cannot raise a bucket a newer write
+ * lowered.
+ */
+export function ledgerFileDocument(
+  doc: Readonly<UsageLedgerDocument>,
+  extra?: { repairedAt?: number },
+): UsageLedgerDocument & { deviceId: string; machine: string; repairedAt?: number } {
+  return {
+    ...doc,
+    deviceId: localDeviceId(),
+    machine: localMachineId(),
+    ...(extra?.repairedAt !== undefined ? { repairedAt: extra.repairedAt } : {}),
+  }
 }
 
 /**
@@ -116,19 +166,27 @@ export interface LoadedLedgerFile {
  */
 export function parsePeerLedger(value: unknown): LoadedLedgerFile | undefined {
   if (typeof value !== 'object' || value === null) return undefined
-  const record = value as { deviceId?: unknown; ledger?: unknown; days?: unknown }
+  const record = value as { deviceId?: unknown; machine?: unknown; ledger?: unknown; days?: unknown }
+  const machine = typeof record.machine === 'string' && record.machine !== '' ? record.machine : undefined
   // Envelope form: { deviceId, ledger: { version, days } }. The payload has to
   // be an object carrying `days`: `deserializeLedger` tolerates anything and
   // answers an empty document, so a string here would otherwise import as a
   // real-but-empty peer and show a device row that sums to nothing.
   if (typeof record.deviceId === 'string') {
     if (!isDeviceId(record.deviceId)) return undefined
-    const ledger = record.ledger
-    if (!hasDayMap(ledger)) return undefined
-    return { deviceId: record.deviceId, doc: deserializeLedger(ledger) }
+    // Two shapes carry the id: the export envelope (`{deviceId, ledger}`) and the
+    // file this build writes (`{deviceId, machine, days}`). Only the envelope
+    // nests the payload, so accepting just that one silently rejected every peer
+    // file written by this build — the device simply disappeared from the panel.
+    const payload = hasDayMap(record.ledger) ? record.ledger : hasDayMap(value) ? value : undefined
+    if (payload === undefined) return undefined
+    return { deviceId: record.deviceId, machine, doc: deserializeLedger(payload) }
   }
-  // Bare document form: the device id then comes from the file name.
-  if (hasDayMap(value)) return { deviceId: '', doc: deserializeLedger(value) }
+  // Bare document form: the device id then comes from the file name. Callers
+  // must not trust it — a bare document carries no proof of which machine wrote
+  // it, and this build writes its own files WITH the id (see
+  // `ledgerFileDocument`), so a bare file is a copy, not a device.
+  if (hasDayMap(value)) return { deviceId: '', machine, doc: deserializeLedger(value) }
   return undefined
 }
 

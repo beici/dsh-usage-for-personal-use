@@ -36,12 +36,17 @@ export declare function mergeLedgerSum(target: UsageLedgerDocument, source: Read
 /** Total tokens of a bucket (billed input + output; reasoning is inside output). */
 export declare function totalTokens(totals: Readonly<UsageTokenTotals>): number;
 /**
- * Merge `source` into `target`, keeping the larger total of each bucket.
+ * Merge `source` into `target`, keeping the larger value of every field.
  *
  * The right rule when two processes on ONE machine write the same ledger file:
  * both observe a subset of the same calls, so a bucket sum would count the
- * calls both of them saw twice, while the larger bucket is the more complete
+ * calls both of them saw twice, while the larger value is the more complete
  * view of that day. (Peer devices are the opposite case — see mergeLedgerSum.)
+ *
+ * The merge is per field, not per bucket: choosing one bucket wholesale and
+ * copying it over the other drops every field `totalTokens` ignores (a bucket
+ * with cache-read tokens or a cost estimate loses them to a larger-but-poorer
+ * one). Buckets only ever grow, so the per-field maximum is also monotone.
  */
 export declare function mergeLedgerMax(target: UsageLedgerDocument, source: Readonly<UsageLedgerDocument>): void;
 /**
@@ -83,6 +88,14 @@ export declare function summarizeDays(days: ReadonlyArray<Record<string, Record<
 };
 /** All local-date keys in the ledger, ascending. */
 export declare function ledgerDayKeys(doc: Readonly<UsageLedgerDocument>): string[];
+/**
+ * How many recorded days a prune with these settings would delete.
+ *
+ * Split out from `pruneLedger` so a caller can refuse a suspicious prune before
+ * it happens: a forward clock jump makes every recorded day look ancient, and
+ * deleting them would destroy the history the plugin exists to keep.
+ */
+export declare function countPrunable(doc: Readonly<UsageLedgerDocument>, todayKey: string, retainDays: number): number;
 /**
  * Drop every day older than `retainDays` local days before `todayKey`, in
  * place. Returns the number of pruned days.

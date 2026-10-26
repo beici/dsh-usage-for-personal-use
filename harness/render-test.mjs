@@ -712,6 +712,21 @@ console.log('   plans tab text:', text(container).slice(0, 200))
   check('a failed window prints no totals row',
     card !== null && text(card).includes('部分日期加载失败') && !text(card).includes('总 tokens'),
     card === null ? 'no card' : text(card).slice(0, 120))
+  // The trend chart must not paint a failed request as an empty day: those are
+  // different facts and the tooltip has to say which one it is.
+  const chart = host.querySelector('[data-dsh-part="trend-chart"]')
+  check('the trend chart names itself for screen readers',
+    chart !== null && (chart.getAttribute('aria-label') ?? '').includes('用量趋势'),
+    chart === null ? 'no chart' : String(chart.getAttribute('aria-label')))
+  const failedBars = [...host.querySelectorAll('[data-dsh-part="trend-bar"][data-failed="true"]')]
+  check('a day that failed to load is marked failed, not empty', failedBars.length > 0, String(failedBars.length))
+  await act(async () => {
+    failedBars[0]?.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 40))
+  })
+  const tooltip = host.querySelector('[data-dsh-part="trend-tooltip"]')
+  check('a failed day says so on hover', tooltip !== null && text(tooltip).includes('加载失败'),
+    tooltip === null ? 'no tooltip' : text(tooltip))
 
   await act(async () => { localRoot.unmount() })
   host.remove()
@@ -814,6 +829,104 @@ console.log('   plans tab text:', text(container).slice(0, 200))
   host.remove()
 }
 
+// ---- a model keeps its hue when the window changes ----------------------
+// The palette slot is a function of the model name alone. It used to be "the
+// next free slot", so a window that did not contain the heaviest model
+// recolored everyone else — the docs promise the opposite.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const bucket = (calls, input) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const today = snapshot.usage.today
+  const windowWith = (models) => ({
+    ...snapshot,
+    usage: {
+      ...snapshot.usage,
+      today: {
+        date: today.date,
+        totals: bucket(models.length, models.length * 100),
+        providers: [{ provider: 'buddy', totals: bucket(models.length, models.length * 100), models: models.map((model) => ({ model, totals: bucket(1, 100) })) }],
+      },
+    },
+  })
+  const state = { snapshot: windowWith(['alpha', 'beta']), status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  const fillOf = (model) => {
+    const row = [...host.querySelectorAll('[data-dsh-part="model-rows"] [title]')].find((node) => text(node).includes(model))
+    const fill = row?.querySelector('[class*="chartModelFill"]')
+    return fill === undefined || fill === null ? 'missing' : String(fill.getAttribute('style'))
+  }
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+  const betaWithAlpha = fillOf('beta')
+  state.snapshot = windowWith(['beta'])
+  await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+  const betaAlone = fillOf('beta')
+  check('a model keeps its hue when the window changes', betaAlone !== 'missing' && betaAlone === betaWithAlpha, `${betaWithAlpha} vs ${betaAlone}`)
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- an unknown plan window key is spelled out, never printed raw --------
+// Providers name their windows inconsistently (`5h`, `week`, `7_day`). The
+// dictionary knows a few; an unknown one used to reach the panel verbatim.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const bucket = (calls, input) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const planSnapshot = {
+    ...snapshot,
+    providers: [{
+      provider: 'codex',
+      displayName: 'Codex',
+      credential: 'stored',
+      planSupported: true,
+      updatedAt: Date.now(),
+      totals: bucket(1, 100),
+      plan: { planName: 'Pro', updatedAt: Date.now(), windows: [{ key: '7_day', percent: 40 }] },
+    }],
+  }
+  const planState = { snapshot: planSnapshot, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => planState, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
+  const plansTab = [...host.querySelectorAll('[role="tab"]')].find((tab) => text(tab).includes('个人套餐'))
+  await act(async () => {
+    plansTab?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 120))
+  })
+  const planText = text(host)
+  check('an unknown plan window key is spelled out', planText.includes('7 天') && !planText.includes('usage.plan.windows.7_day'), planText.slice(0, 120))
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
 // ---- a custom window cannot run into the future -------------------------
 // The picker's `max` only stops its own calendar: a typed or pasted date went
 // straight into the window, which then counted days that have not happened.
@@ -862,4 +975,7 @@ console.log('   plans tab text:', text(container).slice(0, 200))
 
 const failed = report.filter((row) => !row.ok)
 console.log('\n=== ' + (report.length - failed.length) + '/' + report.length + ' checks passed ===')
-if (failed.length > 0) process.exitCode = 1
+// The jsdom window keeps timers and the React scheduler alive, so the process
+// would sit there after the summary and read as a hang. Exit explicitly; the
+// summary above is the whole result.
+process.exit(failed.length > 0 ? 1 : 0)

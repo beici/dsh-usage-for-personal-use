@@ -23,6 +23,11 @@ export interface TrendRow {
     totals: UsageTokenTotals;
     /** Per-model totals aggregated across providers, when the data carries them. */
     models?: Record<string, UsageTokenTotals>;
+    /**
+     * The day's fetch failed, so its totals are unknown rather than zero. The
+     * chart must not paint "no usage recorded" over a request that never landed.
+     */
+    failed?: boolean;
 }
 /**
  * The trend chart. `rows` is one row per calendar day of the window, ascending

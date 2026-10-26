@@ -184,7 +184,7 @@ export function foldTranscript(
 }
 
 /** Every transcript path under `<dshHome>/sessions`, two directory levels deep. */
-export async function listSessionLogs(root: string): Promise<string[]> {
+async function discoverSessionLogs(root: string): Promise<string[]> {
   const files: string[] = []
   let workspaces
   try {
@@ -193,7 +193,6 @@ export async function listSessionLogs(root: string): Promise<string[]> {
     return files
   }
   for (const workspace of workspaces) {
-    if (files.length >= SESSION_LOG_MAX_FILES) break
     if (workspace.isDirectory() !== true) continue
     let sessions
     try {
@@ -202,7 +201,6 @@ export async function listSessionLogs(root: string): Promise<string[]> {
       continue
     }
     for (const session of sessions) {
-      if (files.length >= SESSION_LOG_MAX_FILES) break
       if (session.isDirectory() !== true) continue
       const dir = join(root, workspace.name, session.name)
       let entries
@@ -220,16 +218,35 @@ export async function listSessionLogs(root: string): Promise<string[]> {
 }
 
 /**
+ * Every transcript path under `<dshHome>/sessions`, newest first.
+ *
+ * The order matters when the per-start cap bites: the transcripts that are
+ * dropped are the oldest ones, whose calls the live fold and the earlier days
+ * of the ledger already hold, not the session the user is working in right now.
+ */
+export async function listSessionLogs(root: string): Promise<string[]> {
+  const discovered = await discoverSessionLogs(root)
+  const stamped = await Promise.all(
+    discovered.map(async (path) => ({ path, mtime: await stat(path).then((info) => info.mtimeMs, () => 0) })),
+  )
+  stamped.sort((a, b) => b.mtime - a.mtime)
+  return stamped.map((entry) => entry.path)
+}
+
+/**
  * Replay the session transcripts into a fresh ledger-shaped document and hand it
- * to `merge`. Returns how many transcripts actually contributed, and how many
- * records were dropped as copies of a call another transcript already carried.
+ * to `merge`. Returns how many transcripts were found and how many actually
+ * contributed, how many records were dropped as copies of a call another
+ * transcript already carried, and how many transcripts the per-start cap left
+ * out (so a truncated replay is never mistaken for a complete one).
  */
 export async function collectSessionLogUsage(
   root: string,
   merge: (doc: UsageLedgerDocument) => void,
   onDuplicate?: (dayKey: string, provider: string, model: string, totals: UsageTokenTotals) => void,
-): Promise<{ files: number; replayed: number; duplicates: number }> {
-  const files = await listSessionLogs(root)
+): Promise<{ files: number; replayed: number; duplicates: number; skipped: number }> {
+  const discovered = await listSessionLogs(root)
+  const files = discovered.slice(0, SESSION_LOG_MAX_FILES)
   const doc = createLedgerDocument()
   const seen = new Set<string>()
   let replayed = 0
@@ -251,5 +268,5 @@ export async function collectSessionLogUsage(
     }
   }
   merge(doc)
-  return { files: files.length, replayed, duplicates }
+  return { files: discovered.length, replayed, duplicates, skipped: discovered.length - files.length }
 }

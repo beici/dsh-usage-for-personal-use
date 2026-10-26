@@ -50,6 +50,11 @@ export interface TrendRow {
   totals: UsageTokenTotals
   /** Per-model totals aggregated across providers, when the data carries them. */
   models?: Record<string, UsageTokenTotals>
+  /**
+   * The day's fetch failed, so its totals are unknown rather than zero. The
+   * chart must not paint "no usage recorded" over a request that never landed.
+   */
+  failed?: boolean
 }
 
 /** One rendered column: a calendar day, or a week / month bucket. */
@@ -64,6 +69,8 @@ interface TrendBucket {
   models: Map<string, UsageTokenTotals>
   /** False when the ledger recorded nothing inside the bucket. */
   recorded: boolean
+  /** True when at least one day of the bucket failed to load (unknown, not zero). */
+  failed: boolean
 }
 
 /** Billed-scale token count of a bucket (all four fields). */
@@ -122,6 +129,7 @@ function buildBuckets(rows: ReadonlyArray<TrendRow>, granularity: 'day' | 'week'
       totals: row.totals,
       models: new Map(Object.entries(row.models ?? {})),
       recorded: hasUse(row.totals),
+      failed: row.failed === true,
     }))
   }
   const buckets: TrendBucket[] = []
@@ -138,6 +146,7 @@ function buildBuckets(rows: ReadonlyArray<TrendRow>, granularity: 'day' | 'week'
           totals: emptyTotals(),
           models: new Map(),
           recorded: false,
+          failed: false,
         },
       }
       buckets.push(open.bucket)
@@ -150,6 +159,7 @@ function buildBuckets(rows: ReadonlyArray<TrendRow>, granularity: 'day' | 'week'
       open.bucket.models.set(model, bucket)
     }
     if (hasUse(row.totals)) open.bucket.recorded = true
+    if (row.failed === true) open.bucket.failed = true
   }
   return buckets
 }
@@ -224,7 +234,18 @@ export function TrendChart(props: { rows: ReadonlyArray<TrendRow>; colors?: Map<
       ]
 
   return (
-    <div className={styles.trendWrap} data-dsh-part="trend-chart">
+    <div
+      className={styles.trendWrap}
+      data-dsh-part="trend-chart"
+      role="img"
+      // The bars and axis labels are decoration to a screen reader; the one
+      // thing it can use is what the chart covers and what it adds up to.
+      aria-label={t('usage.trend.label', {
+        from: buckets[0].from,
+        to: buckets[buckets.length - 1].to,
+        tokens: formatTokens(buckets.reduce((sum, bucket) => sum + totalOf(bucket.totals), 0)),
+      })}
+    >
       <div className={styles.trendPlot}>
         <div className={styles.trendYLabels} aria-hidden="true">
           {GRIDLINE_FRACTIONS.map((fraction) => (
@@ -254,6 +275,7 @@ export function TrendChart(props: { rows: ReadonlyArray<TrendRow>; colors?: Map<
                   className={styles.trendBar}
                   data-dsh-part="trend-bar"
                   data-recorded={bucket.recorded ? 'true' : 'false'}
+                  data-failed={bucket.failed ? 'true' : 'false'}
                   onMouseEnter={() => { setHovered(index) }}
                 >
                   {segments.map((segment, at) => (
@@ -277,7 +299,7 @@ export function TrendChart(props: { rows: ReadonlyArray<TrendRow>; colors?: Map<
                 {hoveredBucket.from === hoveredBucket.to ? hoveredBucket.from : `${hoveredBucket.from} ~ ${hoveredBucket.to}`}
               </span>
               {!hoveredBucket.recorded
-                ? <span className={styles.trendTooltipLine}>{t('usage.range.noRecord')}</span>
+                ? <span className={styles.trendTooltipLine}>{hoveredBucket.failed ? t('usage.range.loadFailed') : t('usage.range.noRecord')}</span>
                 : (() => {
                     const hit = cacheHitPercent(hoveredBucket.totals)
                     const topModels = modelMode

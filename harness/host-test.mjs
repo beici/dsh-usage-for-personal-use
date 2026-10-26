@@ -606,7 +606,12 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await svc.stop()
 }
 
-// ---- another device's export is refused, not adopted --------------------
+// ---- another device's export is adopted as that device ------------------
+// A restore that drops another machine's export on the local ledger path used to
+// be quarantined as corrupt — the history survived on disk but vanished from the
+// panel. It is that device's ledger, so it is renamed to its own file and read as
+// a peer: the totals come back, and this machine's ledger stays empty rather than
+// pretending the export is its own history.
 {
   const home = await freshHome()
   const { localDeviceId } = await load('host/device-ledger.ts')
@@ -619,10 +624,15 @@ async function writeTranscript(home, lines, session = 'sess1') {
   const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
   await svc.loadPersisted()
   const names = await readdir(join(home, 'dsh-usage'))
-  check('a foreign export is quarantined, not adopted',
-    names.some((name) => name.includes('.corrupt-')) && svc.ledger.days['2026-10-16'] === undefined,
-    names.join(','))
-  check('the refusal says whose file it was', String(svc.ledgerError ?? '').includes('names device laptop-4f7b21'), String(svc.ledgerError))
+  check('another device\'s export is adopted under its own name',
+    names.includes('usage-ledger.laptop-4f7b21.json'), names.join(','))
+  check('the adopted export is not read as this machine\'s history',
+    svc.ledger.days['2026-10-16'] === undefined, JSON.stringify(Object.keys(svc.ledger.days)))
+  const all = svc.overview().usage.all.totals
+  check('the adopted export still counts, as its own device',
+    all.calls === 5 && all.inputTokens === 500, `${all.calls}/${all.inputTokens}`)
+  check('the panel says where the file went',
+    String(svc.ledgerNote ?? '').includes('laptop-4f7b21'), String(svc.ledgerNote))
   await svc.stop()
 }
 
@@ -664,9 +674,33 @@ async function writeTranscript(home, lines, session = 'sess1') {
 }
 
 // ---- a peer's backup copy is not a second device -----------------------
-// A peer ledger copied aside keeps the `usage-ledger.<id>.bak.json` shape, so the
-// id reads as `peerone.bak` and a bare (deviceId-less) document passes the
-// identity check — the peer's history is then summed in twice.
+// A peer ledger copied aside keeps the `usage-ledger.<id>.bak.json` shape. The
+// dot in the name is now refused outright (a real device id never has one), and
+// a document only counts as a device when it names the device it arrived as — so
+// a copy is neither summed nor listed.
+{
+  const home = await freshHome()
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const dir = join(home, 'dsh-usage')
+  const todayKey = (await load('core/ledger.ts')).localDateKey(Date.now())
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const day = (input, calls) => JSON.stringify({ version: 1, days: { [todayKey]: { buddy: { m1: bucket(input, calls) } } } })
+  const peerDay = (input, calls) => JSON.stringify({ version: 1, deviceId: 'peerone', machine: 'another-machine', days: { [todayKey]: { buddy: { m1: bucket(input, calls) } } } })
+  await writeFile(join(dir, `usage-ledger.${localDeviceId()}.json`), day(100, 1))
+  await writeFile(join(dir, 'usage-ledger.peerone.json'), peerDay(700, 7))
+  await writeFile(join(dir, 'usage-ledger.peerone.bak.json'), peerDay(700, 7))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const totals = svc.overview().usage.all.totals
+  check('a peer backup copy is not summed in', totals.calls === 8 && totals.inputTokens === 800, `${totals.calls}/${totals.inputTokens}`)
+  check('a peer backup copy is not a device', svc.overview().usage.devices.length === 2, JSON.stringify(svc.overview().usage.devices))
+  await svc.stop()
+}
+
+// ---- a bare peer document is not trusted -------------------------------
+// Without a deviceId inside it, a file proves nothing: it could be a renamed copy
+// of this machine's own ledger. It is refused, and the refusal is stated.
 {
   const home = await freshHome()
   const { localDeviceId } = await load('host/device-ledger.ts')
@@ -677,12 +711,11 @@ async function writeTranscript(home, lines, session = 'sess1') {
   const day = (input, calls) => JSON.stringify({ version: 1, days: { [todayKey]: { buddy: { m1: bucket(input, calls) } } } })
   await writeFile(join(dir, `usage-ledger.${localDeviceId()}.json`), day(100, 1))
   await writeFile(join(dir, 'usage-ledger.peerone.json'), day(700, 7))
-  await writeFile(join(dir, 'usage-ledger.peerone.bak.json'), day(700, 7))
   const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
   await svc.loadPersisted()
   const totals = svc.overview().usage.all.totals
-  check('a peer backup copy is not summed in', totals.calls === 8 && totals.inputTokens === 800, `${totals.calls}/${totals.inputTokens}`)
-  check('a peer backup copy is not a device', svc.overview().usage.devices.length === 2, JSON.stringify(svc.overview().usage.devices))
+  check('a bare document is not summed as a peer', totals.calls === 1 && totals.inputTokens === 100, `${totals.calls}/${totals.inputTokens}`)
+  check('the refused peer is reported', String(svc.overview().usage.devicesError ?? '').includes('peerone'), String(svc.overview().usage.devicesError))
   await svc.stop()
 }
 
@@ -1008,6 +1041,47 @@ async function writeTranscript(home, lines, session = 'sess1') {
   call(lateMs, 'mcgrox', 'deepseek-v4.1-flash', 500)
   check('the record timestamp decides the day', bucket(lateMs, 'mcgrox', 'deepseek-v4.1-flash')?.calls === 1, Object.keys(svc.ledger.days).join(','))
   await svc.stop()
+}
+
+// ---- a correction outlives a process that loaded before it --------------
+// Two processes share one ledger file. The one that loaded the inflated bucket
+// must not write it back over the corrected one: a document stamped with a newer
+// `repairedAt` is adopted whole instead of merged bucket by bucket.
+{
+  const home = await freshHome()
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const dir = join(home, 'dsh-usage')
+  const todayKey = (await load('core/ledger.ts')).localDateKey(Date.now())
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const ledgerPath = join(dir, `usage-ledger.${localDeviceId()}.json`)
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, days: { [todayKey]: { buddy: { m1: bucket(500, 5) } } } }))
+  const stale = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await stale.loadPersisted()
+  check('the stale process loaded the inflated bucket', stale.ledger.days[todayKey].buddy.m1.inputTokens === 500, JSON.stringify(stale.ledger.days))
+  // Another process corrects the file and stamps it.
+  await writeFile(ledgerPath, JSON.stringify({
+    version: 1, deviceId: localDeviceId(), machine: 'x', repairedAt: Date.now(),
+    days: { [todayKey]: { buddy: { m1: bucket(400, 4) } } },
+  }))
+  await stale.flushLedger()
+  const written = JSON.parse(await readFile(ledgerPath, 'utf8'))
+  check('a stale flush adopts the corrected document', written.days[todayKey].buddy.m1.inputTokens === 400, JSON.stringify(written.days))
+  await stale.stop()
+}
+
+// ---- merging two writers keeps fields the token total ignores -----------
+// `totalTokens` counts input/cache/output only. Replacing a whole bucket with the
+// larger-by-total one therefore dropped `reasoningTokens` and `cost` on the floor.
+{
+  const { mergeLedgerMax, totalTokens } = await load('core/ledger.ts')
+  const left = { version: 1, days: { '2026-10-20': { buddy: { m1: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 1000, cacheWriteTokens: 0, reasoningTokens: 500, calls: 1, cost: 7 } } } } }
+  const right = { version: 1, days: { '2026-10-20': { buddy: { m1: { inputTokens: 2000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 2, cost: 0 } } } } }
+  mergeLedgerMax(left, right)
+  const merged = left.days['2026-10-20'].buddy.m1
+  check('a field-wise merge keeps reasoning tokens', merged.reasoningTokens === 500, JSON.stringify(merged))
+  check('a field-wise merge keeps the larger call count', merged.calls === 2, JSON.stringify(merged))
+  check('a field-wise merge keeps the larger value of every field', totalTokens(merged) === 3000, String(totalTokens(merged)))
 }
 
 const failed = report.filter((row) => !row.ok)

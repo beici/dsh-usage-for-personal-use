@@ -40,15 +40,24 @@ export declare function zstdDecodeAll(buf: Buffer): string;
  * dropped. Pass the same set for every transcript of one pass.
  */
 export declare function foldTranscript(text: string, doc: UsageLedgerDocument, seen?: Set<string>, onDuplicate?: (dayKey: string, provider: string, model: string, totals: UsageTokenTotals) => void): void;
-/** Every transcript path under `<dshHome>/sessions`, two directory levels deep. */
+/**
+ * Every transcript path under `<dshHome>/sessions`, newest first.
+ *
+ * The order matters when the per-start cap bites: the transcripts that are
+ * dropped are the oldest ones, whose calls the live fold and the earlier days
+ * of the ledger already hold, not the session the user is working in right now.
+ */
 export declare function listSessionLogs(root: string): Promise<string[]>;
 /**
  * Replay the session transcripts into a fresh ledger-shaped document and hand it
- * to `merge`. Returns how many transcripts actually contributed, and how many
- * records were dropped as copies of a call another transcript already carried.
+ * to `merge`. Returns how many transcripts were found and how many actually
+ * contributed, how many records were dropped as copies of a call another
+ * transcript already carried, and how many transcripts the per-start cap left
+ * out (so a truncated replay is never mistaken for a complete one).
  */
 export declare function collectSessionLogUsage(root: string, merge: (doc: UsageLedgerDocument) => void, onDuplicate?: (dayKey: string, provider: string, model: string, totals: UsageTokenTotals) => void): Promise<{
     files: number;
     replayed: number;
     duplicates: number;
+    skipped: number;
 }>;

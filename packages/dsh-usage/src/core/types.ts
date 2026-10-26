@@ -231,6 +231,14 @@ export interface UsageOverviewView {
      * empty. Optional for the same older-host tolerance as `range`.
      */
     ledgerError?: string
+    /**
+     * What the numbers leave out, stated in the panel instead of only in the
+     * log: a replay cut short by the per-start cap, retention skipped because the
+     * clock jumped, a snapshot that could not be written. Not an error — the
+     * totals below are still the best available — but not silent either.
+     * Optional for the same older-host tolerance as `range`.
+     */
+    ledgerNote?: string
   }
 }
 

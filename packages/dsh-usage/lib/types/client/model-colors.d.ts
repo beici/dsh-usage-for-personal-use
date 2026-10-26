@@ -26,11 +26,15 @@ export declare const MODEL_PALETTE_SIZE = 16;
 /** The color identity of a model: `prefix/`-stripped, trimmed, lower-cased. */
 export declare function normalizeModelName(model: string): string;
 /**
- * Assign one palette color per normalized model name. Names walk in hash
- * order (deterministic whatever order callers walk in) and each takes its
- * hash's preferred slot, bumping forward past taken ones, so an assignment
- * changes only when the collision chain it sits on changes. Names past the
- * palette stay out of the map and fall back to MODEL_COLOR_OTHER.
+ * Assign one palette color per normalized model name.
+ *
+ * The slot is `hash(name) % paletteSize` and nothing else — deliberately not
+ * "the next free slot", which made a name's hue depend on which other names
+ * happened to be in the same window: two models took chart-1 and chart-2, and a
+ * window showing only the second recolored it to chart-1. Stability is the whole
+ * promise of this table (the trend bars, the channel bars and the model rows
+ * share it, and the user learns the colors), so a collision between two of the
+ * sixteen hues is accepted rather than resolved by shifting someone else's hue.
  */
 export declare function assignModelColors(models: Iterable<string>): Map<string, string>;
 /**

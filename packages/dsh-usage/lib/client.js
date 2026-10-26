@@ -81,6 +81,7 @@ window.__ModuleLoader__.load({
 			"usage.tokens.cacheRead": "缓存读",
 			"usage.tokens.cacheHit": "缓存命中",
 			"usage.trend": "近 30 天",
+			"usage.trend.label": "用量趋势图：{from} 至 {to}，合计 {tokens}",
 			"usage.range.title": "统计窗口",
 			"usage.range.today": "今日",
 			"usage.range.yesterday": "昨日",
@@ -100,6 +101,7 @@ window.__ModuleLoader__.load({
 			"usage.range.cost": "消费（估算）",
 			"usage.range.empty": "该时间范围内没有用量记录",
 			"usage.range.noRecord": "无记录",
+			"usage.range.loadFailed": "加载失败",
 			"usage.range.loading": "正在加载该时间范围的用量…",
 			"usage.range.error": "部分日期加载失败：{error}",
 			"usage.noData": "暂无用量数据（统计自插件启用起）",
@@ -114,6 +116,11 @@ window.__ModuleLoader__.load({
 			"usage.plan.windows.5h": "5 小时",
 			"usage.plan.windows.week": "每周",
 			"usage.plan.windows.month": "每月",
+			"usage.plan.windows.other": "额度窗口",
+			"usage.plan.unit.hour": "小时",
+			"usage.plan.unit.day": "天",
+			"usage.plan.unit.week": "周",
+			"usage.plan.unit.month": "个月",
 			"usage.provider.error": "查询失败：{error}",
 			"usage.errorListSeparator": "；",
 			"usage.config.title": "设置",
@@ -146,6 +153,7 @@ window.__ModuleLoader__.load({
 			"usage.device.none": "只有本机数据",
 			"usage.device.error": "部分文件无法读取：{error}",
 			"usage.ledger.error": "账本读取异常,下面的数字可能不完整：{error}",
+			"usage.ledger.note": "说明：{note}",
 			"usage.stale": "上次刷新失败（{error}）,下面是 {time} 的数据",
 			"usage.device.export": "导出本机用量",
 			"usage.device.import": "导入其他设备",
@@ -192,6 +200,7 @@ window.__ModuleLoader__.load({
 			"usage.tokens.cacheRead": "Cache read",
 			"usage.tokens.cacheHit": "Cache hit",
 			"usage.trend": "Last 30 days",
+			"usage.trend.label": "Usage trend: {from} to {to}, {tokens} in total",
 			"usage.range.title": "Time window",
 			"usage.range.today": "Today",
 			"usage.range.yesterday": "Yesterday",
@@ -211,6 +220,7 @@ window.__ModuleLoader__.load({
 			"usage.range.cost": "Spend (estimated)",
 			"usage.range.empty": "No usage recorded in this window",
 			"usage.range.noRecord": "No usage recorded",
+			"usage.range.loadFailed": "Failed to load",
 			"usage.range.loading": "Loading this window…",
 			"usage.range.error": "Some days failed to load: {error}",
 			"usage.noData": "No usage data yet (counting starts when the plugin is enabled)",
@@ -225,6 +235,11 @@ window.__ModuleLoader__.load({
 			"usage.plan.windows.5h": "5 hours",
 			"usage.plan.windows.week": "Weekly",
 			"usage.plan.windows.month": "Monthly",
+			"usage.plan.windows.other": "Quota window",
+			"usage.plan.unit.hour": "hours",
+			"usage.plan.unit.day": "days",
+			"usage.plan.unit.week": "weeks",
+			"usage.plan.unit.month": "months",
 			"usage.provider.error": "Query failed: {error}",
 			"usage.errorListSeparator": "; ",
 			"usage.config.title": "Settings",
@@ -257,6 +272,7 @@ window.__ModuleLoader__.load({
 			"usage.device.none": "This device only",
 			"usage.device.error": "Some files could not be read: {error}",
 			"usage.ledger.error": "The usage ledger could not be read, so the numbers below may be incomplete: {error}",
+			"usage.ledger.note": "Note: {note}",
 			"usage.stale": "Last refresh failed ({error}); the numbers below are from {time}",
 			"usage.device.export": "Export this device",
 			"usage.device.import": "Import another device",
@@ -283,7 +299,7 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 		//#region \0dsh-css:packages/dsh-usage/src/client/usage.module.css.mjs
-		const css = ".cvtkAW_section{color:inherit;--dsw-chart-1:#509fff;--dsw-chart-2:#6d9a73;--dsw-chart-3:#d69159;--dsw-chart-4:#b68cf5;--dsw-chart-5:#e07db2;--dsw-chart-6:#56adad;--dsw-chart-7:#ca7162;--dsw-chart-8:#a2b15d;--dsw-chart-9:#8179de;--dsw-chart-10:#e1bd5d;--dsw-chart-11:#d48ca5;--dsw-chart-12:#90bb75;--dsw-chart-13:#6dbb9d;--dsw-chart-14:#57b6d9;--dsw-chart-15:#c288d9;--dsw-chart-16:#8da2d3;--dsw-chart-other:#9d9d9d;flex-direction:column;gap:16px;display:flex}body[data-ds-dark-theme] .cvtkAW_section{--dsw-chart-1:#5da6ff;--dsw-chart-2:#78a17d;--dsw-chart-3:#d99965;--dsw-chart-4:#bb94f6;--dsw-chart-5:#e286b8;--dsw-chart-6:#62b3b3;--dsw-chart-7:#ce7b6d;--dsw-chart-8:#a9b769;--dsw-chart-9:#8a82e0;--dsw-chart-10:#e3c168;--dsw-chart-11:#d794ab;--dsw-chart-12:#98c07f;--dsw-chart-13:#78c0a4;--dsw-chart-14:#63bbdc;--dsw-chart-15:#c691dc;--dsw-chart-16:#95a9d6;--dsw-chart-other:#a4a4a4}@media (prefers-color-scheme:dark){.cvtkAW_section{--dsw-chart-1:#5da6ff;--dsw-chart-2:#78a17d;--dsw-chart-3:#d99965;--dsw-chart-4:#bb94f6;--dsw-chart-5:#e286b8;--dsw-chart-6:#62b3b3;--dsw-chart-7:#ce7b6d;--dsw-chart-8:#a9b769;--dsw-chart-9:#8a82e0;--dsw-chart-10:#e3c168;--dsw-chart-11:#d794ab;--dsw-chart-12:#98c07f;--dsw-chart-13:#78c0a4;--dsw-chart-14:#63bbdc;--dsw-chart-15:#c691dc;--dsw-chart-16:#95a9d6;--dsw-chart-other:#a4a4a4}}.cvtkAW_header{justify-content:space-between;align-items:center;gap:12px;display:flex}.cvtkAW_currentProvider{opacity:.75;font-size:13px}.cvtkAW_refreshBtn{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.85;background:0 0;border:1px solid;border-radius:8px;padding:4px 12px;font-size:12px;transition:opacity .12s,background-color .12s}.cvtkAW_refreshBtn:hover:not(:disabled){opacity:1;background:color-mix(in srgb, currentColor 8%, transparent)}.cvtkAW_refreshBtn:disabled{cursor:default;opacity:.5}.cvtkAW_refreshBtn:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabs{border-bottom:1px solid color-mix(in srgb, currentColor 14%, transparent);gap:4px;display:flex}.cvtkAW_tab{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.65;background:0 0;border:none;border-bottom:2px solid #0000;margin-bottom:-1px;padding:6px 14px;font-size:13px}.cvtkAW_tab:hover{opacity:.9}.cvtkAW_tab:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabActive{opacity:1;border-bottom-color:currentColor;font-weight:600}.cvtkAW_card{border:1px solid color-mix(in srgb, currentColor 14%, transparent);border-radius:12px;flex-direction:column;gap:10px;padding:14px 16px;display:flex}.cvtkAW_cardTitle{letter-spacing:.04em;text-transform:uppercase;opacity:.6;font-size:12px;font-weight:600}.cvtkAW_dayPicker{align-items:center;gap:8px;display:flex}.cvtkAW_dayPickerLabel{opacity:.6;font-size:11px}.cvtkAW_daySelect{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_daySelect:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_daySelect option,.cvtkAW_settingItem select option{background-color:var(--dsw-alias-bg-multi-select,Canvas);color:var(--dsw-alias-label-primary,CanvasText)}.cvtkAW_statRow{flex-wrap:wrap;gap:18px;display:flex}.cvtkAW_stat{text-align:center;flex-direction:column;align-items:center;gap:2px;display:flex}.cvtkAW_statValue{font-variant-numeric:tabular-nums;font-size:18px;font-weight:600}.cvtkAW_statLabel{opacity:.6;font-size:11px}.cvtkAW_providerRow{border-top:1px solid color-mix(in srgb, currentColor 8%, transparent);flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;font-size:13px;display:flex}.cvtkAW_providerRow:first-of-type{border-top:none}.cvtkAW_providerName{align-items:center;gap:8px;min-width:0;display:flex}.cvtkAW_providerTokens{font-variant-numeric:tabular-nums;opacity:.75;white-space:nowrap}.cvtkAW_providerBalance{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}.cvtkAW_currentBadge{border:1px solid color-mix(in srgb, currentColor 35%, transparent);opacity:.8;border-radius:999px;flex:none;padding:1px 7px;font-size:10px;font-weight:600}.cvtkAW_chart{flex-direction:column;gap:12px;display:flex}.cvtkAW_chartProvider{flex-direction:column;gap:5px;display:flex}.cvtkAW_chartProvider+.cvtkAW_chartProvider{border-top:1px solid color-mix(in srgb, currentColor 7%, transparent);padding-top:10px}.cvtkAW_chartHead{justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;display:flex}.cvtkAW_chartHeadName{letter-spacing:.01em;font-weight:600}.cvtkAW_chartHeadTokens{font-variant-numeric:tabular-nums;opacity:.88;white-space:nowrap;font-size:11.5px;font-weight:600}.cvtkAW_chartTokens{font-variant-numeric:tabular-nums;opacity:.6;white-space:nowrap;font-size:11px}.cvtkAW_chartBar{background:color-mix(in srgb, currentColor 8%, transparent);border-radius:999px;height:8px;display:flex;overflow:hidden}.cvtkAW_chartSeg{flex:none;height:100%;display:block}.cvtkAW_chartModel{opacity:.8;grid-template-columns:180px 1fr 176px;align-items:center;gap:8px;padding-left:14px;font-size:11px;display:grid}.cvtkAW_chartModelName{text-overflow:ellipsis;white-space:nowrap;opacity:.95;overflow:hidden}.cvtkAW_chartModelBar{background:color-mix(in srgb, currentColor 6%, transparent);border-radius:999px;height:4px;display:block;overflow:hidden}.cvtkAW_chartModelFill{background:color-mix(in srgb, currentColor 35%, transparent);border-radius:999px;height:100%;transition:width .3s;display:block}.cvtkAW_trendWrap{flex-direction:column;gap:6px;display:flex}.cvtkAW_trendPlot{gap:6px;height:96px;display:flex}.cvtkAW_trendYLabels{flex:none;width:34px;position:relative}.cvtkAW_trendYLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;right:0;transform:translateY(50%)}.cvtkAW_trendArea{border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);flex:1 1 0;min-width:0;position:relative}.cvtkAW_trendGridline{background:color-mix(in srgb, currentColor 8%, transparent);height:1px;position:absolute;left:0;right:0}.cvtkAW_trendBars{align-items:flex-end;gap:2px;display:flex;position:absolute;inset:0}.cvtkAW_trendBar{border-radius:2px 2px 0 0;flex-direction:column-reverse;flex:1 1 0;min-width:2px;height:100%;display:flex;overflow:hidden}.cvtkAW_trendBar:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_trendSeg{width:100%;display:block}.cvtkAW_trendSegCache{background:color-mix(in srgb, currentColor 70%, transparent)}.cvtkAW_trendSegInput{background:color-mix(in srgb, currentColor 45%, transparent)}.cvtkAW_trendSegOutput{background:color-mix(in srgb, currentColor 22%, transparent)}.cvtkAW_trendBar:hover .cvtkAW_trendSeg{filter:saturate(1.15)brightness(1.06)}.cvtkAW_trendTooltip{z-index:2;border:1px solid color-mix(in srgb, currentColor 18%, transparent);background:var(--dsw-alias-bg-floating,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;box-shadow:0 4px 14px color-mix(in srgb, currentColor 18%, transparent);border-radius:8px;flex-direction:column;gap:2px;padding:6px 9px;font-size:11px;display:flex;position:absolute;transform:translate(-50%,-100%)}.cvtkAW_trendTooltipTitle{font-weight:600}.cvtkAW_trendTooltipLine{opacity:.8}.cvtkAW_trendXLabels{height:14px;margin-left:40px;position:relative}.cvtkAW_trendXLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;transform:translate(-50%)}.cvtkAW_trendLegend{opacity:.65;flex-wrap:wrap;gap:12px;font-size:10px;display:flex}.cvtkAW_trendLegendItem{align-items:center;gap:4px;display:inline-flex}.cvtkAW_trendSwatch{border-radius:2px;width:8px;height:8px;display:inline-block}.cvtkAW_rangeGrid{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;display:grid}.cvtkAW_rangeTile{appearance:none;border:1px solid color-mix(in srgb, currentColor 14%, transparent);color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border-radius:10px;flex-direction:column;gap:2px;padding:8px 10px;transition:background-color .12s,border-color .12s;display:flex}.cvtkAW_rangeTile:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_rangeTile:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_rangeTileActive{border-color:color-mix(in srgb, currentColor 45%, transparent);background:color-mix(in srgb, currentColor 9%, transparent)}.cvtkAW_rangeTileLabel{opacity:.65;font-size:11px}.cvtkAW_rangeTileValue{font-variant-numeric:tabular-nums;font-size:16px;font-weight:600}.cvtkAW_rangeTileMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_rangeControls{flex-wrap:wrap;align-items:center;gap:12px;display:flex}.cvtkAW_dateInput{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_dateInput:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_windowHead{flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_spanLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_modelRows{flex-direction:column;gap:4px;display:flex}.cvtkAW_muted{opacity:.6;font-size:12px}.cvtkAW_voucherPreview canvas{border-radius:8px;width:100%;height:auto;display:block}.cvtkAW_buttonRow{gap:8px;display:flex}.cvtkAW_errorLine{opacity:.75;font-size:12px}.cvtkAW_planCard{flex-direction:column;gap:8px;display:flex}.cvtkAW_planHead{justify-content:space-between;align-items:baseline;gap:10px;display:flex}.cvtkAW_planName{font-size:14px;font-weight:600}.cvtkAW_windowRow{flex-direction:column;gap:4px;display:flex}.cvtkAW_windowLabel{opacity:.8;font-variant-numeric:tabular-nums;justify-content:space-between;font-size:12px;display:flex}.cvtkAW_bar{background:color-mix(in srgb, currentColor 10%, transparent);border-radius:999px;height:6px;overflow:hidden}.cvtkAW_barFill{background:color-mix(in srgb, currentColor 55%, transparent);border-radius:999px;height:100%;transition:width .3s}.cvtkAW_barWarn{background:#d97706}.cvtkAW_barLow{background:#dc2626}.cvtkAW_resetLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_settingsGrid{flex-wrap:wrap;align-items:center;gap:16px;display:flex}.cvtkAW_settingItem{align-items:center;gap:8px;font-size:13px;display:flex}.cvtkAW_settingItem input[type=checkbox]{accent-color:currentColor}.cvtkAW_settingItem input[type=number]{border:1px solid color-mix(in srgb, currentColor 25%, transparent);width:90px;color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem select{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem input:focus-visible,.cvtkAW_settingItem select:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footCard{box-sizing:border-box;background:color-mix(in srgb, currentColor 4%, transparent);width:100%;color:inherit;border:none;border-radius:12px;margin:2px 0 4px;transition:background-color .12s;position:relative}.cvtkAW_footCard:hover{background:var(--dsw-alias-interactive-bg-hover)}.cvtkAW_footCardCollapsed{background:0 0}.cvtkAW_footMain{appearance:none;box-sizing:border-box;width:100%;color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border:none;border-radius:12px;flex-direction:column;gap:4px;padding:8px;display:flex}.cvtkAW_footMain:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle{appearance:none;width:20px;height:20px;color:inherit;cursor:pointer;opacity:.55;background:0 0;border:none;border-radius:6px;justify-content:center;align-items:center;padding:0;transition:opacity .12s,background-color .12s;display:inline-flex;position:absolute;top:6px;right:6px}.cvtkAW_footCard:hover .cvtkAW_footToggle{opacity:.8}.cvtkAW_footToggle:hover{opacity:1;background:color-mix(in srgb, currentColor 10%, transparent)}.cvtkAW_footToggle:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle svg{display:block}.cvtkAW_footHead{justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_footTitle{opacity:.65;white-space:nowrap;align-items:center;gap:6px;min-width:0;font-size:12px;display:inline-flex}.cvtkAW_footTitle svg{flex:none;display:block}.cvtkAW_footValue{font-variant-numeric:tabular-nums;white-space:nowrap;margin-right:18px;font-size:15px;font-weight:600}.cvtkAW_footLine{opacity:.7;font-variant-numeric:tabular-nums;text-overflow:ellipsis;white-space:nowrap;font-size:11px;overflow:hidden}.cvtkAW_footMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_footCardCollapsed .cvtkAW_footMain{min-height:36px;padding:7px 8px}.cvtkAW_footStrip{white-space:nowrap;align-items:center;gap:6px;padding-right:20px;font-size:12px;display:flex;overflow:hidden}.cvtkAW_footStrip svg{opacity:.65;flex:none;display:block}.cvtkAW_footStripProvider{text-overflow:ellipsis;flex:none;max-width:38%;font-weight:500;overflow:hidden}.cvtkAW_footStripLabel{opacity:.65;text-overflow:ellipsis;overflow:hidden}.cvtkAW_footStripValue{font-variant-numeric:tabular-nums;margin-left:auto;font-weight:600}[data-dsh-frame][data-sidebar-collapsed] .cvtkAW_footCard,[data-sidebar-collapsed] .cvtkAW_footCard{display:none}.cvtkAW_peakBadge,.cvtkAW_peakLine{font-variant-numeric:tabular-nums;white-space:nowrap;align-items:center;gap:4px;font-size:11px;display:inline-flex}.cvtkAW_peakBadge{flex:none}.cvtkAW_peakLine{gap:6px}.cvtkAW_peakBadge[data-peak=on],.cvtkAW_peakLine[data-peak=on]{color:var(--dsw-alias-state-error-primary,#b42318)}.cvtkAW_peakBadge[data-peak=off],.cvtkAW_peakLine[data-peak=off]{color:var(--dsw-alias-state-success-primary,#067647)}.cvtkAW_peakDot{background:currentColor;border-radius:50%;flex:none;width:6px;height:6px}.cvtkAW_footPeak{white-space:nowrap;align-items:center;gap:5px;font-size:10px;display:flex;overflow:hidden}.cvtkAW_footPeakClock{opacity:.7;font-variant-numeric:tabular-nums}";
+		const css = ".cvtkAW_section{color:inherit;--dsw-chart-1:#509fff;--dsw-chart-2:#6d9a73;--dsw-chart-3:#d69159;--dsw-chart-4:#b68cf5;--dsw-chart-5:#e07db2;--dsw-chart-6:#56adad;--dsw-chart-7:#ca7162;--dsw-chart-8:#a2b15d;--dsw-chart-9:#8179de;--dsw-chart-10:#e1bd5d;--dsw-chart-11:#d48ca5;--dsw-chart-12:#90bb75;--dsw-chart-13:#6dbb9d;--dsw-chart-14:#57b6d9;--dsw-chart-15:#c288d9;--dsw-chart-16:#8da2d3;--dsw-chart-other:#9d9d9d;flex-direction:column;gap:16px;display:flex}body[data-ds-dark-theme] .cvtkAW_section{--dsw-chart-1:#5da6ff;--dsw-chart-2:#78a17d;--dsw-chart-3:#d99965;--dsw-chart-4:#bb94f6;--dsw-chart-5:#e286b8;--dsw-chart-6:#62b3b3;--dsw-chart-7:#ce7b6d;--dsw-chart-8:#a9b769;--dsw-chart-9:#8a82e0;--dsw-chart-10:#e3c168;--dsw-chart-11:#d794ab;--dsw-chart-12:#98c07f;--dsw-chart-13:#78c0a4;--dsw-chart-14:#63bbdc;--dsw-chart-15:#c691dc;--dsw-chart-16:#95a9d6;--dsw-chart-other:#a4a4a4}@media (prefers-color-scheme:dark){.cvtkAW_section{--dsw-chart-1:#5da6ff;--dsw-chart-2:#78a17d;--dsw-chart-3:#d99965;--dsw-chart-4:#bb94f6;--dsw-chart-5:#e286b8;--dsw-chart-6:#62b3b3;--dsw-chart-7:#ce7b6d;--dsw-chart-8:#a9b769;--dsw-chart-9:#8a82e0;--dsw-chart-10:#e3c168;--dsw-chart-11:#d794ab;--dsw-chart-12:#98c07f;--dsw-chart-13:#78c0a4;--dsw-chart-14:#63bbdc;--dsw-chart-15:#c691dc;--dsw-chart-16:#95a9d6;--dsw-chart-other:#a4a4a4}}.cvtkAW_header{justify-content:space-between;align-items:center;gap:12px;display:flex}.cvtkAW_currentProvider{opacity:.75;font-size:13px}.cvtkAW_refreshBtn{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.85;background:0 0;border:1px solid;border-radius:8px;padding:4px 12px;font-size:12px;transition:opacity .12s,background-color .12s}.cvtkAW_refreshBtn:hover:not(:disabled){opacity:1;background:color-mix(in srgb, currentColor 8%, transparent)}.cvtkAW_refreshBtn:disabled{cursor:default;opacity:.5}.cvtkAW_refreshBtn:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabs{border-bottom:1px solid color-mix(in srgb, currentColor 14%, transparent);gap:4px;display:flex}.cvtkAW_tab{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.65;background:0 0;border:none;border-bottom:2px solid #0000;margin-bottom:-1px;padding:6px 14px;font-size:13px}.cvtkAW_tab:hover{opacity:.9}.cvtkAW_tab:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabActive{opacity:1;border-bottom-color:currentColor;font-weight:600}.cvtkAW_card{border:1px solid color-mix(in srgb, currentColor 14%, transparent);border-radius:12px;flex-direction:column;gap:10px;padding:14px 16px;display:flex}.cvtkAW_cardTitle{letter-spacing:.04em;text-transform:uppercase;opacity:.6;font-size:12px;font-weight:600}.cvtkAW_dayPicker{align-items:center;gap:8px;display:flex}.cvtkAW_dayPickerLabel{opacity:.6;font-size:11px}.cvtkAW_daySelect{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_daySelect:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_daySelect option,.cvtkAW_settingItem select option{background-color:var(--dsw-alias-bg-multi-select,Canvas);color:var(--dsw-alias-label-primary,CanvasText)}.cvtkAW_statRow{flex-wrap:wrap;gap:18px;display:flex}.cvtkAW_stat{text-align:center;flex-direction:column;align-items:center;gap:2px;display:flex}.cvtkAW_statValue{font-variant-numeric:tabular-nums;font-size:18px;font-weight:600}.cvtkAW_statLabel{opacity:.6;font-size:11px}.cvtkAW_providerRow{border-top:1px solid color-mix(in srgb, currentColor 8%, transparent);flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;font-size:13px;display:flex}.cvtkAW_providerRow:first-of-type{border-top:none}.cvtkAW_providerName{align-items:center;gap:8px;min-width:0;display:flex}.cvtkAW_providerTokens{font-variant-numeric:tabular-nums;opacity:.75;white-space:nowrap}.cvtkAW_providerBalance{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}.cvtkAW_currentBadge{border:1px solid color-mix(in srgb, currentColor 35%, transparent);opacity:.8;border-radius:999px;flex:none;padding:1px 7px;font-size:10px;font-weight:600}.cvtkAW_chart{flex-direction:column;gap:12px;display:flex}.cvtkAW_chartProvider{flex-direction:column;gap:5px;display:flex}.cvtkAW_chartProvider+.cvtkAW_chartProvider{border-top:1px solid color-mix(in srgb, currentColor 7%, transparent);padding-top:10px}.cvtkAW_chartHead{justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;display:flex}.cvtkAW_chartHeadName{letter-spacing:.01em;font-weight:600}.cvtkAW_chartHeadTokens{font-variant-numeric:tabular-nums;opacity:.88;white-space:nowrap;font-size:11.5px;font-weight:600}.cvtkAW_chartTokens{font-variant-numeric:tabular-nums;opacity:.6;white-space:nowrap;font-size:11px}.cvtkAW_chartBar{background:color-mix(in srgb, currentColor 8%, transparent);border-radius:999px;height:8px;display:flex;overflow:hidden}.cvtkAW_chartSeg{flex:none;height:100%;display:block}.cvtkAW_chartModel{opacity:.8;grid-template-columns:minmax(0,180px) minmax(0,1fr) minmax(0,176px);align-items:center;gap:8px;padding-left:14px;font-size:11px;display:grid}.cvtkAW_chartModelName{text-overflow:ellipsis;white-space:nowrap;opacity:.95;overflow:hidden}.cvtkAW_chartModelBar{background:color-mix(in srgb, currentColor 6%, transparent);border-radius:999px;height:4px;display:block;overflow:hidden}.cvtkAW_chartModelFill{background:color-mix(in srgb, currentColor 35%, transparent);border-radius:999px;height:100%;transition:width .3s;display:block}.cvtkAW_trendWrap{flex-direction:column;gap:6px;display:flex}.cvtkAW_trendPlot{gap:6px;height:96px;display:flex}.cvtkAW_trendYLabels{flex:none;width:34px;position:relative}.cvtkAW_trendYLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;right:0;transform:translateY(50%)}.cvtkAW_trendArea{border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);flex:1 1 0;min-width:0;position:relative}.cvtkAW_trendGridline{background:color-mix(in srgb, currentColor 8%, transparent);height:1px;position:absolute;left:0;right:0}.cvtkAW_trendBars{align-items:flex-end;gap:2px;display:flex;position:absolute;inset:0}.cvtkAW_trendBar{border-radius:2px 2px 0 0;flex-direction:column-reverse;flex:1 1 0;min-width:2px;height:100%;display:flex;overflow:hidden}.cvtkAW_trendBar:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_trendSeg{width:100%;display:block}.cvtkAW_trendSegCache{background:color-mix(in srgb, currentColor 70%, transparent)}.cvtkAW_trendSegInput{background:color-mix(in srgb, currentColor 45%, transparent)}.cvtkAW_trendSegOutput{background:color-mix(in srgb, currentColor 22%, transparent)}.cvtkAW_trendBar:hover .cvtkAW_trendSeg{filter:saturate(1.15)brightness(1.06)}.cvtkAW_trendTooltip{z-index:2;border:1px solid color-mix(in srgb, currentColor 18%, transparent);background:var(--dsw-alias-bg-floating,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;box-shadow:0 4px 14px color-mix(in srgb, currentColor 18%, transparent);border-radius:8px;flex-direction:column;gap:2px;padding:6px 9px;font-size:11px;display:flex;position:absolute;transform:translate(-50%,-100%)}.cvtkAW_trendTooltipTitle{font-weight:600}.cvtkAW_trendTooltipLine{opacity:.8}.cvtkAW_trendXLabels{height:14px;margin-left:40px;position:relative}.cvtkAW_trendXLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;transform:translate(-50%)}.cvtkAW_trendLegend{opacity:.65;flex-wrap:wrap;gap:12px;font-size:10px;display:flex}.cvtkAW_trendLegendItem{align-items:center;gap:4px;display:inline-flex}.cvtkAW_trendSwatch{border-radius:2px;width:8px;height:8px;display:inline-block}.cvtkAW_rangeGrid{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;display:grid}.cvtkAW_rangeTile{appearance:none;border:1px solid color-mix(in srgb, currentColor 14%, transparent);color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border-radius:10px;flex-direction:column;gap:2px;padding:8px 10px;transition:background-color .12s,border-color .12s;display:flex}.cvtkAW_rangeTile:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_rangeTile:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_rangeTileActive{border-color:color-mix(in srgb, currentColor 45%, transparent);background:color-mix(in srgb, currentColor 9%, transparent)}.cvtkAW_rangeTileLabel{opacity:.65;font-size:11px}.cvtkAW_rangeTileValue{font-variant-numeric:tabular-nums;font-size:16px;font-weight:600}.cvtkAW_rangeTileMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_rangeControls{flex-wrap:wrap;align-items:center;gap:12px;display:flex}.cvtkAW_dateInput{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_dateInput:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_windowHead{flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_spanLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_modelRows{flex-direction:column;gap:4px;display:flex}.cvtkAW_muted{opacity:.6;font-size:12px}.cvtkAW_voucherPreview canvas{border-radius:8px;width:100%;height:auto;display:block}.cvtkAW_buttonRow{gap:8px;display:flex}.cvtkAW_errorLine{opacity:.75;font-size:12px}.cvtkAW_noteLine{opacity:.6;font-size:11.5px}.cvtkAW_planCard{flex-direction:column;gap:8px;display:flex}.cvtkAW_planHead{justify-content:space-between;align-items:baseline;gap:10px;display:flex}.cvtkAW_planName{font-size:14px;font-weight:600}.cvtkAW_windowRow{flex-direction:column;gap:4px;display:flex}.cvtkAW_windowLabel{opacity:.8;font-variant-numeric:tabular-nums;justify-content:space-between;font-size:12px;display:flex}.cvtkAW_bar{background:color-mix(in srgb, currentColor 10%, transparent);border-radius:999px;height:6px;overflow:hidden}.cvtkAW_barFill{background:color-mix(in srgb, currentColor 55%, transparent);border-radius:999px;height:100%;transition:width .3s}.cvtkAW_barWarn{background:#d97706}.cvtkAW_barLow{background:#dc2626}.cvtkAW_resetLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_settingsGrid{flex-wrap:wrap;align-items:center;gap:16px;display:flex}.cvtkAW_settingItem{align-items:center;gap:8px;font-size:13px;display:flex}.cvtkAW_settingItem input[type=checkbox]{accent-color:currentColor}.cvtkAW_settingItem input[type=number]{border:1px solid color-mix(in srgb, currentColor 25%, transparent);width:90px;color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem select{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem input:focus-visible,.cvtkAW_settingItem select:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footCard{box-sizing:border-box;background:color-mix(in srgb, currentColor 4%, transparent);width:100%;color:inherit;border:none;border-radius:12px;margin:2px 0 4px;transition:background-color .12s;position:relative}.cvtkAW_footCard:hover{background:var(--dsw-alias-interactive-bg-hover)}.cvtkAW_footCardCollapsed{background:0 0}.cvtkAW_footMain{appearance:none;box-sizing:border-box;width:100%;color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border:none;border-radius:12px;flex-direction:column;gap:4px;padding:8px;display:flex}.cvtkAW_footMain:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle{appearance:none;width:20px;height:20px;color:inherit;cursor:pointer;opacity:.55;background:0 0;border:none;border-radius:6px;justify-content:center;align-items:center;padding:0;transition:opacity .12s,background-color .12s;display:inline-flex;position:absolute;top:6px;right:6px}.cvtkAW_footCard:hover .cvtkAW_footToggle{opacity:.8}.cvtkAW_footToggle:hover{opacity:1;background:color-mix(in srgb, currentColor 10%, transparent)}.cvtkAW_footToggle:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle svg{display:block}.cvtkAW_footHead{justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_footTitle{opacity:.65;white-space:nowrap;align-items:center;gap:6px;min-width:0;font-size:12px;display:inline-flex}.cvtkAW_footTitle svg{flex:none;display:block}.cvtkAW_footValue{font-variant-numeric:tabular-nums;white-space:nowrap;margin-right:18px;font-size:15px;font-weight:600}.cvtkAW_footLine{opacity:.7;font-variant-numeric:tabular-nums;text-overflow:ellipsis;white-space:nowrap;font-size:11px;overflow:hidden}.cvtkAW_footMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_footCardCollapsed .cvtkAW_footMain{min-height:36px;padding:7px 8px}.cvtkAW_footStrip{white-space:nowrap;align-items:center;gap:6px;padding-right:20px;font-size:12px;display:flex;overflow:hidden}.cvtkAW_footStrip svg{opacity:.65;flex:none;display:block}.cvtkAW_footStripProvider{text-overflow:ellipsis;flex:none;max-width:38%;font-weight:500;overflow:hidden}.cvtkAW_footStripLabel{opacity:.65;text-overflow:ellipsis;overflow:hidden}.cvtkAW_footStripValue{font-variant-numeric:tabular-nums;margin-left:auto;font-weight:600}[data-dsh-frame][data-sidebar-collapsed] .cvtkAW_footCard,[data-sidebar-collapsed] .cvtkAW_footCard{display:none}.cvtkAW_peakBadge,.cvtkAW_peakLine{font-variant-numeric:tabular-nums;white-space:nowrap;align-items:center;gap:4px;font-size:11px;display:inline-flex}.cvtkAW_peakBadge{flex:none}.cvtkAW_peakLine{gap:6px}.cvtkAW_peakBadge[data-peak=on],.cvtkAW_peakLine[data-peak=on]{color:var(--dsw-alias-state-error-primary,#b42318)}.cvtkAW_peakBadge[data-peak=off],.cvtkAW_peakLine[data-peak=off]{color:var(--dsw-alias-state-success-primary,#067647)}.cvtkAW_peakDot{background:currentColor;border-radius:50%;flex:none;width:6px;height:6px}.cvtkAW_footPeak{white-space:nowrap;align-items:center;gap:5px;font-size:10px;display:flex;overflow:hidden}.cvtkAW_footPeakClock{opacity:.7;font-variant-numeric:tabular-nums}";
 		const tagId = "@linxin666/dsh-usage/packages/dsh-usage/src/client/usage.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -337,6 +353,7 @@ window.__ModuleLoader__.load({
 			"header": "cvtkAW_header",
 			"modelRows": "cvtkAW_modelRows",
 			"muted": "cvtkAW_muted",
+			"noteLine": "cvtkAW_noteLine",
 			"peakBadge": "cvtkAW_peakBadge",
 			"peakDot": "cvtkAW_peakDot",
 			"peakLine": "cvtkAW_peakLine",
@@ -491,23 +508,19 @@ window.__ModuleLoader__.load({
 			return hash >>> 0;
 		}
 		/**
-		* Assign one palette color per normalized model name. Names walk in hash
-		* order (deterministic whatever order callers walk in) and each takes its
-		* hash's preferred slot, bumping forward past taken ones, so an assignment
-		* changes only when the collision chain it sits on changes. Names past the
-		* palette stay out of the map and fall back to MODEL_COLOR_OTHER.
+		* Assign one palette color per normalized model name.
+		*
+		* The slot is `hash(name) % paletteSize` and nothing else — deliberately not
+		* "the next free slot", which made a name's hue depend on which other names
+		* happened to be in the same window: two models took chart-1 and chart-2, and a
+		* window showing only the second recolored it to chart-1. Stability is the whole
+		* promise of this table (the trend bars, the channel bars and the model rows
+		* share it, and the user learns the colors), so a collision between two of the
+		* sixteen hues is accepted rather than resolved by shifting someone else's hue.
 		*/
 		function assignModelColors(models) {
-			const names = [...new Set(models)].sort((left, right) => hashOf(left) - hashOf(right) || (left < right ? -1 : 1));
-			const taken = /* @__PURE__ */ new Set();
 			const colors = /* @__PURE__ */ new Map();
-			for (const name of names) {
-				if (colors.size >= 16) break;
-				let slot = hashOf(name) % 16;
-				while (taken.has(slot)) slot = (slot + 1) % 16;
-				taken.add(slot);
-				colors.set(name, `var(--dsw-chart-${slot + 1})`);
-			}
+			for (const name of new Set(models)) colors.set(name, `var(--dsw-chart-${hashOf(name) % 16 + 1})`);
 			return colors;
 		}
 		/**
@@ -627,7 +640,8 @@ window.__ModuleLoader__.load({
 				label: row.date.slice(5),
 				totals: row.totals,
 				models: new Map(Object.entries(row.models ?? {})),
-				recorded: hasUse(row.totals)
+				recorded: hasUse(row.totals),
+				failed: row.failed === true
 			}));
 			const buckets = [];
 			let open;
@@ -642,7 +656,8 @@ window.__ModuleLoader__.load({
 							label: granularity === "week" ? key.slice(5) : key,
 							totals: emptyTotals(),
 							models: /* @__PURE__ */ new Map(),
-							recorded: false
+							recorded: false,
+							failed: false
 						}
 					};
 					buckets.push(open.bucket);
@@ -655,6 +670,7 @@ window.__ModuleLoader__.load({
 					open.bucket.models.set(model, bucket);
 				}
 				if (hasUse(row.totals)) open.bucket.recorded = true;
+				if (row.failed === true) open.bucket.failed = true;
 			}
 			return buckets;
 		}
@@ -742,6 +758,12 @@ window.__ModuleLoader__.load({
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: usage_module_css_default.trendWrap,
 				"data-dsh-part": "trend-chart",
+				role: "img",
+				"aria-label": t("usage.trend.label", {
+					from: buckets[0].from,
+					to: buckets[buckets.length - 1].to,
+					tokens: formatTokens(buckets.reduce((sum, bucket) => sum + totalOf$1(bucket.totals), 0))
+				}),
 				children: [
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: usage_module_css_default.trendPlot,
@@ -780,6 +802,7 @@ window.__ModuleLoader__.load({
 											className: usage_module_css_default.trendBar,
 											"data-dsh-part": "trend-bar",
 											"data-recorded": bucket.recorded ? "true" : "false",
+											"data-failed": bucket.failed ? "true" : "false",
 											onMouseEnter: () => {
 												setHovered(index);
 											},
@@ -802,7 +825,7 @@ window.__ModuleLoader__.load({
 										children: hoveredBucket.from === hoveredBucket.to ? hoveredBucket.from : `${hoveredBucket.from} ~ ${hoveredBucket.to}`
 									}), !hoveredBucket.recorded ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: usage_module_css_default.trendTooltipLine,
-										children: t("usage.range.noRecord")
+										children: hoveredBucket.failed ? t("usage.range.loadFailed") : t("usage.range.noRecord")
 									}) : (() => {
 										const hit = cacheHitPercent(hoveredBucket.totals);
 										const topModels = modelMode ? order.map((model) => ({
@@ -2088,7 +2111,30 @@ window.__ModuleLoader__.load({
 		* act on, so the network-shaped ones read as one localized sentence instead.
 		*/
 		function describeError(error) {
-			return /failed to fetch|networkerror|network error|econnrefused|timeout|timed out/i.test(error) ? t("usage.error.network") : error;
+			return /failed to fetch|networkerror|network error|econnrefused|econnreset|enotfound|socket hang up|load failed|timeout|timed out/i.test(error) ? t("usage.error.network") : error;
+		}
+		/** Units for plan-window keys the dictionary does not name (`7_day`, `12_hour`). */
+		const PLAN_WINDOW_UNIT_KEYS = {
+			hour: "usage.plan.unit.hour",
+			day: "usage.plan.unit.day",
+			week: "usage.plan.unit.week",
+			month: "usage.plan.unit.month"
+		};
+		/**
+		* The label of one plan window. Providers either name their windows or leave a
+		* key behind (`5h`, `week`, `7_day`); the dictionary knows a handful of those,
+		* and an unknown one used to be printed verbatim (`usage.plan.windows.7_day`).
+		* A duration-shaped key is spelled out in the reader's language, anything else
+		* falls back to a generic label instead of leaking an internal key.
+		*/
+		function planWindowLabel(window) {
+			if (window.name !== void 0 && window.name !== "") return window.name;
+			const key = `usage.plan.windows.${window.key}`;
+			const known = t(key);
+			if (known !== key) return known;
+			const duration = /^(\d+)_(hour|day|week|month)$/.exec(window.key);
+			if (duration !== null) return `${duration[1]} ${t(PLAN_WINDOW_UNIT_KEYS[duration[2]])}`;
+			return t("usage.plan.windows.other");
 		}
 		/** Locale key of each window's label. */
 		const RANGE_LABEL_KEYS = {
@@ -2158,11 +2204,13 @@ window.__ModuleLoader__.load({
 			const signature = dateKeys.join(",");
 			const [load, setLoad] = (0, react.useState)(() => ({
 				status: dateKeys.length === 0 ? "ready" : "loading",
-				days: {}
+				days: {},
+				failedDates: []
 			}));
 			(0, react.useEffect)(() => {
 				const wanted = signature === "" ? [] : signature.split(",");
 				const days = {};
+				const failedDates = [];
 				const missing = [];
 				for (const date of wanted) {
 					const cached = cache.get(date);
@@ -2172,14 +2220,16 @@ window.__ModuleLoader__.load({
 				if (missing.length === 0) {
 					setLoad({
 						status: "ready",
-						days
+						days,
+						failedDates
 					});
 					return;
 				}
 				let cancelled = false;
 				setLoad({
 					status: "loading",
-					days
+					days,
+					failedDates
 				});
 				let failed = 0;
 				let firstError;
@@ -2188,10 +2238,12 @@ window.__ModuleLoader__.load({
 						days[date] = await requestDay(loadDay, date, cache);
 						if (!cancelled) setLoad({
 							status: "loading",
-							days: { ...days }
+							days: { ...days },
+							failedDates: [...failedDates]
 						});
 					} catch (error) {
 						failed += 1;
+						failedDates.push(date);
 						firstError ??= error instanceof Error ? error.message : String(error);
 					}
 				}).then(() => {
@@ -2199,6 +2251,7 @@ window.__ModuleLoader__.load({
 					setLoad({
 						status: "ready",
 						days,
+						failedDates,
 						...failed > 0 ? { error: firstError ?? "" } : {}
 					});
 				});
@@ -2604,17 +2657,30 @@ window.__ModuleLoader__.load({
 		* today is instant and keeps counting with the poll. A superseded selection
 		* never lands (the effect cancels), and a failed load reports its own message
 		* instead of leaving the card on a stale day.
+		*
+		* The fetch goes through `requestDay`, not `loadDay`, so picking a day the
+		* window already loaded costs nothing; `retry` is in the deps so the poll tick
+		* retries a day that failed, instead of leaving the error up until the user
+		* picks something else and comes back.
 		*/
-		function useDayView(loadDay, date, today, epoch) {
+		function useDayView(loadDay, date, today, cache, epoch, retry) {
 			const [load, setLoad] = (0, react.useState)(void 0);
 			(0, react.useEffect)(() => {
 				if (date === void 0 || date === today) {
 					setLoad((previous) => previous === void 0 ? previous : void 0);
 					return;
 				}
+				const cached = cache.get(date);
+				if (cached !== void 0) {
+					setLoad({
+						status: "ready",
+						view: cached
+					});
+					return;
+				}
 				let cancelled = false;
 				setLoad({ status: "loading" });
-				loadDay(date).then((view) => {
+				requestDay(loadDay, date, cache).then((view) => {
 					if (!cancelled) setLoad({
 						status: "ready",
 						view
@@ -2632,7 +2698,9 @@ window.__ModuleLoader__.load({
 				date,
 				today,
 				loadDay,
-				epoch
+				cache,
+				epoch,
+				retry
 			]);
 			return load;
 		}
@@ -2971,7 +3039,7 @@ window.__ModuleLoader__.load({
 			}, [loadsFailed, pollIntervalMs]);
 			const dayOptions = snapshot === null ? [] : [...new Set([todayDate, ...snapshot.usage.availableDays ?? []].filter((date) => date !== void 0 && date !== ""))].sort().reverse();
 			const bankSelection = bankDay !== void 0 && dayOptions.includes(bankDay) ? bankDay : void 0;
-			const bankDayLoad = useDayView(loadDay, bankSelection, todayDate, cacheEpoch);
+			const bankDayLoad = useDayView(loadDay, bankSelection, todayDate, cache, cacheEpoch, retryTick);
 			const bankDayView = bankSelection === void 0 ? void 0 : bankSelection === todayDate ? snapshot?.usage.today : bankDayLoad?.view;
 			const bankWindow = bankSelection === void 0 ? snapshot?.usage.all ?? snapshot?.usage.range : bankDayView === void 0 ? void 0 : {
 				from: bankDayView.date,
@@ -3056,7 +3124,7 @@ window.__ModuleLoader__.load({
 			};
 			const keysOf = (key) => recordedIn(windowSlices[key].window, recorded, todayDate);
 			const slicePending = (slice, key) => {
-				if (slice.kind === "range") return slice.load.status === "loading";
+				if (slice.kind === "range") return slice.load.status === "loading" || slice.load.status === "idle";
 				if (slice.load.status !== "loading") return false;
 				return keysOf(key).some((date) => slice.load.days[date] === void 0);
 			};
@@ -3087,6 +3155,7 @@ window.__ModuleLoader__.load({
 			});
 			const seriesByDate = activeSlice.kind === "range" && activeSlice.load.series !== void 0 ? new Map(activeSlice.load.series.map((row) => [row.date, row])) : void 0;
 			const daysByDate = activeSlice.kind === "days" ? activeSlice.load.days : void 0;
+			const failedDates = activeSlice.kind === "days" ? new Set(activeSlice.load.failedDates) : void 0;
 			const trendRowsRaw = rangeKey === "custom" && !customPicked ? [] : dateKeysBetween(activeWindow.from, activeWindow.to).map((date) => {
 				if (todayView !== void 0 && date === todayView.date) return {
 					date,
@@ -3109,7 +3178,8 @@ window.__ModuleLoader__.load({
 					models: modelSplitOf(view)
 				} : {
 					date,
-					totals: emptyTotals()
+					totals: emptyTotals(),
+					...failedDates?.has(date) === true ? { failed: true } : {}
 				};
 			});
 			const modelBuckets = normalizeModelRows([...summaryRaw.providers.flatMap((row) => row.models.map((model) => ({
@@ -3171,6 +3241,12 @@ window.__ModuleLoader__.load({
 						role: "status",
 						"data-dsh-part": "ledger-error",
 						children: t("usage.ledger.error", { error: snapshot.usage.ledgerError })
+					}),
+					snapshot.usage.ledgerError === void 0 && snapshot.usage.ledgerNote !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+						className: usage_module_css_default.noteLine,
+						role: "status",
+						"data-dsh-part": "ledger-note",
+						children: t("usage.ledger.note", { note: snapshot.usage.ledgerNote })
 					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: usage_module_css_default.tabs,
@@ -3534,13 +3610,13 @@ window.__ModuleLoader__.load({
 					}) : provider.plan === void 0 || provider.plan.windows.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 						className: usage_module_css_default.muted,
 						children: t("usage.plan.noPlan")
-					}) : provider.plan.windows.map((window) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					}) : provider.plan.windows.map((window, windowAt) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: usage_module_css_default.windowRow,
 						"data-dsh-part": "plan-window",
 						children: [
 							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 								className: usage_module_css_default.windowLabel,
-								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: window.name ?? t(`usage.plan.windows.${window.key}`) }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: window.percent !== void 0 ? `${window.percent >= 10 ? Math.round(window.percent) : window.percent.toFixed(1)}%` : "" })]
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: planWindowLabel(window) }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: window.percent !== void 0 ? `${window.percent >= 10 ? Math.round(window.percent) : window.percent.toFixed(1)}%` : "" })]
 							}),
 							window.percent !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 								className: usage_module_css_default.bar,
@@ -3557,7 +3633,7 @@ window.__ModuleLoader__.load({
 								children: t("usage.plan.reset", { date: new Date(window.resetsAt).toLocaleString() })
 							})
 						]
-					}, window.key))
+					}, `${window.key}#${windowAt}`))
 				]
 			});
 		}
