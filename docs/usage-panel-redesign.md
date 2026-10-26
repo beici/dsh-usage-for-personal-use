@@ -104,10 +104,11 @@ with the poll and no cached aggregate can hold a stale copy of today. Caching on
 that already carried today froze the day at fetch time and made 近 6 个月 read
 *below* 近 30 天 — hence `fetchSpanOf`, which asks the range route for `from`
 through `today - 1` and skips the request entirely for a window holding nothing
-but today. 全部 spans the oldest retained day through today. Constants:
+but today. 全部 spans the oldest day the *merged* ledger holds — this machine's or a peer's adopted history — through today (a floor taken from this machine's own days asked for a span narrower than the totals above it). Constants:
 `RANGE_FETCH_MAX_DAYS = 45`,
 `TREND_CHART_MIN_DAYS = 2` (a single day would paint one full-width bar that
-reads as a solid block, so 今日/昨日 show totals + breakdown only),
+reads as a solid block, so a one-day window shows totals + breakdown and says
+`usage.trend.tooFewDays` instead of an unexplained empty plot),
 `WINDOW_MODEL_CAP = 12` (mirrors the host's `summarizeDays` cap),
 `SECTION_POLL_MS = 10_000`.
 
@@ -164,32 +165,38 @@ process that loaded the inflated copy sees the newer stamp on disk and adopts th
 corrected document whole, instead of max-merging its own stale totals back in.
 
 Retention is guarded the same way, but the guard has to tell a jumped clock from
-a setting the user lowered on purpose. The file records the window it was written
-under (`retentionDays`), and a day still on disk *outside that window* means the
-clock moved — the file's own prune would already have dropped it. So:
+a setting the user lowered on purpose. The file records the window it was pruned
+against (`retentionDays`), and a day still on disk *outside that window* means the
+clock moved — the file's own prune would already have dropped it. A file from an
+older build records no window at all, so its days are never read as a jump. So:
 
-- a prune that would leave fewer than two recorded days is refused and reported
-  as a note, whether or not a shrink is also in play. A shrink is honoured for
-  the *size* of what it drops, never for dropping everything, and one live call
-  recorded after the jump must not be what tips the check. A short ledger keeps
-  the plain rule: with two days recorded, dropping the one that fell out of the
-  window is the normal way a window moves.
+- one prune is refused outright: more than half the recorded days would go while
+  days sit outside the file's own window, or every recorded day would go without
+  the user shrinking the window. The share matters because a replay can rebuild a
+  day or two near the new "today" while everything recorded before the jump falls
+  out — a count of survivors looked healthy two days after a 420-day jump. The
+  note names the way out: delete the ledger file to accept the jump.
+- the refusal is sticky. While it stands, the file keeps the window it carried
+  before the jump; writing the new setting would make the next flush — and the
+  next boot — read those days as "inside the file's window" and prune them, so
+  the refusal would last exactly one flush. The setting is written again once a
+  prune is accepted.
+- a shrink is honoured for the *size* of what it drops, never for wiping the
+  ledger: its days are inside the file's own window, so it never trips the share
+  test, but it cannot empty the file either.
 - a *partial* jump — a forward step that leaves some days inside the window —
   cannot be refused without wedging the file forever (an older build that kept
   more days than the window would never shrink again), so it prunes and says so:
   one pass that drops more than 30 % of at least four recorded days is reported
   as "pruned N of M recorded days at once — the clock may have jumped". That
   warning rides along with a shrink instead of being hidden behind it.
-- a shrink is honoured, once, and the threshold applies again afterwards — the
-  file's recorded window is what a restart compares against, so the user's own
-  change is never read as a jumped clock. A shrink that deletes days says how
-  many it dropped, because the panel then simply shows less history — and that
-  note is not cleared by the first flush (it would be gone three seconds after
-  the user asked for the shrink): it stays until a start finds the file's
-  recorded window equal to the setting, i.e. until the shrink is actually on
-  disk. Keeping `retainDays` days also means dropping anything older than
-  `today-(retainDays-1)`, so the widest window and "all" agree instead of the
-  history keeping one extra day.
+- a shrink that deletes days says how many it dropped, because the panel then
+  simply shows less history — and that note is not cleared by the first flush (it
+  would be gone three seconds after the user asked for the shrink): it stays until
+  a start finds the file's recorded window equal to the setting, i.e. until the
+  shrink is actually on disk. Keeping `retainDays` days also means dropping
+  anything older than `today-(retainDays-1)`, so the widest window and "all" agree
+  instead of the history keeping one extra day.
 
 Two more things the ledger file must survive, because both end in a silent wipe:
 
@@ -228,7 +235,10 @@ Two more things the ledger file must survive, because both end in a silent wipe:
 The pre-rename `usage-ledger.json` is read when this device's file is missing,
 and so is the `.migrated` sibling a successful migration leaves behind: that
 sibling is the only copy of the pre-migration history once the device file is
-deleted or damaged.
+deleted or damaged. A migration that finds both adopts both — an earlier
+`.migrated` file is history, not a name to rename over — and retires the legacy
+file only after merging its days into that sibling, so a second migration cannot
+drop the first one's days.
 
 Two more write-path rules:
 
@@ -242,6 +252,9 @@ Two more write-path rules:
   hand. A corrupt file is renamed to
   `usage-ledger.<device>.json.corrupt-<ts>.json` and reported, so a fresh
   document keeps counting without destroying the bytes someone may still want.
+  Both quarantine names are capped at the newest three: each is a full copy of a
+  ledger that can be megabytes, and a profile that keeps failing would otherwise
+  fill the directory with copies of the same broken file.
 - A flush writes the file's growth plus this process's own growth. Two DSH
   processes on one machine (two windows, or the CLI beside the desktop app) share
   one file and each writes the whole document; `mergeLedgerDelta(disk, ledger,
@@ -251,7 +264,14 @@ Two more write-path rules:
   total ignores fields like `reasoningTokens` and `cost`, so comparing totals
   would silently drop them. The read-merge-write runs under a lock file
   (`usage-ledger.<id>.json.lock`, `wx`, broken after a stale timeout), so two
-  processes cannot read the same version and lose one side's calls.
+  processes cannot read the same version and lose one side's calls. The lock
+  names its holder: a release only removes the file if it still carries this
+  process's token, and a stale lock is only broken after re-reading it, because
+  measured on Windows a second process can delete a lock whose holder still has
+  it open. The wait is four seconds — longer than any write, shorter than the
+  stale timeout — and a flush that still cannot take it writes anyway and says
+  so (`lock-busy`): losing one interleaved write is recoverable on the next
+  replay, refusing to write at all is not.
 - A file that predates the correction is not re-adopted. When a write fails (a
   locked file, a read-only profile, a full disk) the disk still holds the inflated
   buckets while memory holds the corrected ones, and a plain max merge would put
@@ -259,7 +279,9 @@ Two more write-path rules:
   a flush that finds a stamp older than the correction it loaded writes *its own*
   document, takes from the file only the days it does not hold at all, and reports
   `usage.ledgerNote`. Losing a handful of calls in that window is recoverable by
-  the next replay; a resurrected copy is not.
+  the next replay; a resurrected copy is not. The note counts what it dropped
+  (`N call(s) it gained under an older build were not re-adopted`) instead of
+  leaving the loss silent.
 - A file that carries a newer `repairedAt` than this process loaded is adopted
   whole (plus this process's own growth), so a process that loaded before the
   correction cannot undo it.
@@ -273,6 +295,12 @@ Two more write-path rules:
   Non-fatal trouble (a skipped retention pass, a transcript set that hit the
   discovery cap, a quarantined file) travels to the panel as `usage.ledgerNote`
   instead of being swallowed.
+- A peer scan never runs before the load has folded this machine's own file in.
+  The scan merges a peer's days into the ledger, and the load then adds the local
+  file on top: a day both files hold would be counted twice and written back, and
+  neither the next max merge nor a replay can tell the extra copy from real calls.
+  A `refresh()` that arrives during the load is remembered and replayed once the
+  load finishes.
 
 The replay runs before `pruneIfNeeded`: pruning first only resurrects the days
 the replay then re-adds. One discovery pass feeds both the deduped replay and the
@@ -341,6 +369,27 @@ model was blue everywhere and every hue reshuffled when the tile changed.
 A model's color now rides its name alone: same hue in every window, on the
 trend bars, the channel bars and the model rows, light and dark alike.
 
+Every hue is measured, not eyeballed: `model-colors.ts` walks a five-rung shade
+ladder per slot and bisects toward a target relative luminance, so each color
+clears **3:1 against white and against the lightest plausible dark surface**
+(`#202124`, the worst case — the card's own `#16171a` is darker, and a lighter
+card surface would have pushed the dark end below 3:1). The rungs are ordered so
+two names in one slot stay distinguishable: the smallest RGB distance inside a
+slot is 21, where the old fixed pair reached 1.36.
+
+The **plan bar** is two classes, not one: `.barFill` carries the geometry
+(`height: 100%`) and the tone class (`.barWarn` ≥70 %, `.barLow` ≥90 %) only
+carries its background. The tone used to be the fill's only class, and neither
+tone rule sets a height — so the bar collapsed to zero pixels exactly in the
+bands where the plan is nearly spent. Both tones are measured against the five
+surfaces the card paints on, track included: `#b86e00` and `#e5484d` clear 3:1
+where the stock `#d97706`/`#dc2626` pair fell to 2.64:1 and 2.78:1.
+
+The **window strip folds on the card's own width**, not the viewport's: the range
+card is an `inline-size` container and `@container (max-width: 420px)` drops the
+eight tiles to two columns, so a narrow sidebar panel folds even on a wide
+screen.
+
 ## Settings opener (foot card)
 
 Clicking the foot card opens 设置 on the usage section. The shell seats the
@@ -372,19 +421,29 @@ The rules, all of them visible in the UI rather than in the console:
 - A **transport error** is stated in the user's language
   (`usage.error.status`, "请求失败（HTTP {status}）…"), with the raw text — which
   contains internal routes — kept in `title` instead of the sentence.
-- **Retries** back off (`pollIntervalMs * 2^n`, capped at 60 s) and stop after
+- **Retries** back off on growing rungs — `pollIntervalMs * 2^n`, capped at 120 s
+  (10 s, 20 s, 40 s, 80 s, 120 s at the default cadence) — and stop after
   `RETRY_MAX_ATTEMPTS = 5`; while retrying, tiles keep their last settled value
   and the window ends at "—" rather than spinning forever.
 - A **window with nothing to fetch** (a ledger that only holds today, so 全部
   spans today alone) reports its total instead of an idle spinner.
 - A **partly loaded window** says so in the chart's accessible name
   (`usage.trend.labelPartial`) instead of calling the sum of the days that
-  arrived "in total" — the tile beside it shows "—" for exactly that reason.
+  arrived "in total" — the tile beside it shows "—" for exactly that reason, and
+  the channel breakdown is withheld: a share of a partial sum is a number nothing
+  measured.
+- A **failed range refetch keeps its answer**: the failure replaces the status,
+  not the summary and series, so the totals row and the bars stay on screen next
+  to the failure line (the card renders the stale branch rather than falling back
+  to the failure-only one).
 - The **retry ladder is walked, not starved**: the timer effect deliberately does
   not depend on `snapshot.updatedAt`. The host stamps every overview with the
   current time, so a dependency on it re-armed the first rung on every poll and
-  the count never rose; the budget refill is a separate effect that also bumps
-  the tick so a recovered host resumes the chain.
+  the count never rose. The budget refill is a separate effect keyed on the
+  ledger's own history stamp (`dayCount:allTotal − todayTotal`): a peer import or
+  a backfill moved the history, so the failed request is no longer the request the
+  panel would send and the ladder restarts; a poll that brought nothing new does
+  not.
 - The **export button names what it is doing** ("正在生成…" / "Rendering…") and is
   disabled while the canvas encodes, so a second click cannot queue a second
   download.
@@ -395,7 +454,15 @@ The rules, all of them visible in the UI rather than in the console:
   (`usage.device.importSame`) instead of the host's English refusal, and the
   device card's **Rescan** posts to `/refresh` — the route that actually rescans
   the persist directory — rather than re-reading an overview that returns the
-  ledger the process already holds.
+  ledger the process already holds. The refreshed overview that `/refresh`
+  answers with is applied to the shared store here, with a sequence bump that
+  retires a poll already in flight; the card no longer asks the section to
+  refetch, which scanned the directory twice and could put the older answer on
+  screen last.
+- The **date bounds** of 自定义 and 全部 come from the *merged* ledger
+  (`usage.all.from`), not from the days this machine recorded: after a peer's
+  older history is adopted, a floor taken from `availableDays` would ask for a
+  span narrower than the totals above it.
 - The **role="img"** label describes the plot only: the x labels and the legend
   are siblings of the image role, so screen readers hear a description of the
   bars and can still read the legend.
@@ -415,7 +482,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
 ## Verification
 
 - `node harness/render-test.mjs` — jsdom, real bundle, saved live fixtures,
-  **144/144 checks**: eight tiles with correct labels/values/`aria-pressed`
+  **183/183 checks**: eight tiles with correct labels/values/`aria-pressed`
   (近 3 天 sums 今日 + 10-19; 近 6 个月 / 全部 read the range aggregate, which the
   stub answers only up to yesterday — 49.2 M / 584 calls — so their 135 M / 1251
   tiles prove the panel folded the live today in itself, and no range fetch may
@@ -454,21 +521,36 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   that names its unit, export failures told apart from import failures, the
   sidebar card translated with the wire text in `title` and its figures no
   longer behind an `aria-label`, and the collapse toggle measured 24×24 at
-  opacity 0.72.
-- `node --experimental-strip-types harness/host-test.mjs` — 198 checks: range
+  opacity 0.72. Rounds 10–11 add: a retry ladder that walks growing rungs and
+  stops at its cap (a newer overview stamp does not reopen it, a moved ledger
+  history does), a plan bar that keeps its fill geometry in the warn and low
+  bands and a fill class that is the one carrying the height, both tone colours
+  clearing 3:1 on every card surface, a partly loaded window claiming no channel
+  shares, a failed range refetch keeping its numbers and series while still
+  saying it failed, 全部 and the from-date input reaching back to the merged
+  ledger's oldest day, the plan and device failures stated in the reader's
+  language with the wire text in `title`, a throwing voucher save that cannot
+  wedge the button, a truncated tile label keeping its full text in `title`, a
+  range strip folded by the card's own width (no viewport query), a rescan that
+  is one round trip (one host call, no follow-up refresh), a one-day window
+  saying it has too few days for a trend, and the dead dictionary keys gone.
+- `node --experimental-strip-types harness/host-test.mjs` — 207 checks: range
   aggregate + per-model series, route guards, device ledger, loopback fence,
   peak clock, the record-carried route of the live fold, transcript dedupe and
   the judged repair, ledger quarantine and unreadable-file protection, the
   delta merge between two processes, the pinned machine id (a renamed host is
   the same machine), a peer document without a machine id being refused, the
-  retention guard telling a clock jump from a lowered `retainDays`, the note
-  registry not growing per poll, legacy history being restored after a
-  quarantine, a repair written under the flush lock and retried when it cannot
-  be, an unreadable ledger moved aside once the load budget is spent, the
-  durable machine-alias record in `device-ledger.json`, an unverified peer
-  contributing only days this machine never recorded, a trend window reported as
-  a named failure instead of a range error, and a retention note surviving the
-  first flush.
+  retention guard telling a clock jump from a lowered `retainDays` (and keeping
+  the refused window across a restart), the note registry not growing per poll,
+  legacy history being restored after a quarantine, a repair written under the
+  flush lock and retried when it cannot be, an unreadable ledger moved aside once
+  the load budget is spent, the durable machine-alias record in
+  `device-ledger.json`, an unverified peer contributing only days this machine
+  never recorded, a trend window reported as a named failure instead of a range
+  error, a retention note surviving the first flush, a second migration keeping
+  the days the first one retired, an import keeping the machine id the peer file
+  already had, quarantine files capped at three, and a `refresh()` during the
+  load not double counting a peer.
 - Live bundle serving was proven against the running host:
   `GET /plugins/events` (loopback-exempt) lists the plugin row's `rev`, and
   `GET /plugins/??@linxin666/dsh-usage/client.js&rev=<rev>` returns the new

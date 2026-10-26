@@ -95,14 +95,6 @@ const BANK_ALL_DAYS = 'all'
  */
 const TREND_MAX_DAYS = 731
 
-/**
- * The trend chart needs at least two columns to say anything: a single-day
- * window would paint one bar across the full width, which reads as a solid
- * block rather than a chart, so those windows keep the totals and breakdown.
- * Wider windows need no cap here — the chart buckets them per week/month.
- */
-const TREND_CHART_MIN_DAYS = 2
-
 /** Model rows kept per channel of a merged window (the host caps one day the same way). */
 const WINDOW_MODEL_CAP = 12
 
@@ -116,8 +108,22 @@ const DAY_FETCH_CONCURRENCY = 6
  */
 const RETRY_MAX_ATTEMPTS = 5
 
-/** Ceiling of the retry backoff, so a dead endpoint never spins a fast timer. */
-const RETRY_BACKOFF_MAX_MS = 60_000
+/**
+ * First rung of the retry ladder. It starts at the section's own fast cadence,
+ * not at the user's poll interval: the interval says how fresh the overview
+ * should be, while a window that failed is worth asking about again sooner than
+ * a five-minute poll would.
+ */
+const RETRY_BACKOFF_BASE_MS = SECTION_POLL_MS
+
+/**
+ * Ceiling of the retry backoff. It has to sit well above the first rung or the
+ * ladder is flat: the delay used to be capped at the default poll interval
+ * (60 s), which was also its own base, so every rung waited exactly 60 s and the
+ * "exponential" backoff never grew. Two minutes is several doublings above the
+ * base and still a bounded wait for a dead endpoint.
+ */
+const RETRY_BACKOFF_MAX_MS = 120_000
 
 function formatTime(ms: number): string {
   try {
@@ -135,7 +141,19 @@ function formatCost(cost: number): string {
 function toneClass(percent: number): string {
   if (percent >= 90) return styles.barLow
   if (percent >= 70) return styles.barWarn
-  return styles.barFill
+  return ''
+}
+
+/**
+ * The fill's class list: its geometry always, its tone when it has one.
+ *
+ * The tone used to be the fill's ONLY class, and `.barWarn`/`.barLow` carry a
+ * background but no height — so the fill collapsed to zero height exactly in
+ * the band where the plan is nearly spent, which is when it matters most.
+ */
+function barClass(percent: number): string {
+  const tone = toneClass(percent)
+  return tone === '' ? styles.barFill : `${styles.barFill} ${tone}`
 }
 
 /** A provider row backed by a configured credential (api key, env key, or OAuth grant). */
@@ -551,7 +569,17 @@ function useRangeData(
         })
       },
       (error: unknown) => {
-        if (!cancelled) setLoad({ status: 'error', error: error instanceof Error ? error.message : String(error) })
+        if (cancelled) return
+        // The failure replaces the status, not the answer: the window keeps its
+        // last settled summary and series so the numbers stay on screen next to
+        // the failure line, exactly as the per-day path keeps its days. Dropping
+        // them made one failed refetch look like the window had been emptied.
+        setLoad((previous) => ({
+          status: 'error',
+          error: error instanceof Error ? error.message : String(error),
+          ...(previous.summary !== undefined ? { summary: previous.summary } : {}),
+          ...(previous.series !== undefined ? { series: previous.series } : {}),
+        }))
       },
     )
     return () => { cancelled = true }
@@ -913,12 +941,12 @@ function RangeStrip(props: {
   onCustomTo: (value: string | undefined) => void
   /** Latest pickable day: a window cannot run into the future. */
   today: string
-  /** Earliest pickable day: the ledger's oldest, so the pair cannot name a window the host cannot answer. */
+  /** Earliest pickable day: the merged ledger's oldest, so the pair cannot name a window the host cannot answer. */
   min?: string
 }): ReactNode {
   const { rangeKey, onSelect, tiles, custom, onCustomFrom, onCustomTo, today, min } = props
   return (
-    <div className={styles.card} data-dsh-part="range-card">
+    <div className={`${styles.card} ${styles.rangeCard}`} data-dsh-part="range-card">
       <span className={styles.cardTitle}>{t('usage.range.title')}</span>
       <div className={styles.rangeGrid} data-dsh-part="range-tiles">
         {tiles.map((tile) => (
@@ -929,7 +957,7 @@ function RangeStrip(props: {
             className={tile.key === rangeKey ? `${styles.rangeTile} ${styles.rangeTileActive}` : styles.rangeTile}
             onClick={() => { onSelect(tile.key) }}
           >
-            <span className={styles.rangeTileLabel}>{t(RANGE_LABEL_KEYS[tile.key])}</span>
+            <span className={styles.rangeTileLabel} title={t(RANGE_LABEL_KEYS[tile.key])}>{t(RANGE_LABEL_KEYS[tile.key])}</span>
             <span className={styles.rangeTileValue}>
               {tile.hint !== undefined ? tile.hint : tile.loading ? '…' : formatTokens(totalOf(tile.totals))}
             </span>
@@ -1165,11 +1193,17 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   const snapshot = ui.snapshot
   const todayView = snapshot?.usage.today
   const todayDate = todayView?.date ?? ''
-  // Every retained day the ledger recorded. The overview serves it as
+  // Every retained day THIS machine recorded. The overview serves it as
   // `availableDays`; the trend's day rows carry the same keys on an older host.
   const recorded = snapshot === null ? [] : snapshot.usage.availableDays ?? snapshot.usage.days.map((row) => row.date)
-  // The oldest retained day: the custom picker's floor, and the start of 全部.
-  const oldestDay = recorded[0]
+  // The window floor is the merged ledger's first day, not this machine's:
+  // `availableDays` lists only the days the local host recorded, while
+  // `usage.all` and the range totals also cover peer files it adopted. A peer
+  // export whose history starts earlier used to leave 全部 understating the
+  // total — and the picker unable to reach those days at all. A host that serves
+  // no `all` falls back to the local list.
+  const ledgerFrom = snapshot?.usage.all?.from
+  const oldestDay = ledgerFrom !== undefined && ledgerFrom !== '' ? ledgerFrom : recorded[0]
   // The history fingerprint every cached answer carries. A poll that only moved
   // today leaves it alone (today is subtracted); a poll that backfilled the past
   // or gained a day changes it, and the cache re-reads instead of going stale.
@@ -1184,8 +1218,8 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   const yesterdayWindow: RangeWindow = { from: shiftDateKey(todayDate, -1), to: shiftDateKey(todayDate, -1) }
   const todayWindow: RangeWindow = { from: todayDate, to: todayDate }
   const last180Window: RangeWindow = { from: shiftDateKey(todayDate, -179), to: todayDate }
-  // The whole retained ledger: the oldest day the overview still lists through
-  // today. An empty ledger collapses to today, which reads as an empty window.
+  // The whole retained ledger: the merged ledger's first day through today. An
+  // empty ledger collapses to today, which reads as an empty window.
   const allWindow: RangeWindow = { from: oldestDay ?? todayDate, to: todayDate }
   // Custom range: the user's pair when set, else a sensible seven-day default.
   // Until the user picks anything the tile shows a prompt instead of the
@@ -1228,45 +1262,42 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   const loadsFailed = last30Days.error !== undefined || customDays.error !== undefined
     || last180Load.status === 'error' || allLoad.status === 'error' || customRangeLoad.status === 'error'
   const retryAttempts = useRef(0)
-  // A host that is answering again has recovered, so a spent budget refills.
-  // Without this the panel stopped retrying for good once it had spent five
-  // attempts and a failed window sat at "—" until the user pressed refresh,
-  // however long the section stayed open. Two things keep it honest: a stamp
-  // that did not move proves nothing (a poll that brought nothing new is not a
-  // recovery), and a chain still walking its ladder keeps its place, so an
-  // unrelated overview poll — or the user's own refresh, which lands the same
-  // way — cannot rewind the backoff to its first rung.
-  const progressStamp = snapshot?.updatedAt ?? 0
-  const budgetStamp = useRef(progressStamp)
+  // A history move restarts the ladder: a peer import or a host backfill changed
+  // the answer, so the request that failed is no longer the request the panel
+  // would send, and a spent budget must not stay dead until a manual refresh.
+  // The overview's `updatedAt` is NOT that signal: the host stamps it with the
+  // current time on every answer, so a poll that brought nothing new looked like
+  // recovery and restarted the ladder after every cap, re-issuing every failed
+  // request for as long as the panel stayed open.
+  const budgetStamp = useRef(historyStamp)
   useEffect(() => {
-    if (progressStamp === budgetStamp.current) return
-    budgetStamp.current = progressStamp
-    if (loadsFailed && retryAttempts.current >= RETRY_MAX_ATTEMPTS) {
-      retryAttempts.current = 0
-      // A refilled budget is only worth anything if something walks the ladder
-      // again: the retry effect watches the tick, not this stamp (the stamp moves
-      // on every poll, which is exactly what used to starve the ladder).
-      setRetryTick((tick) => tick + 1)
-    }
-  }, [progressStamp, loadsFailed])
+    if (historyStamp === budgetStamp.current) return
+    budgetStamp.current = historyStamp
+    if (!loadsFailed) return
+    retryAttempts.current = 0
+    // The retry effect watches the tick, not the stamp: without it a refilled
+    // budget would sit at rung zero until something else re-rendered the panel.
+    setRetryTick((tick) => tick + 1)
+  }, [historyStamp, loadsFailed])
   useEffect(() => {
     if (!loadsFailed) {
       retryAttempts.current = 0
       return undefined
     }
     if (retryAttempts.current >= RETRY_MAX_ATTEMPTS) return undefined
-    const delay = Math.min(pollIntervalMs * 2 ** retryAttempts.current, RETRY_BACKOFF_MAX_MS)
+    // The rung is the exponent, so a dead endpoint is asked about at 10 s, 20 s,
+    // 40 s, 80 s and then the two-minute ceiling instead of at one flat interval.
+    const delay = Math.min(RETRY_BACKOFF_BASE_MS * 2 ** retryAttempts.current, RETRY_BACKOFF_MAX_MS)
     const timer = window.setTimeout(() => {
       retryAttempts.current += 1
       setRetryTick((tick) => tick + 1)
     }, delay)
     return () => window.clearTimeout(timer)
-    // `progressStamp` is deliberately not a dependency: the host stamps every
-    // overview with the current time, so a poll lands at about the first rung's
-    // delay and re-armed the timer before it could fire — the count never rose
-    // and the ladder never walked. The budget refill above is where a poll gets
-    // to act on a recovery.
-  }, [loadsFailed, pollIntervalMs, retryTick])
+    // `historyStamp` is deliberately not a dependency: the budget refill above
+    // is where a history change gets to act on a spent budget. Depending on it
+    // here re-armed the timer at the first rung on every poll, which is what
+    // used to starve the ladder.
+  }, [loadsFailed, retryTick])
 
   const dayOptions = snapshot === null
     ? []
@@ -1401,6 +1432,13 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   const activeWindow = activeSlice.window
   /** The failure this window's own numbers are missing because of. */
   const activeError = sliceFailed(activeSlice, rangeKey)
+  /**
+   * A failed range refetch that still holds the previous aggregate: the numbers
+   * are the last answer the host gave, not a partial sum, so the card keeps them
+   * and the failure line says why they did not move. Only a window with nothing
+   * behind it has to fall back to "—" and the failure alone.
+   */
+  const rangeStale = activeSlice.kind === 'range' && activeSlice.load.status === 'error' && activeSlice.load.summary !== undefined
   /** The window's days are still arriving, so its totals are not stateable yet. */
   const activePartial = slicePartial(activeSlice, rangeKey)
   const summaryRaw: UsageWindowSummary = activeSlice.kind === 'range'
@@ -1418,7 +1456,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
     // failed range fetch reads as an em dash rather than a fake zero.
     const hint = key === 'custom' && !customPicked && !loading
       ? t('usage.range.customPick')
-      : partial || (slice.kind === 'range' && slice.load.status === 'error') ? '—' : undefined
+      : partial || (slice.kind === 'range' && slice.load.status === 'error' && slice.load.summary === undefined) ? '—' : undefined
     return {
       key,
       totals,
@@ -1582,13 +1620,15 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
             ? <span className={styles.muted} data-dsh-part="custom-prompt">{t('usage.range.customPrompt')}</span>
             : slicePending(activeSlice, rangeKey)
               ? <span className={styles.muted}>{t('usage.range.loading')}</span>
-              : activeError !== undefined
+              : activeError !== undefined && !rangeStale
                 // The days that did arrive are a WRONG total, not a small one,
                 // so a failed window states the failure and the per-day trend
                 // (each bar is that day's own number) instead of a sum that
                 // contradicts the "—" the tile shows for the same window. The
                 // chart decides for itself whether it has a plot to draw: a
-                // one-day window still owes the failure sentence.
+                // one-day window still owes the failure sentence. A refetch that
+                // failed over a previous aggregate is the exception above: those
+                // numbers are the host's last answer, not a partial sum.
                 ? <TrendChart rows={trendRows} colors={modelColors} labels={modelLabels} allFailed={rangeFailed} />
                 : isEmptyTotals(summary.totals) && summary.providers.length === 0 && !activePartial
                   ? <span className={styles.muted}>{t('usage.range.empty')}</span>
@@ -1600,9 +1640,20 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
                         <span className={styles.providerTokens}>{formatCost(summary.totals.cost)}</span>
                       </div>
                     )}
-                    {trendRows.length >= TREND_CHART_MIN_DAYS && <TrendChart rows={trendRows} colors={modelColors} labels={modelLabels} partial={activePartial} />}
-                    <span className={styles.cardTitle}>{t('usage.range.channels')}</span>
-                    <ChannelBreakdown summary={summary} providers={snapshot.providers} currentProvider={current.provider} modelColors={modelColors} modelLabels={modelLabels} />
+                    {/* The chart draws its own "not enough days" notice for a
+                        one-day window, so the card never leaves a silent gap
+                        where a plot would be. */}
+                    <TrendChart rows={trendRows} colors={modelColors} labels={modelLabels} partial={activePartial} />
+                    {/* A partial window has no total to take a share of: the row
+                        above states "—" instead of summing the days that
+                        arrived, and shares of that partial sum would contradict
+                        it. */}
+                    {!activePartial && (
+                      <>
+                        <span className={styles.cardTitle}>{t('usage.range.channels')}</span>
+                        <ChannelBreakdown summary={summary} providers={snapshot.providers} currentProvider={current.provider} modelColors={modelColors} modelLabels={modelLabels} />
+                      </>
+                    )}
                   </>}
         </div>
 
@@ -1701,9 +1752,24 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
   const data = voucherData(ledger)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [drawError, setDrawError] = useState<string | undefined>(undefined)
+  // A save can fail on its own (a canvas with no encoder, a blocked URL API),
+  // and that is a different sentence from a failed draw.
+  const [saveError, setSaveError] = useState<string | undefined>(undefined)
   // Encoding a full-size PNG takes long enough to be worth a label change: a
   // button that looks idle invites a second click and a second download.
   const [saving, setSaving] = useState(false)
+  // The download's object URL outlives the click by design, so both the timer
+  // and the mounted flag have to outlive the handler: an unmount used to leave
+  // the timer armed and a state update queued on a dead component.
+  const revokeTimer = useRef<number | undefined>(undefined)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      if (revokeTimer.current !== undefined) window.clearTimeout(revokeTimer.current)
+    }
+  }, [])
   const dataKey = data === undefined ? '' : `${data.from}|${data.to}|${data.tokens}|${data.calls}|${data.cost}`
 
   useEffect(() => {
@@ -1737,16 +1803,39 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
     const canvas = canvasRef.current
     if (canvas === null || data === undefined || saving) return
     setSaving(true)
-    canvas.toBlob((blob) => {
+    setSaveError(undefined)
+    // `toBlob` and the object URL can both throw. The button is released on
+    // every path — including a throw, which is why the release sits in a
+    // `finally` — because the old code only cleared it inside the callback and
+    // one synchronous throw left the button disabled for the rest of the
+    // session.
+    try {
+      canvas.toBlob((blob) => {
+        try {
+          if (blob === null) return
+          const url = URL.createObjectURL(blob)
+          const anchor = document.createElement('a')
+          anchor.href = url
+          anchor.download = `dsh-whale-voucher-${data.to}.png`
+          anchor.click()
+          // The download reads the URL after the click returns, so the revoke
+          // has to wait; the timer is tracked so an unmount clears it (and the
+          // URL) instead of leaving both behind.
+          if (revokeTimer.current !== undefined) window.clearTimeout(revokeTimer.current)
+          revokeTimer.current = window.setTimeout(() => {
+            revokeTimer.current = undefined
+            URL.revokeObjectURL(url)
+          }, 10_000)
+        } catch (error) {
+          if (mounted.current) setSaveError(error instanceof Error ? error.message : String(error))
+        } finally {
+          if (mounted.current) setSaving(false)
+        }
+      }, 'image/png')
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error))
       setSaving(false)
-      if (blob === null) return
-      const url = URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = `dsh-whale-voucher-${data.to}.png`
-      anchor.click()
-      window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
-    }, 'image/png')
+    }
   }
 
   const shareSupported = typeof navigator !== 'undefined' && typeof navigator.canShare === 'function'
@@ -1782,6 +1871,7 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
               <canvas ref={canvasRef} role="img" aria-label={t('usage.bank.title')} />
             </div>
             {drawError !== undefined && <span className={styles.errorLine}>{t('usage.bank.drawError', { error: drawError })}</span>}
+            {saveError !== undefined && <span className={styles.errorLine} title={saveError}>{t('usage.bank.saveError', { error: describeError(saveError) })}</span>}
             <div className={styles.providerRow}>
               <span className={styles.providerName}>{t('usage.bank.minted', { minted: formatDenomination(faceValue(data.tokens)), tokens: formatTokens(data.tokens) })}</span>
               <span className={styles.providerTokens}>{t('usage.calls', { n: data.calls })}</span>
@@ -1814,7 +1904,7 @@ function PlanCard(props: { provider: ProviderSnapshotView; current?: string }): 
           {provider.plan?.planName !== undefined ? ` · ${provider.plan.planName}` : ''}
         </span>
       </div>
-      {provider.error !== undefined && <span className={styles.errorLine}>{t('usage.provider.error', { error: provider.error })}</span>}
+      {provider.error !== undefined && <span className={styles.errorLine} title={provider.error}>{t('usage.provider.error', { error: describeError(provider.error) })}</span>}
       {provider.credential === 'none' && provider.plan === undefined
         ? <span className={styles.muted}>{t('usage.balance.noCredential')}</span>
         : provider.plan === undefined || provider.plan.windows.length === 0
@@ -1827,7 +1917,7 @@ function PlanCard(props: { provider: ProviderSnapshotView; current?: string }): 
               </span>
               {window.percent !== undefined && (
                 <span className={styles.bar}>
-                  <span className={toneClass(window.percent)} style={{ width: `${Math.min(100, Math.max(0, window.percent))}%`, display: 'block' }} />
+                  <span className={barClass(window.percent)} style={{ width: `${Math.min(100, Math.max(0, window.percent))}%`, display: 'block' }} />
                 </span>
               )}
               {window.resetsAt !== undefined && (

@@ -528,14 +528,19 @@
 
 /* 统计窗口条：八个窗口四列两行，每块直接标出窗口总量和调用次数，切换前就能
    横向比较；自定义窗口激活时在其下方展开两个日期输入。窄面板里四列会把
-   「近 6 个月」挤成两行，所以在 420px 以下改成两列。 */
+   「近 6 个月」挤成两行，所以容器窄于 420px 时改成两列——查询的是卡片自身的
+   宽度，不是视口：宽窗口里挂一个 320px 的面板时，媒体查询会一直保留四列。 */
+.rangeCard {
+  container-type: inline-size;
+}
+
 .rangeGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
-@media (max-width: 420px) {
+@container (max-width: 420px) {
   .rangeGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -576,7 +581,8 @@
   font-size: 11px;
   opacity: 0.65;
   /* A narrow tile truncates the label instead of wrapping it into the value's
-     line; the full text is still in the tile's aria-label. */
+     line; the full text stays reachable through the label's own `title`, which
+     is the tooltip a truncated span can still show. */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -714,12 +720,18 @@
   transition: width 300ms ease;
 }
 
+/* The fill sits on the card's own surface — the card is transparent, so the
+   host's white or its #171a1f dialog shows through — and inside the 10%
+   currentColor track. The stock #d97706/#dc2626 pair cleared the flat dark card
+   but fell to 2.64:1 (amber on the light track) and 2.78:1 (red on the dark
+   one); a 6px bar that cannot be seen is not a warning. These two clear 3:1 on
+   every surface the card is drawn on, track included. */
 .barWarn {
-  background: #d97706;
+  background: #b86e00;
 }
 
 .barLow {
-  background: #dc2626;
+  background: #e5484d;
 }
 
 .resetLine {

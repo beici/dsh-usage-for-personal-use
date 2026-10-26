@@ -74,8 +74,8 @@ cd packages/dsh-usage && ../../node_modules/.bin/tsc --noEmit -p tsconfig.json
 ```bash
 cd "$(git rev-parse --show-toplevel)"
 node harness/build-test-bundle.cjs    # derives harness/client.test.cjs from lib/client.js
-node harness/render-test.mjs          # must end: === 144/144 checks passed ===
-node --experimental-strip-types harness/host-test.mjs   # 198/198 checks passed
+node harness/render-test.mjs          # must end: === 183/183 checks passed ===
+node --experimental-strip-types harness/host-test.mjs   # 207/207 checks passed
 ```
 
 `render-test.mjs` takes 1–2 minutes (jsdom + the full bundle); give it a

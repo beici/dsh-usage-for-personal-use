@@ -117,7 +117,10 @@ and the merge never lowers a bucket: importing the same file twice converges,
 and importing an *older* export from a peer that kept counting keeps the days
 the file already held (the panel notes how many) rather than dropping them. The
 receiving machine has no way to fetch those days again, so the file on disk is
-the authority and the import only ever adds.
+the authority and the import only ever adds. A file exported by an older build
+carries no `machine` id; the peer file's own id is kept in that case, because
+dropping it would turn a device this machine can attribute into an "unverified"
+one and its days would then be counted only where this machine has no record.
 
 **重新扫描** posts to `/refresh`, not `/overview`: the overview route answers with
 the ledger the process already holds, while `/refresh` is the one that rescans
@@ -168,7 +171,7 @@ peer, delete its `usage-ledger.<id>.json` and press 重新扫描.
 node --experimental-strip-types harness/host-test.mjs
 ```
 
-198 checks, covering device id hygiene, the export envelope shape, import of
+207 checks, covering device id hygiene, the export envelope shape, import of
 valid and invalid payloads, merging rather than replacing a peer file, summing,
 re-import idempotence, the local-ledger invariant, legacy migration (including
 that it persists before renaming the old file away), transcript backfill, the

@@ -243,7 +243,16 @@ export function TrendChart(props: {
   if (rows.length < 2) {
     // The guard below used to return before the notice, so a wholesale failure on
     // a one-day window rendered nothing at all: no bars, no sentence, no reason.
-    if (!rangeFailed) return null
+    if (!rangeFailed) {
+      // A one-day window has nothing to compare, but returning nothing left the
+      // card with a silent gap where the plot belongs: one sentence says why the
+      // chart is missing instead of letting the reader guess.
+      return (
+        <div className={styles.trendWrap} data-dsh-part="trend-short">
+          <span className={styles.muted}>{t('usage.trend.tooFewDays')}</span>
+        </div>
+      )
+    }
     const only = rows[0]
     if (only === undefined) {
       return <div className={styles.trendWrap} data-dsh-part="trend-chart"><TrendFailedNotice /></div>

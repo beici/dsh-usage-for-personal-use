@@ -30,7 +30,10 @@
  * and 2.3:1 on the dark card — unreadable in exactly the theme the mix was
  * meant to fit. A mix cannot be clamped either, so a rung is placed by its
  * luminance instead: the two skins overlap in a narrow band, and every rung is
- * pulled into it.
+ * pulled into it. The dark end is measured against the LIGHTEST plausible dark
+ * surface, not this panel's own card: the card paints no background and borrows
+ * the host's, so a lighter surface — the worst case for a mid-tone bar — is what
+ * a rung has to clear.
  * @module @linxin666/dsh-usage/client/model-colors
  */
 /** Fill for models past the palette (the collapsed tail), legible on both skins. */

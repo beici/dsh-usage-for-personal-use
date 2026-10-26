@@ -22,7 +22,7 @@ import { UsageSectionCard, type UsageSectionFace, type UsageSettings } from './U
 import { mountUsageFootCard, openUsageSettings, type ShortcutsServiceFace } from './foot-card-mount.tsx'
 import { NS, en, zh, t } from './locales.ts'
 import { createServedEntryForm } from './settings-entry-form.ts'
-import type { DeviceLedgerEntryView, UsageDayResponse, UsageDayView, UsageOverviewView, UsageRangeResponse } from '../core/types.ts'
+import type { UsageDayResponse, UsageDayView, UsageOverviewView, UsageRangeResponse } from '../core/types.ts'
 import type { DeviceSyncApi } from './DeviceSyncCard.tsx'
 
 /** The host usage API as the browser sees it (same-origin JSON endpoints). */
@@ -37,8 +37,8 @@ interface UsageHttpApi {
   exportLedger(): Promise<void>
   /** Install another device's envelope; the host keys it by its own deviceId. */
   importLedger(text: string): Promise<{ deviceId: string }>
-  /** Re-scan the persist directory for files copied in by hand. */
-  rescan(): Promise<DeviceLedgerEntryView[]>
+  /** Re-scan the persist directory and answer with the refreshed overview. */
+  rescan(): Promise<UsageOverviewView>
 }
 
 /** Hard ceiling for one usage API call; a stalled host must not pile up requests. */
@@ -103,9 +103,12 @@ const usageApi: UsageHttpApi = {
     // the ledger as this process already holds it, so a file dropped into the
     // persist directory stayed invisible until the next restart — which is the
     // one thing the button exists to avoid. `refresh` is the route that rescans
-    // the directory (and replays the transcripts) before answering.
-    const snapshot = await usageFetch<UsageOverviewView>('api/dsh-usage/refresh', 'POST')
-    return snapshot.usage.devices ?? []
+    // the peer directory and polls the providers before answering; it does not
+    // replay the transcripts (the host's own backfill pass owns those).
+    //
+    // The whole overview comes back, not just the device list: the caller that
+    // owns the store applies it, so one rescan is one round trip.
+    return usageFetch<UsageOverviewView>('api/dsh-usage/refresh', 'POST')
   },
 }
 
@@ -236,7 +239,19 @@ export function apply(ctx: ClientContext): void {
   const deviceSync: DeviceSyncApi = {
     exportLedger: () => usageApi.exportLedger(),
     importLedger: (text: string) => usageApi.importLedger(text),
-    rescan: () => usageApi.rescan(),
+    // The rescan answers with the refreshed overview, so it is applied here and
+    // the card does not call `onChanged` afterwards: that refetched the route the
+    // rescan had just answered — two scans for one button, and the second answer
+    // could be the older one. The sequence bump retires a poll that was already
+    // in flight before the scan, which would otherwise land its pre-scan snapshot
+    // last and undo the button.
+    rescan: async () => {
+      const seq = pollSeq + 1
+      pollSeq = seq
+      const snapshot = await usageApi.rescan()
+      store.actions.setSnapshot(snapshot)
+      return snapshot.usage.devices ?? []
+    },
   }
 
   const face = (): UsageSectionFace => ({ store, poll, refresh, loadDay, loadRange, settings: settingsForm, deviceSync })

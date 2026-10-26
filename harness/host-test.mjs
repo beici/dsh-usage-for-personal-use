@@ -1650,6 +1650,134 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await svc.stop()
 }
 
+// ---- a refused jump keeps the window the file recorded -------------------
+// The refusal used to last exactly one flush: the flush wrote the new setting
+// into the file, so the next pass found no day "outside the file's own window"
+// and pruned them all. The file has to keep the window its days were pruned
+// against for as long as the refusal stands — including across a restart.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const days = {}
+  for (let back = 400; back < 430; back += 1) days[localDateKey(Date.now() - back * 86_400_000)] = { buddy: { m1: bucket(100, 1) } }
+  const ledgerPath = join(dir, 'usage-ledger.' + localDeviceId() + '.json')
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, retentionDays: 365, days }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 30 })
+  await svc.loadPersisted()
+  await svc.flushLedger()
+  const afterFlush = JSON.parse(await readFile(ledgerPath, 'utf8'))
+  check('a refused jump keeps the days', Object.keys(afterFlush.days).length === 30, String(Object.keys(afterFlush.days).length))
+  check('a refused jump keeps the window on disk', afterFlush.retentionDays === 365, String(afterFlush.retentionDays))
+  await svc.stop()
+  // A restart reads the same evidence and refuses again instead of accepting the
+  // prune as ordinary retention.
+  const again = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 30 })
+  await again.loadPersisted()
+  await again.flushLedger()
+  const afterRestart = JSON.parse(await readFile(ledgerPath, 'utf8'))
+  check('a restart refuses the same prune', Object.keys(afterRestart.days).length === 30, String(Object.keys(afterRestart.days).length))
+  await again.stop()
+}
+
+// ---- a second migration does not drop the first -------------------------
+// The legacy file was renamed over `.migrated`, so a profile that migrated twice
+// kept only the newer half and the pre-migration days were gone with no note.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const legacyDay = localDateKey(Date.now() - 2 * 86_400_000)
+  const migratedDay = localDateKey(Date.now() - 5 * 86_400_000)
+  const legacyPath = join(dir, 'usage-ledger.json')
+  await mkdir(dir, { recursive: true })
+  await writeFile(legacyPath, JSON.stringify({ version: 1, days: { [legacyDay]: { buddy: { m1: bucket(100, 5) } } } }))
+  await writeFile(legacyPath + '.migrated', JSON.stringify({ version: 1, days: { [migratedDay]: { buddy: { m1: bucket(100, 7) } } } }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 30 })
+  await svc.loadPersisted()
+  const device = JSON.parse(await readFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), 'utf8'))
+  const migrated = JSON.parse(await readFile(legacyPath + '.migrated', 'utf8'))
+  check('a second migration keeps both halves', device.days[legacyDay] !== undefined && device.days[migratedDay] !== undefined, Object.keys(device.days).join(','))
+  check('the retired file keeps the earlier days', migrated.days[migratedDay] !== undefined && migrated.days[legacyDay] !== undefined, Object.keys(migrated.days).join(','))
+  check('the legacy file is retired', await stat(legacyPath).then(() => false, () => true), 'legacy file still there')
+  await svc.stop()
+}
+
+// ---- an import keeps the machine id the peer file already had -----------
+// An export from an older build carries no machine id; writing the merged file
+// without one turned a device this machine could attribute into an "unverified"
+// one, and its days were then counted only where this machine had no record.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const older = localDateKey(Date.now() - 3 * 86_400_000)
+  await mkdir(dir, { recursive: true })
+  await writeFile(
+    join(dir, 'usage-ledger.laptop-4f7b21.json'),
+    JSON.stringify({ schema: 'dsh-usage/ledger-export@1', version: 1, deviceId: 'laptop-4f7b21', machine: 'laptop-machine', ledger: { version: 1, days: { [older]: { buddy: { m1: bucket(100, 2) } } } } }),
+  )
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 30 })
+  await svc.loadPersisted()
+  // No machine on this envelope: the peer file's own id has to survive.
+  const envelope = JSON.stringify({ schema: 'dsh-usage/ledger-export@1', version: 1, deviceId: 'laptop-4f7b21', ledger: { version: 1, days: { [localDateKey(Date.now() - 1 * 86_400_000)]: { buddy: { m1: bucket(100, 1) } } } } })
+  await svc.importPeer(envelope)
+  const peerFile = JSON.parse(await readFile(join(dir, 'usage-ledger.laptop-4f7b21.json'), 'utf8'))
+  check('an import keeps the machine id', peerFile.machine === 'laptop-machine', String(peerFile.machine))
+  await svc.stop()
+}
+
+// ---- old quarantined ledgers are trimmed --------------------------------
+// Every unreadable boot writes a full copy of the ledger beside it. Nothing ever
+// removed them, so a profile that keeps failing filled the directory.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const ledgerPath = join(dir, 'usage-ledger.' + localDeviceId() + '.json')
+  await mkdir(dir, { recursive: true })
+  for (let i = 0; i < 5; i += 1) await writeFile(`${ledgerPath}.unreadable-${Date.now() - i * 1000}.json`, '{"version":1,"days":{}}')
+  await writeFile(ledgerPath, '{ not json')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 30 })
+  await svc.loadPersisted()
+  const names = (await readdir(dir)).filter((name) => name.includes('.corrupt-') || name.includes('.unreadable-'))
+  check('old quarantined ledgers are trimmed', names.length <= 3, names.join(','))
+  await svc.stop()
+}
+
+// ---- a refresh during the load does not double count a peer -------------
+// `refresh()` merged the peer into the ledger before the load had folded the
+// local file in, so a day both files hold was counted twice and written back.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const today = localDateKey(Date.now())
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), JSON.stringify({ version: 1, days: { [today]: { buddy: { m1: bucket(100, 5) } } } }))
+  await writeFile(join(dir, 'usage-ledger.peerone.json'), JSON.stringify({ version: 1, deviceId: 'peerone', days: { [today]: { buddy: { m1: bucket(100, 5) } } } }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 30 })
+  const loading = svc.loadPersisted()
+  const refreshing = svc.refresh()
+  await Promise.all([loading, refreshing])
+  await svc.flushLedger()
+  const written = JSON.parse(await readFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), 'utf8'))
+  check('a refresh during the load does not double count a peer', written.days[today]?.buddy?.m1?.calls === 5, String(written.days[today]?.buddy?.m1?.calls))
+  await svc.stop()
+}
+
 const failed = report.filter((row) => !row.ok)
 console.log('\n=== ' + (report.length - failed.length) + '/' + report.length + ' checks passed ===')
 if (failed.length > 0) process.exitCode = 1

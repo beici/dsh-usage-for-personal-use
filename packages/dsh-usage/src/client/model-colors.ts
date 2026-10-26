@@ -30,7 +30,10 @@
  * and 2.3:1 on the dark card — unreadable in exactly the theme the mix was
  * meant to fit. A mix cannot be clamped either, so a rung is placed by its
  * luminance instead: the two skins overlap in a narrow band, and every rung is
- * pulled into it.
+ * pulled into it. The dark end is measured against the LIGHTEST plausible dark
+ * surface, not this panel's own card: the card paints no background and borrows
+ * the host's, so a lighter surface — the worst case for a mid-tone bar — is what
+ * a rung has to clear.
  * @module @linxin666/dsh-usage/client/model-colors
  */
 
@@ -51,16 +54,22 @@ type Rgb = readonly [number, number, number]
 /** The surface behind the bars on the light skin. */
 const SURFACE_LIGHT: Rgb = [255, 255, 255]
 
-/** The surface behind the bars on the dark skin: the panel's own card. */
-const SURFACE_DARK: Rgb = [0x16, 0x17, 0x1a]
+/**
+ * The surface behind the bars on the dark skin. The card paints no background,
+ * so the real surface is the host's; this is the LIGHTEST dark surface the host
+ * themes use, which is the worst case for a bar (a lighter surface lowers the
+ * contrast of a mid-tone). Measuring against the darker `#16171a` alone left
+ * rungs at 2.7–2.9:1 on `#1b1c20` and `#202124`.
+ */
+const SURFACE_DARK: Rgb = [0x20, 0x21, 0x24]
 
 /** WCAG 2.1 non-text contrast: a bar has to clear this against its surface. */
 const MIN_CONTRAST = 3
 
 /**
  * Relative luminance a bar may sit at: the band where it clears MIN_CONTRAST on
- * white (luminance at most 0.3) and on the dark card (at least 0.127). The
- * margins keep rounding from pushing a rung under the floor.
+ * white (luminance at most 0.285) and on the lightest dark surface (at least
+ * 0.146). The margins keep rounding from pushing a rung under the floor.
  */
 const LUMINANCE_FLOOR = MIN_CONTRAST * (luminance(SURFACE_DARK) + 0.05) - 0.05 + 0.004
 const LUMINANCE_CEILING = (luminance(SURFACE_LIGHT) + 0.05) / MIN_CONTRAST - 0.05 - 0.015

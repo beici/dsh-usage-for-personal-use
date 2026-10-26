@@ -19,7 +19,11 @@ export interface DeviceSyncApi {
     importLedger: (text: string) => Promise<{
         deviceId: string;
     }>;
-    /** Re-scan the persist directory for files dropped in by hand. */
+    /**
+     * Re-scan the persist directory for files copied in by hand. The answer is the
+     * refreshed device list; the implementation also applies the fresh overview to
+     * the panel's store, so the card does not ask the section to refetch after it.
+     */
     rescan: () => Promise<DeviceLedgerEntryView[]>;
 }
 /**

@@ -211,6 +211,14 @@ check('eight range tiles', tiles.length === 8, 'got ' + tiles.length)
 if (tiles.length === 8) {
   const labels = tiles.map((b) => text(b.querySelector('span')))
   check('tile order + labels', JSON.stringify(labels) === JSON.stringify(['今日', '昨日', '近 3 天', '近 7 天', '近 30 天', '近 6 个月', '全部', '自定义']), JSON.stringify(labels))
+  // A narrow tile truncates its label; the full text has to stay reachable, and
+  // the stylesheet's comment claimed an aria-label that never existed.
+  check('a truncated tile label keeps its full text in the title',
+    tiles.every((tile) => {
+      const label = tile.querySelector('span')
+      return label !== null && label.getAttribute('title') === text(label)
+    }),
+    JSON.stringify(tiles.map((tile) => String(tile.querySelector('span')?.getAttribute('title') ?? 'missing'))))
   check('today tile active', tiles[0].getAttribute('aria-pressed') === 'true')
   for (const b of tiles) console.log('   tile:', text(b))
   // 近 3 天 = today + 2026-10-19 (10-18 未记录): 85.8M + 45.0M ≈ 131M, 1188 次调用.
@@ -393,6 +401,13 @@ if (deviceCard !== null) {
   const exportFailed = q('[data-dsh-part="device-notice"]')
   check('a failed export blames the export, not the import',
     text(exportFailed).startsWith('导出失败') && !text(exportFailed).includes('导入'), text(exportFailed))
+  // The notice interpolated the host's raw text (an errno, a path). The sentence
+  // is translated now; the raw text is the title, where a diagnostic belongs.
+  check('a device failure is stated in the reader\'s language',
+    !text(exportFailed).includes('EACCES') && text(exportFailed).includes('请求失败'), text(exportFailed))
+  check('the device failure keeps the raw text in the title',
+    String(exportFailed.getAttribute('title') ?? '').includes('EACCES'),
+    String(exportFailed.getAttribute('title')))
   exportError = null
   // Import goes through a real <input type=file>: drive it the way a browser
   // does, by defining `files` on the element before dispatching change.
@@ -959,7 +974,7 @@ console.log('   plans tab text:', text(container).slice(0, 200))
       planSupported: true,
       updatedAt: Date.now(),
       totals: bucket(1, 100),
-      plan: { planName: 'Pro', updatedAt: Date.now(), windows: [{ key: '7_day', percent: 40 }] },
+      plan: { planName: 'Pro', updatedAt: Date.now(), windows: [{ key: '7_day', percent: 40 }, { key: '5h', percent: 95 }] },
     }],
   }
   const planState = { snapshot: planSnapshot, status: 'ready', error: null }
@@ -985,7 +1000,77 @@ console.log('   plans tab text:', text(container).slice(0, 200))
   })
   const planText = text(host)
   check('an unknown plan window key is spelled out', planText.includes('7 天') && !planText.includes('usage.plan.windows.7_day'), planText.slice(0, 120))
+  // The tone classes used to REPLACE the fill class, and only the fill class
+  // carried `height: 100%` — so the bar vanished exactly in the warn/low band
+  // it exists to warn about. Every fill now carries the geometry class and the
+  // tone class on top of it.
+  const fills = [...host.querySelectorAll('[data-dsh-part="plan-card"] [class*="barFill"]')]
+  const classesOf = (element) => String(element.className)
+  check('a plan bar keeps the fill geometry in the warn band',
+    fills.length === 2 && fills.every((fill) => classesOf(fill).includes('barFill')), String(fills.length))
+  check('a plan bar below the warn band stays neutral',
+    fills[0] !== undefined && !classesOf(fills[0]).includes('barWarn') && !classesOf(fills[0]).includes('barLow'),
+    fills[0] === undefined ? 'no bar' : classesOf(fills[0]))
+  check('a plan bar above the low band carries both classes',
+    fills[1] !== undefined && classesOf(fills[1]).includes('barFill') && classesOf(fills[1]).includes('barLow'),
+    fills[1] === undefined ? 'no bar' : classesOf(fills[1]))
+  const barCss = readClient('usage.module.css')
+  const fillRule = /\.barFill\s*\{([^}]*)\}/.exec(barCss)
+  check('the fill class is the one that carries the height',
+    fillRule !== null && /height:\s*100%/.test(fillRule[1]), fillRule === null ? 'no rule' : fillRule[1].trim())
 
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- the plan card states a provider failure in the reader's language ----
+// The card interpolated the provider's raw error, so a 503 reached the reader as
+// a wire string. The sentence is translated now and the raw text is the title,
+// the same split the balance card uses.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const raw = 'usage api/dsh-usage/plan failed: 503'
+  const errorSnapshot = {
+    ...snapshot,
+    providers: [{
+      provider: 'codex',
+      displayName: 'Codex',
+      credential: 'stored',
+      planSupported: true,
+      updatedAt: Date.now(),
+      totals: { inputTokens: 1, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 1, cost: 0 },
+      error: raw,
+    }],
+  }
+  const errorState = { snapshot: errorSnapshot, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => errorState, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
+  const plansTab = [...host.querySelectorAll('[role="tab"]')].find((tab) => text(tab).includes('个人套餐'))
+  await act(async () => {
+    plansTab?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 120))
+  })
+  const errorLine = host.querySelector('[data-dsh-part="plan-card"] [class*="errorLine"]')
+  check('a plan failure is translated',
+    errorLine !== null && text(errorLine).includes('请求失败（HTTP 503）') && !text(errorLine).includes('usage api'),
+    errorLine === null ? 'no error line' : text(errorLine))
+  check('the plan failure keeps the wire text in the title',
+    errorLine !== null && String(errorLine.getAttribute('title') ?? '').includes('failed: 503'),
+    errorLine === null ? 'no error line' : String(errorLine.getAttribute('title')))
   await act(async () => { localRoot.unmount() })
   host.remove()
 }
@@ -1228,10 +1313,12 @@ console.log('   plans tab text:', text(container).slice(0, 200))
   host.remove()
 }
 
-// ---- the retry budget recovers when the host comes back ------------------
+// ---- the retry budget recovers when the ledger moves ---------------------
 // A failed window retried five times with a capped backoff and then stopped for
 // good: the counter only reset when a load succeeded, so a panel left open
-// through a host restart sat at "—" after the host was healthy again.
+// through a host restart sat at "—" after the host was healthy again. The budget
+// refills on a real recovery signal now — a successful load, or a ledger history
+// that moved — and never on `updatedAt`, which the host stamps on every answer.
 {
   const host = window.document.createElement('div')
   window.document.body.appendChild(host)
@@ -1242,10 +1329,34 @@ console.log('   plans tab text:', text(container).slice(0, 200))
     subscribe: (fn) => { storeListeners.add(fn); return () => storeListeners.delete(fn) },
   }
   const realSetTimeout = window.setTimeout
-  // The card waits on window.setTimeout for its backoff (10s, 20s, 40s, 60s).
-  // Firing the callback at once keeps that ladder out of the test unchanged; the
-  // test's own waits use the bare setTimeout, which is Node's.
-  window.setTimeout = (callback) => { if (typeof callback === 'function') callback(); return 0 }
+  const realClearTimeout = window.clearTimeout
+  // The card waits on window.setTimeout for its backoff (10s, 20s, 40s, 80s,
+  // 120s). Capturing the callbacks lets the test walk the ladder rung by rung;
+  // firing them at once ran the whole ladder inside one render pass, so the
+  // re-render between rungs never happened and only the first rung landed.
+  const pending = new Map()
+  let nextId = 0
+  window.setTimeout = (callback) => {
+    if (typeof callback !== 'function') return 0
+    nextId += 1
+    pending.set(nextId, callback)
+    return nextId
+  }
+  window.clearTimeout = (id) => { pending.delete(id) }
+  const drain = async () => {
+    let guard = 0
+    while (pending.size > 0 && guard < 40) {
+      const due = [...pending.values()]
+      pending.clear()
+      for (const callback of due) {
+        await act(async () => {
+          callback()
+          await new Promise((r) => setTimeout(r, 60))
+        })
+      }
+      guard += 1
+    }
+  }
   // The dead endpoint counts its own attempts: the harness's loadRange records
   // into rangeCalls, and this block replaces it.
   const attempts = []
@@ -1268,25 +1379,44 @@ console.log('   plans tab text:', text(container).slice(0, 200))
       }))
     })
     await act(async () => { await new Promise((r) => setTimeout(r, 200)) })
+    await drain()
     const capped = attempts.length
     // Another poll must not reopen a spent budget.
     await act(async () => {
       document.dispatchEvent(new window.Event('visibilitychange'))
       await new Promise((r) => setTimeout(r, 200))
     })
+    await drain()
     const stillCapped = attempts.length
     check('a failing window stops retrying at its budget',
       capped > 2 && stillCapped === capped, 'capped=' + capped + ' later=' + stillCapped)
-    // The host answers again: a snapshot that moves forward refills the budget.
-    state = { snapshot: { ...snapshot, updatedAt: snapshot.updatedAt + 60000 }, status: 'ready', error: null }
+    // A newer overview is NOT recovery: the host stamps `updatedAt` with the
+    // current time on every answer, so a poll that changed nothing used to look
+    // like recovery, reopen a spent budget and restart the ladder forever.
+    state = { snapshot: { ...state.snapshot, updatedAt: state.snapshot.updatedAt + 60000 }, status: 'ready', error: null }
     await act(async () => {
       for (const listener of storeListeners) listener()
       await new Promise((r) => setTimeout(r, 200))
     })
-    check('a healthy snapshot resets the retry budget',
-      attempts.length > stillCapped, 'capped=' + stillCapped + ' after=' + attempts.length)
+    await drain()
+    check('a newer overview stamp does not reopen a spent budget',
+      attempts.length === stillCapped, 'capped=' + stillCapped + ' after=' + attempts.length)
+    // The history moving IS recovery: a peer import or a backfill changed the
+    // answer, so the window deserves one more chain. (The stamp change alone
+    // re-reads the two range windows once; a refill walks the whole ladder.)
+    const moved = JSON.parse(JSON.stringify(state.snapshot))
+    moved.usage.availableDays = [...moved.usage.availableDays, '2026-01-05']
+    state = { snapshot: moved, status: 'ready', error: null }
+    await act(async () => {
+      for (const listener of storeListeners) listener()
+      await new Promise((r) => setTimeout(r, 200))
+    })
+    await drain()
+    check('a moved ledger history refills the retry budget',
+      attempts.length > stillCapped + 2, 'capped=' + stillCapped + ' after=' + attempts.length)
   } finally {
     window.setTimeout = realSetTimeout
+    window.clearTimeout = realClearTimeout
     await act(async () => { localRoot.unmount() })
     host.remove()
   }
@@ -1350,6 +1480,65 @@ console.log('   plans tab text:', text(container).slice(0, 200))
   check('the retry loop backs off and gives up',
     /RETRY_MAX_ATTEMPTS = 5\b/.test(cardSource) && /2 \*\* retryAttempts\.current/.test(cardSource) && /RETRY_BACKOFF_MAX_MS/.test(cardSource),
     'cap=' + (/RETRY_MAX_ATTEMPTS = (\d+)/.exec(cardSource)?.[1] ?? 'missing'))
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- a failed range refetch keeps the answer it already has --------------
+// The failure branch replaced the load with `{ status: 'error' }`, dropping the
+// summary and series on screen, so a refresh that failed blanked 全部 even though
+// the previous aggregate was still the best answer on hand. The day path kept
+// its numbers; the range path keeps them now.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  let failRange = false
+  const flakyRange = async (from, to) => {
+    if (failRange) throw new Error('usage api/dsh-usage/range?from=' + from + '&to=' + to + ' failed: 500')
+    return loadRange(from, to)
+  }
+  const state = { snapshot, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange: flakyRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 200)) })
+  const tileOf = (label) => [...host.querySelectorAll('[data-dsh-part="range-tiles"] button')]
+    .find((button) => text(button).includes(label))
+  await act(async () => {
+    tileOf('全部')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 250))
+  })
+  const totalsRow = () => host.querySelector('[data-dsh-part="window-totals"]')
+  const statValues = () => [...host.querySelectorAll('[data-dsh-part="window-totals"] [class*="statValue"]')]
+  const beforeCells = statValues().length
+  const beforeText = text(totalsRow())
+  check('the range window states its total before the refetch',
+    beforeCells === 6, 'cells=' + beforeCells + ' row=' + beforeText)
+  failRange = true
+  await act(async () => {
+    host.querySelector('[data-dsh-part="header"] button')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 300))
+  })
+  check('a failed range refetch keeps the numbers on screen',
+    statValues().length === beforeCells && text(totalsRow()) === beforeText,
+    'cells=' + statValues().length + ' row=' + text(totalsRow()))
+  check('a failed range refetch keeps the series on screen',
+    host.querySelector('[data-dsh-part="trend-failed"]') === null,
+    String(host.querySelectorAll('[data-dsh-part="trend-bar"]').length) + ' bars')
+  check('a failed range refetch still says it failed',
+    text(host).includes('部分日期加载失败'), text(host).slice(0, 160))
 
   await act(async () => { localRoot.unmount() })
   host.remove()
@@ -1480,8 +1669,44 @@ console.log('   plans tab text:', text(container).slice(0, 200))
   const earlyFrom = host.querySelector('[data-dsh-part="custom-range"] input[type="date"]')
   check('a from-date before the ledger is kept as typed', earlyFrom?.value === '2026-09-01',
     `value=${earlyFrom?.value}`)
-
   await act(async () => { localRoot.unmount() })
+
+  // `availableDays` lists the days THIS machine recorded; 全部 and the range
+  // totals cover the merged ledger, so its start is `usage.all.from`. A peer
+  // export whose history starts earlier was unreachable from the picker and
+  // understated by 全部.
+  const merged = JSON.parse(JSON.stringify(snapshot))
+  merged.usage.availableDays = ['2026-10-19', '2026-10-20']
+  merged.usage.all.from = '2026-09-01'
+  const mergedState = { snapshot: merged, status: 'ready', error: null }
+  const mergedStore = { getSnapshot: () => mergedState, subscribe: () => () => {} }
+  const mergedRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    mergedRoot.render(React.createElement(UsageSectionCard, {
+      store: mergedStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+  const mergedTile = [...host.querySelectorAll('[data-dsh-part="range-tiles"] button')]
+    .find((button) => text(button).includes('自定义'))
+  await act(async () => {
+    mergedTile?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 120))
+  })
+  const mergedInput = host.querySelector('[data-dsh-part="custom-range"] input[type="date"]')
+  check('the from-date input reaches back to the merged ledger',
+    mergedInput?.getAttribute('min') === '2026-09-01', `min=${mergedInput?.getAttribute('min')}`)
+  check('全部 asks the host for the merged span',
+    rangeCalls.includes('2026-09-01:2026-10-19'), rangeCalls.slice(-3).join(' '))
+
+  await act(async () => { mergedRoot.unmount() })
   host.remove()
 }
 
@@ -1665,8 +1890,13 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
   }
   const light = channelsOf('#ffffff')
   const dark = channelsOf('#16171a')
+  // The card paints no background, so the real surface is the host's. These are
+  // the lightest dark surfaces the host themes use — the worst case for a mid
+  // tone, because a lighter surface lowers the contrast of a darker bar.
+  const plausibleDark = ['#1b1c20', '#202124'].map(channelsOf)
   let worstLight = Infinity
   let worstDark = Infinity
+  let worstPlausible = Infinity
   let closest = Infinity
   let shades = 0
   for (const group of slots.values()) {
@@ -1676,6 +1906,7 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
       const rgb = channelsOf(color)
       worstLight = Math.min(worstLight, contrastOf(rgb, light))
       worstDark = Math.min(worstDark, contrastOf(rgb, dark))
+      for (const surface of plausibleDark) worstPlausible = Math.min(worstPlausible, contrastOf(rgb, surface))
     }
     for (let a = 0; a < colors.length; a += 1) {
       for (let b = a + 1; b < colors.length; b += 1) {
@@ -1685,10 +1916,15 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
   }
   check('every model color clears 3:1 on the light card', worstLight >= 3, worstLight.toFixed(2))
   check('every model color clears 3:1 on the dark card', worstDark >= 3, worstDark.toFixed(2))
+  check('every model color clears 3:1 on the lightest plausible dark surface',
+    worstPlausible >= 3, worstPlausible.toFixed(2))
   check('the rungs of one palette slot are told apart', closest >= 16, String(closest))
   check('every slot reaches all five shades', shades >= 16 * 5, String(shades))
   check('the other-models color is legible on both skins',
     contrastOf(channelsOf(palette.MODEL_COLOR_OTHER), light) >= 3 && contrastOf(channelsOf(palette.MODEL_COLOR_OTHER), dark) >= 3,
+    palette.MODEL_COLOR_OTHER)
+  check('the other-models color clears the lightest plausible dark surface',
+    plausibleDark.every((surface) => contrastOf(channelsOf(palette.MODEL_COLOR_OTHER), surface) >= 3),
     palette.MODEL_COLOR_OTHER)
 }
 
@@ -1825,11 +2061,19 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
     totalsRow() !== null && statValues().length === 0 && text(totalsRow()) === '—'
       && totalsRow()?.getAttribute('data-partial') === 'true',
     'cells=' + statValues().length + ' row=' + text(totalsRow()))
+  // Per-channel shares of a partial sum are the same over-claim as a partial
+  // total: the breakdown is hidden until the window is whole.
+  check('a partly loaded window does not claim channel shares',
+    host.querySelector('[data-dsh-part="channel-breakdown"]') === null,
+    String(host.querySelector('[data-dsh-part="channel-breakdown"]')?.textContent ?? 'hidden'))
   await act(async () => {
     if (releasePending !== null) releasePending()
     await new Promise((r) => setTimeout(r, 300))
   })
   check('the total comes back once the missing day lands', statValues().length === 6, 'cells=' + statValues().length)
+  check('the channel breakdown returns once the window is whole',
+    host.querySelector('[data-dsh-part="channel-breakdown"]') !== null,
+    String(host.querySelector('[data-dsh-part="channel-breakdown"]')?.textContent ?? 'missing').slice(0, 60))
   const cells = [...host.querySelectorAll('[data-dsh-part="window-totals"] > div')]
   const callsCell = cells[cells.length - 1]
   const callsLabel = callsCell === undefined ? '' : text(callsCell.querySelector('[class*="statLabel"]'))
@@ -1901,6 +2145,51 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
     opacity !== null && Number(opacity[1]) >= 0.7, opacity?.[1] ?? '?')
 }
 
+// ---- the range strip folds on its own width, not the viewport's ---------
+// The fold was a media query, so a 320 px panel inside a wide window kept four
+// columns and truncated every label. The card is an inline-size container now
+// and the query measures the card, not the window.
+{
+  const css = readClient('usage.module.css')
+  const card = /\.rangeCard\s*\{([^}]*)\}/.exec(css)
+  check('the range card is an inline-size container',
+    card !== null && /container-type:\s*inline-size/.test(card[1]),
+    card === null ? 'missing' : card[1].trim())
+  const containerRule = /@container\s*\(max-width:\s*420px\)\s*\{([\s\S]*?)\n\}/.exec(css)
+  check('the range strip folds when the card is narrow',
+    containerRule !== null && /\.rangeGrid\s*\{[^}]*repeat\(\s*2,/.test(containerRule[1]),
+    containerRule === null ? 'missing' : containerRule[1].trim().slice(0, 80))
+  check('no viewport query decides the range strip columns',
+    !/@media\s*\(max-width:\s*420px\)/.test(css), 'found a 420px media query')
+}
+
+// ---- the dictionaries carry only live sentences -------------------------
+// Five keys were left behind by earlier layouts; a dead entry is a sentence a
+// translator keeps paying for. The two new sentences have to exist in BOTH
+// tables, or one language falls back to the key.
+{
+  const locales = readClient('locales.ts')
+  const dead = ['usage.today.cost', 'usage.day.title', 'usage.day.cost', 'usage.day.empty', 'usage.device.id']
+  check('the dead dictionary entries are gone',
+    dead.every((key) => !locales.includes("'" + key + "'")),
+    dead.filter((key) => locales.includes("'" + key + "'")).join(','))
+  check('the new sentences are in both tables',
+    ['usage.trend.tooFewDays', 'usage.bank.saveError'].every((key) => (locales.match(new RegExp("'" + key + "'", 'g')) ?? []).length === 2),
+    ['usage.trend.tooFewDays', 'usage.bank.saveError']
+      .map((key) => key + '=' + String((locales.match(new RegExp("'" + key + "'", 'g')) ?? []).length))
+      .join(' '))
+}
+
+// ---- the copy notice does not outlive the card --------------------------
+// `copyId` armed a 1.5 s revert with nothing holding the handle, so unmounting
+// the card left a timer that wrote to a component that no longer exists.
+{
+  const device = readClient('DeviceSyncCard.tsx')
+  check('the copy revert timer is tracked and cleared',
+    /copiedTimer/.test(device) && /clearTimeout\(copiedTimer\.current\)/.test(device),
+    'copiedTimer=' + String(/copiedTimer/.test(device)))
+}
+
 // ---- a failed voucher draw is not pinned for the session ----------------
 // The art load is cached and the draw error was only ever set, so one transient
 // failure kept "票券生成失败" on screen for every later, successful draw.
@@ -1921,6 +2210,7 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
   }
   const realImage = globalThis.Image
   const realGetContext = window.HTMLCanvasElement.prototype.getContext
+  const realToBlob = window.HTMLCanvasElement.prototype.toBlob
   class FakeImage {
     constructor() {
       this.naturalWidth = 512
@@ -1979,8 +2269,23 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
     })
     check('a successful redraw clears the voucher failure', drawError() === null,
       drawError() === null ? '' : text(drawError()))
+    // A save that throws used to leave `saving` true for the rest of the session:
+    // the button stayed disabled on "正在生成…" and no later click could try again.
+    window.HTMLCanvasElement.prototype.toBlob = () => { throw new Error('toBlob exploded') }
+    const saveButton = () => [...host.querySelectorAll('[data-dsh-part="bank-card"] button')]
+      .find((button) => text(button).includes('保存图片') || text(button).includes('正在生成'))
+    await act(async () => {
+      saveButton()?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+      await new Promise((r) => setTimeout(r, 150))
+    })
+    check('a throwing save does not wedge the button',
+      saveButton() !== undefined && saveButton().disabled === false,
+      saveButton() === undefined ? 'no button' : text(saveButton()) + ' disabled=' + String(saveButton().disabled))
+    check('a failed save states the failure instead of dying silently',
+      text(host).includes('票券保存失败'), text(host).slice(-80))
   } finally {
     window.HTMLCanvasElement.prototype.getContext = realGetContext
+    window.HTMLCanvasElement.prototype.toBlob = realToBlob
     globalThis.Image = realImage
     window.Image = realImage
     await act(async () => { localRoot.unmount() })
@@ -2004,8 +2309,12 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
     plot !== null && String(plot.getAttribute('aria-label') ?? '').includes('2026-10-20'),
     plot === null ? 'no plot' : String(plot.getAttribute('aria-label')))
   await act(async () => { localRoot.render(React.createElement(TrendChart, { rows })) })
-  check('a one-day window with nothing failed draws nothing',
-    host.querySelector('[data-dsh-part="trend-chart"]') === null && text(host) === '', text(host))
+  // A one-day window draws no chart, and used to say nothing at all: the empty
+  // space read as a broken panel. The plot is still absent, and a line says why.
+  check('a one-day window says it has too few days for a trend',
+    host.querySelector('[data-dsh-part="trend-chart"]') === null
+      && host.querySelector('[data-dsh-part="trend-short"]') !== null
+      && text(host).includes('还不足两天'), text(host))
   await act(async () => { localRoot.render(React.createElement(TrendChart, { rows: [], allFailed: true })) })
   check('an empty failed window still states the failure',
     host.querySelector('[data-dsh-part="trend-failed"]') !== null, text(host))
@@ -2037,22 +2346,24 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
   let nextId = 0
   const realSetTimeout = window.setTimeout
   const realClearTimeout = window.clearTimeout
-  window.setTimeout = (callback) => {
+  window.setTimeout = (callback, delay) => {
     if (typeof callback !== 'function') return 0
     nextId += 1
-    pending.set(nextId, callback)
+    pending.set(nextId, { callback, delay })
     return nextId
   }
   window.clearTimeout = (id) => { pending.delete(id) }
   const localRoot = ReactDOMClient.createRoot(host)
   let fired = 0
+  const rungDelays = []
   const runPending = async () => {
     const due = [...pending.values()]
     pending.clear()
     fired += due.length
-    for (const callback of due) {
+    for (const entry of due) {
+      if (typeof entry.delay === 'number') rungDelays.push(entry.delay)
       await act(async () => {
-        callback()
+        entry.callback()
         await new Promise((r) => setTimeout(r, 150))
       })
     }
@@ -2089,6 +2400,31 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
     check('a retry chain is not rewound by a newer snapshot',
       afterOneRung >= 1 && fired <= 5 && loads > 2,
       'rungs=' + afterOneRung + ' fired=' + fired + ' loads=' + loads + ' guard=' + guard)
+    // The rung delays have to grow: `pollIntervalMs * 2 ** k` capped at 60 s made
+    // every rung 60 s, so the ladder never actually backed off.
+    check('the retry ladder walks growing rungs',
+      rungDelays.length === 5 && rungDelays.every((delay, at) => at === 0 || delay > rungDelays[at - 1]),
+      rungDelays.join(','))
+    check('a failing window stops at its retry cap',
+      fired === 5 && pending.size === 0, 'fired=' + fired + ' pending=' + pending.size)
+    // A poll that only moves `updatedAt` must not reopen the spent budget: the
+    // host stamps it on every answer, so it is not a recovery signal.
+    await act(async () => {
+      state = { snapshot: { ...state.snapshot, updatedAt: state.snapshot.updatedAt + 60000 }, status: 'ready', error: null }
+      for (const listener of storeListeners) listener()
+      await new Promise((r) => setTimeout(r, 200))
+    })
+    check('a spent budget stays spent when only the timestamp moves',
+      pending.size === 0, 'pending=' + pending.size)
+    // The ledger moving is the real recovery signal: a new chain is armed.
+    const moved = JSON.parse(JSON.stringify(state.snapshot))
+    moved.usage.availableDays = [...moved.usage.availableDays, '2026-01-05']
+    await act(async () => {
+      state = { snapshot: moved, status: 'ready', error: null }
+      for (const listener of storeListeners) listener()
+      await new Promise((r) => setTimeout(r, 200))
+    })
+    check('a moved ledger history arms the ladder again', pending.size > 0, 'pending=' + pending.size)
   } finally {
     window.setTimeout = realSetTimeout
     window.clearTimeout = realClearTimeout
@@ -2129,6 +2465,106 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
   check('the device read error stays available in the title',
     deviceError !== null && String(deviceError.getAttribute('title') ?? '').includes('EACCES'),
     deviceError === null ? 'no line' : String(deviceError.getAttribute('title')))
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- the plan bar's warning tones are measured too -----------------------
+// The tone classes only change the colour now, so the base class keeps the
+// height; the colour itself used to be a stock amber/red picked against the dark
+// card alone. On the light card's track the amber fell to 2.64:1 and on the dark
+// one the red to 2.78:1 — a 6px bar nobody can see is not a warning. Both tones
+// are measured here against every surface the fill can sit on.
+{
+  const channelsOf = (hex) => {
+    const value = Number.parseInt(String(hex).slice(1), 16)
+    return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff]
+  }
+  const channel = (value) => {
+    const scaled = value / 255
+    return scaled <= 0.04045 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4
+  }
+  const luminanceOf = (rgb) => 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2])
+  const contrastOf = (a, b) => {
+    const high = Math.max(luminanceOf(a), luminanceOf(b))
+    const low = Math.min(luminanceOf(a), luminanceOf(b))
+    return (high + 0.05) / (low + 0.05)
+  }
+  const css = readClient('usage.module.css')
+  const toneOf = (name) => {
+    const match = new RegExp('\\.' + name + '\\s*\\{[^}]*?background:\\s*(#[0-9a-fA-F]{6})').exec(css)
+    return match?.[1]
+  }
+  const warn = toneOf('barWarn')
+  const low = toneOf('barLow')
+  // The card paints no background, so the fill sits on the host's surface; it
+  // also sits inside the 10%-currentColor track, which is the lighter surface on
+  // the dark skin and the darker one on the light skin.
+  const surfaces = {
+    white: '#ffffff',
+    darkDialog: '#171a1f',
+    lightestDark: '#202124',
+    lightTrack: '#e9eaeb',
+    darkTrack: '#2c2f33',
+  }
+  check('the plan bar has a measured warn tone', warn !== undefined, String(warn))
+  check('the plan bar has a measured low tone', low !== undefined, String(low))
+  for (const [name, hex] of Object.entries({ warn, low })) {
+    if (hex === undefined) continue
+    let worst = Infinity
+    let worstSurface = ''
+    for (const [surface, surfaceHex] of Object.entries(surfaces)) {
+      const ratio = contrastOf(channelsOf(hex), channelsOf(surfaceHex))
+      if (ratio < worst) { worst = ratio; worstSurface = surface }
+    }
+    check(`the plan bar's ${name} tone clears 3:1 on every card surface`,
+      worst >= 3, `${hex} ${worst.toFixed(2)}:1 on ${worstSurface}`)
+  }
+}
+
+// ---- a rescan is one round trip -----------------------------------------
+// The button answered with the device list and then asked the section to
+// refetch the overview, so one click scanned the peer directory twice: the
+// second read could start before the scan's own snapshot settled and put the
+// older answer on screen. The rescan's answer is the refreshed overview now and
+// the card leaves the refetch alone.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const state = { snapshot, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  const refreshes = []
+  let rescans = 0
+  const rescanApi = {
+    exportLedger: async () => {},
+    importLedger: async () => ({ deviceId: 'peer-0001' }),
+    rescan: async () => { rescans += 1; return [] },
+  }
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => { refreshes.push('refresh') },
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync: rescanApi,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+  const card = host.querySelector('[data-dsh-part="device-card"]')
+  const rescanButton = card === null ? undefined : [...card.querySelectorAll('button')][2]
+  await act(async () => {
+    rescanButton?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 80))
+  })
+  check('the rescan button reaches the host once', rescans === 1, String(rescans))
+  check('a rescan does not refetch the overview', refreshes.length === 0, JSON.stringify(refreshes))
+  check('a rescan says it finished',
+    text(host.querySelector('[data-dsh-part="device-notice"]')).includes('已重新扫描'),
+    text(host.querySelector('[data-dsh-part="device-notice"]')))
   await act(async () => { localRoot.unmount() })
   host.remove()
 }

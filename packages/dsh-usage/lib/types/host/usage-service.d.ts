@@ -93,6 +93,13 @@ export declare class UsageService {
      * that jumped from a retention the user lowered.
      */
     private fileRetention;
+    /**
+     * The last prune was refused as a jumped clock. The file then keeps the window
+     * it recorded before the jump: writing the new setting would make the next
+     * flush (and the next boot) read the same days as "inside the file's window",
+     * so the second attempt would look legitimate and the history would go anyway.
+     */
+    private windowRefused;
     /** The window a shrink in this session asked for, so later prunes still read as one. */
     private shrankTo;
     /**
@@ -144,6 +151,8 @@ export declare class UsageService {
     private flushChain;
     /** True once loadPersisted finished; nothing may overwrite the files before that. */
     private loaded;
+    /** A peer scan asked for while the load was still running, to run when it ends. */
+    private peersScanPending;
     /** Retry bookkeeping for a ledger file that could not be read this boot. */
     private loadRetries;
     private loadRetryTimer;
@@ -177,11 +186,12 @@ export declare class UsageService {
     /**
      * Install a peer's exported ledger as that device's file.
      *
-     * REPLACES the peer file rather than merging into it, which is what makes a
-     * repeated import idempotent: the totals served are a sum over files that
-     * exist, so importing the same document twice changes nothing. The device id
-     * comes from inside the document (validated as a filename-safe token), so the
-     * receiving machine never has to know the sender's file name.
+     * Merges into the peer file rather than replacing it: importing the same
+     * document twice still changes nothing (the merge never lowers a bucket), but an
+     * *older* export of a device that kept counting no longer drops the days the
+     * file already holds — the receiving machine has no way to fetch them again.
+     * The device id comes from inside the document (validated as a filename-safe
+     * token), so the receiving machine never has to know the sender's file name.
      * @param text - raw JSON of an export envelope or a bare ledger document.
      * @returns the device id that was written.
      */
@@ -405,6 +415,24 @@ export declare class UsageService {
     private restoreMigratedHistory;
     private adoptLegacyLedger;
     /**
+     * Retire the legacy ledger once its days are in this device's file.
+     *
+     * A `.migrated` file from an earlier migration is history as well, so renaming
+     * over it would silently drop the days it holds; both are merged instead.
+     */
+    private retireLegacyFile;
+    /** A ledger file's days, or undefined when it is absent or unparseable. */
+    private readLedgerDocument;
+    /**
+     * Keep the newest few quarantined ledgers and drop the rest.
+     *
+     * Every unreadable or corrupt boot writes one of these, and each is a full copy
+     * of a ledger that can be megabytes. A handful is enough to inspect by hand;
+     * without a cap, a profile that keeps failing quietly fills the directory with
+     * copies of the same broken file.
+     */
+    private trimQuarantine;
+    /**
      * Re-read every peer ledger file in the persist directory.
      *
      * Peers are whatever `usage-ledger.<deviceId>.json` files are present, so
@@ -441,6 +469,14 @@ export declare class UsageService {
     private writeLedgerLocked;
     /** This process's ledger as a file document: the identity travels with it. */
     private ledgerFileDocument;
+    /**
+     * The window the file should record as the one its days were pruned against.
+     *
+     * Normally the setting. While a prune is refused, the window the file carried
+     * before the jump — otherwise the refusal would last exactly one flush: the
+     * next pass would find no day "outside the file's own window" and prune them.
+     */
+    private recordedWindow;
     /**
      * Prune a document about to be written, refusing a prune that would delete
      * most of the history at once.

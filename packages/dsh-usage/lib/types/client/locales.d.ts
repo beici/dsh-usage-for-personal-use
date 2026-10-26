@@ -23,12 +23,8 @@ export declare const zh: {
     'usage.disabled': string;
     'usage.current': string;
     'usage.today': string;
-    'usage.today.cost': string;
     'usage.day.label': string;
     'usage.day.today': string;
-    'usage.day.title': string;
-    'usage.day.cost': string;
-    'usage.day.empty': string;
     'usage.day.loading': string;
     'usage.day.error': string;
     'usage.peak.on': string;
@@ -49,6 +45,7 @@ export declare const zh: {
     'usage.trend.labelFailed': string;
     'usage.trend.labelPartial': string;
     'usage.trend.loadFailed': string;
+    'usage.trend.tooFewDays': string;
     'usage.range.title': string;
     'usage.range.today': string;
     'usage.range.yesterday': string;
@@ -106,6 +103,7 @@ export declare const zh: {
     'usage.bank.saving': string;
     'usage.bank.share': string;
     'usage.bank.drawError': string;
+    'usage.bank.saveError': string;
     'usage.foot.cost': string;
     'usage.foot.noData': string;
     'usage.foot.open': string;
@@ -115,7 +113,6 @@ export declare const zh: {
     'usage.device.hint': string;
     'usage.device.local': string;
     'usage.device.peer': string;
-    'usage.device.id': string;
     'usage.device.copyId': string;
     'usage.device.copied': string;
     'usage.device.none': string;

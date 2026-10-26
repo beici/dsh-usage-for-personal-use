@@ -10,7 +10,7 @@
  * @module @linxin666/dsh-usage/client/DeviceSyncCard
  */
 
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { t } from './locales.ts'
 import { describeError } from './error-text.ts'
 import styles from './usage.module.css'
@@ -22,17 +22,23 @@ export interface DeviceSyncApi {
   exportLedger: () => Promise<void>
   /** Install a peer's exported ledger; resolves with that peer's device id. */
   importLedger: (text: string) => Promise<{ deviceId: string }>
-  /** Re-scan the persist directory for files dropped in by hand. */
+  /**
+   * Re-scan the persist directory for files copied in by hand. The answer is the
+   * refreshed device list; the implementation also applies the fresh overview to
+   * the panel's store, so the card does not ask the section to refetch after it.
+   */
   rescan: () => Promise<DeviceLedgerEntryView[]>
 }
 
 /**
  * One status line under the controls. `tone` only picks the CSS class, so an
- * import failure is visible without inventing a second message slot.
+ * import failure is visible without inventing a second message slot; `title`
+ * carries the host's raw text (a path, an errno) for a diagnostic.
  */
 interface Notice {
   text: string
   tone: 'ok' | 'error'
+  title?: string
 }
 
 /**
@@ -57,6 +63,14 @@ export function DeviceSyncCard(props: {
   const [notice, setNotice] = useState<Notice | undefined>(undefined)
   const [copied, setCopied] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
+  // The copied-label revert is a timer, and a timer that outlives the card is a
+  // state update on a dead component: it is tracked and cleared on unmount.
+  const copiedTimer = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    return () => {
+      if (copiedTimer.current !== undefined) window.clearTimeout(copiedTimer.current)
+    }
+  }, [])
   // An older host serves no device list (and no sync API); the card would be a
   // dead control there, so it renders nothing instead of an empty shell.
   if (devices === undefined || api === undefined) return undefined
@@ -75,7 +89,9 @@ export function DeviceSyncCard(props: {
       const key = kind === 'export'
         ? 'usage.device.exportFailed'
         : kind === 'rescan' ? 'usage.device.rescanFailed' : 'usage.device.importFailed'
-      setNotice({ text: t(key, { error: detail }), tone: 'error' })
+      // The sentence is translated; the host's raw text stays in the title, where
+      // a diagnostic belongs.
+      setNotice({ text: t(key, { error: describeError(detail) }), tone: 'error', title: detail })
     } finally {
       setBusy(undefined)
     }
@@ -114,8 +130,10 @@ export function DeviceSyncCard(props: {
 
   const onRescan = (): void => {
     void run('rescan', async () => {
+      // The rescan's answer is the refreshed overview and the host face applies
+      // it to the shared store, so asking the section to refetch here would scan
+      // the directory twice and could put the older answer on screen last.
       await api.rescan()
-      onChanged()
       return { text: t('usage.device.rescanned'), tone: 'ok' }
     })
   }
@@ -125,7 +143,13 @@ export function DeviceSyncCard(props: {
     void navigator.clipboard?.writeText(deviceId).then(
       () => {
         setCopied(true)
-        window.setTimeout(() => setCopied(false), 1_500)
+        // One pending revert at a time: a second copy must not be undone by the
+        // first one's timer.
+        if (copiedTimer.current !== undefined) window.clearTimeout(copiedTimer.current)
+        copiedTimer.current = window.setTimeout(() => {
+          copiedTimer.current = undefined
+          setCopied(false)
+        }, 1_500)
       },
       () => setCopied(false),
     )
@@ -179,7 +203,7 @@ export function DeviceSyncCard(props: {
         />
       </div>
       {notice !== undefined && (
-        <span className={notice.tone === 'error' ? styles.errorLine : styles.muted} role="status" data-dsh-part="device-notice">
+        <span className={notice.tone === 'error' ? styles.errorLine : styles.muted} role="status" data-dsh-part="device-notice" title={notice.title}>
           {notice.text}
         </span>
       )}
