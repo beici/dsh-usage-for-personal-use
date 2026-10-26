@@ -41,9 +41,15 @@ const DEVICE_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/
  * names, leading/trailing punctuation, and anything over 64 characters — an
  * id arrives from an imported file, so it is untrusted input that becomes a
  * filename.
+ *
+ * A dot is rejected outright: every id this plugin mints is a host slug plus a
+ * hex digest, so a dotted name is never one of ours — it is a copy sitting next
+ * to the real file (`usage-ledger.<id>.bak.json`). Reading those as devices is
+ * how one machine's history gets summed twice.
  */
 export function isDeviceId(value: string): boolean {
   if (!DEVICE_ID_PATTERN.test(value)) return false
+  if (value.includes('.')) return false
   return value !== '.' && value !== '..'
 }
 

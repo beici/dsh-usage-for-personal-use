@@ -87,8 +87,16 @@ const SECTION_POLL_MS = 10_000
  */
 const BANK_ALL_DAYS = 'all'
 
-/** Longest window a custom date pair may describe (the ledger retains at most 730 days). */
+/**
+ * Longest window a custom date pair may describe (the ledger retains at most 730
+ * days). This bounds the *picker*, not the rendering walk: the "all" window is as
+ * long as the ledger, and capping its walk would silently chart only the oldest
+ * 366 days while the totals counted every one of them.
+ */
 const CUSTOM_MAX_DAYS = 366
+
+/** Longest span the render walk will enumerate (the host's own retention limit). */
+const TREND_MAX_DAYS = 731
 
 /**
  * The trend chart needs at least two columns to say anything: a single-day
@@ -147,17 +155,52 @@ function shiftDateKey(key: string, days: number): string {
   return localDateKey(date.getTime())
 }
 
-/** Every local-date key from `from` to `to` inclusive; empty when inverted. */
+/**
+ * Every local-date key from `from` to `to` inclusive; empty when inverted.
+ *
+ * The walk starts at `to` and goes back, so the cap drops the OLDEST days: a
+ * window wider than TREND_MAX_DAYS must still show the days the user cares
+ * about (the recent ones), not the first 731 days of a decade.
+ */
 function dateKeysBetween(from: string, to: string): string[] {
   const keys: string[] = []
   if (from === '' || to === '' || from > to) return keys
-  let key = from
-  // The cap keeps a malformed pair from walking off the calendar.
-  while (key <= to && keys.length < CUSTOM_MAX_DAYS) {
+  let key = to
+  while (key >= from && keys.length < TREND_MAX_DAYS) {
     keys.push(key)
-    key = shiftDateKey(key, 1)
+    key = shiftDateKey(key, -1)
   }
-  return keys
+  return keys.reverse()
+}
+
+/**
+ * Whole percents that add up to 100: floor every exact share, then hand the
+ * leftover units to the largest remainders. Rounding each row on its own made a
+ * panel state 99 % or 102 %, which reads as a bug in the numbers.
+ */
+function roundShares(exact: readonly number[]): number[] {
+  const whole = exact.map((value) => Math.floor(value))
+  let left = 100 - whole.reduce((sum, value) => sum + value, 0)
+  const byRest = exact
+    .map((value, index) => ({ index, rest: value - Math.floor(value) }))
+    .sort((a, b) => b.rest - a.rest || a.index - b.index)
+  for (const entry of byRest) {
+    if (left <= 0) break
+    whole[entry.index] += 1
+    left -= 1
+  }
+  return whole
+}
+
+/**
+ * A transport error as the panel states it: the wire's own words ("Failed to
+ * fetch", "ECONNREFUSED", a timeout) are diagnostics, not something a user can
+ * act on, so the network-shaped ones read as one localized sentence instead.
+ */
+function describeError(error: string): string {
+  return /failed to fetch|networkerror|network error|econnrefused|timeout|timed out/i.test(error)
+    ? t('usage.error.network')
+    : error
 }
 
 /** One selectable time window, as local-date keys. */
@@ -194,26 +237,37 @@ const RANGE_FETCH_MAX_DAYS = 45
 type DayCache = Map<string, UsageDayView>
 
 /**
- * In-flight day requests, so two windows overlapping on one day (or React's
- * development double-mount) share one request instead of racing.
+ * Cache generation. A manual refresh bumps it, so a request that started
+ * before the refresh can neither be joined by a later reader nor write its
+ * now-stale answer back into a cache.
  */
-const dayRequests = new Map<string, Promise<UsageDayView>>()
+let cacheGeneration = 0
+
+/**
+ * In-flight day requests, so two windows overlapping on one day (or React's
+ * development double-mount) share one request instead of racing. Each entry
+ * carries the generation it was started in.
+ */
+const dayRequests = new Map<string, { promise: Promise<UsageDayView>; generation: number }>()
 
 function requestDay(loadDay: (date: string) => Promise<UsageDayView>, date: string, cache: DayCache): Promise<UsageDayView> {
   const pending = dayRequests.get(date)
-  if (pending !== undefined) return pending
+  if (pending !== undefined && pending.generation === cacheGeneration) return pending.promise
+  const generation = cacheGeneration
   const request = loadDay(date).then(
     (view) => {
-      dayRequests.delete(date)
-      cache.set(date, view)
+      if (dayRequests.get(date)?.generation === generation) dayRequests.delete(date)
+      // Refreshed mid-flight: this answer describes the state before the
+      // refresh, so it must not seed the cache the next window reads.
+      if (generation === cacheGeneration) cache.set(date, view)
       return view
     },
     (error: unknown) => {
-      dayRequests.delete(date)
+      if (dayRequests.get(date)?.generation === generation) dayRequests.delete(date)
       throw error
     },
   )
-  dayRequests.set(date, request)
+  dayRequests.set(date, { promise: request, generation })
   return request
 }
 
@@ -250,6 +304,7 @@ function useWindowDays(
   dateKeys: string[],
   cache: DayCache,
   epoch: number,
+  retry: number,
 ): WindowDays {
   const signature = dateKeys.join(',')
   const [load, setLoad] = useState<WindowDays>(() => ({ status: dateKeys.length === 0 ? 'ready' : 'loading', days: {} }))
@@ -273,6 +328,10 @@ function useWindowDays(
     void mapPool(missing, DAY_FETCH_CONCURRENCY, async (date) => {
       try {
         days[date] = await requestDay(loadDay, date, cache)
+        // Publish each day as it lands: a window whose own dates are all here
+        // can show its total while a slower day elsewhere in the shared load is
+        // still in flight (a stuck day would otherwise hold every tile at "…").
+        if (!cancelled) setLoad({ status: 'loading', days: { ...days } })
       } catch (error) {
         failed += 1
         firstError ??= error instanceof Error ? error.message : String(error)
@@ -282,8 +341,9 @@ function useWindowDays(
       setLoad({ status: 'ready', days, ...(failed > 0 ? { error: firstError ?? '' } : {}) })
     })
     return () => { cancelled = true }
-  // `signature` carries the key list; `epoch` invalidates the cache.
-  }, [signature, loadDay, cache, epoch])
+  // `signature` carries the key list; `epoch` invalidates the cache; `retry`
+  // lets the poll tick retry a day that failed without a manual refresh.
+  }, [signature, loadDay, cache, epoch, retry])
   return load
 }
 
@@ -301,25 +361,42 @@ interface RangeResult {
 const rangeResults = new Map<string, RangeResult>()
 
 /** In-flight range requests, so overlapping windows share one fetch. */
-const rangeRequests = new Map<string, Promise<UsageRangeResponse>>()
+const rangeRequests = new Map<string, { promise: Promise<UsageRangeResponse>; generation: number }>()
 
 function requestRange(loadRange: (from: string, to: string) => Promise<UsageRangeResponse>, from: string, to: string): Promise<UsageRangeResponse> {
   const key = `${from}:${to}`
   const pending = rangeRequests.get(key)
-  if (pending !== undefined) return pending
+  if (pending !== undefined && pending.generation === cacheGeneration) return pending.promise
+  const generation = cacheGeneration
   const request = loadRange(from, to).then(
     (response) => {
-      rangeRequests.delete(key)
-      rangeResults.set(key, { summary: { totals: response.totals, providers: response.providers }, series: response.series })
+      if (rangeRequests.get(key)?.generation === generation) rangeRequests.delete(key)
+      if (generation === cacheGeneration) {
+        rangeResults.set(key, { summary: { totals: response.totals, providers: response.providers }, series: response.series })
+      }
       return response
     },
     (error: unknown) => {
-      rangeRequests.delete(key)
+      if (rangeRequests.get(key)?.generation === generation) rangeRequests.delete(key)
       throw error
     },
   )
-  rangeRequests.set(key, request)
+  rangeRequests.set(key, { promise: request, generation })
   return request
+}
+
+/**
+ * Drop every cached read and detach the in-flight ones.
+ *
+ * Called by a manual refresh: keeping an in-flight request would hand the
+ * refreshed windows the very answer the user asked to replace, and its settle
+ * handler would then cache that answer over the fresh one.
+ */
+function clearUsageCaches(): void {
+  cacheGeneration += 1
+  dayRequests.clear()
+  rangeRequests.clear()
+  rangeResults.clear()
 }
 
 /** How one window's range aggregate fetch is going. */
@@ -341,6 +418,7 @@ function useRangeData(
   loadRange: (from: string, to: string) => Promise<UsageRangeResponse>,
   window: RangeWindow | undefined,
   epoch: number,
+  retry: number,
 ): RangeLoad {
   const key = window === undefined || window.from === '' || window.to === '' ? '' : `${window.from}:${window.to}`
   const [load, setLoad] = useState<RangeLoad>({ status: 'idle' })
@@ -371,8 +449,9 @@ function useRangeData(
       },
     )
     return () => { cancelled = true }
-  // `key` carries the window bounds; `epoch` invalidates the cache.
-  }, [key, loadRange, epoch])
+  // `key` carries the window bounds; `epoch` invalidates the cache; `retry`
+  // lets the poll tick retry a window that failed without a manual refresh.
+  }, [key, loadRange, epoch, retry])
   return load
 }
 
@@ -623,7 +702,7 @@ interface DayLoad {
  * never lands (the effect cancels), and a failed load reports its own message
  * instead of leaving the card on a stale day.
  */
-function useDayView(loadDay: (date: string) => Promise<UsageDayView>, date: string | undefined, today: string | undefined): DayLoad | undefined {
+function useDayView(loadDay: (date: string) => Promise<UsageDayView>, date: string | undefined, today: string | undefined, epoch: number): DayLoad | undefined {
   const [load, setLoad] = useState<DayLoad | undefined>(undefined)
   useEffect(() => {
     if (date === undefined || date === today) {
@@ -637,7 +716,10 @@ function useDayView(loadDay: (date: string) => Promise<UsageDayView>, date: stri
       (error: unknown) => { if (!cancelled) setLoad({ status: 'error', error: error instanceof Error ? error.message : String(error) }) },
     )
     return () => { cancelled = true }
-  }, [date, today, loadDay])
+  // `epoch` is in the deps so a manual refresh re-reads the selected day too: the
+  // window prefetch has already refetched it, and a ticket left on the pre-refresh
+  // number is a stale receipt for a day the panel no longer believes.
+  }, [date, today, loadDay, epoch])
   return load
 }
 
@@ -688,8 +770,10 @@ function RangeStrip(props: {
   custom: { from: string; to: string }
   onCustomFrom: (value: string | undefined) => void
   onCustomTo: (value: string | undefined) => void
+  /** Latest pickable day: a window cannot run into the future. */
+  today: string
 }): ReactNode {
-  const { rangeKey, onSelect, tiles, custom, onCustomFrom, onCustomTo } = props
+  const { rangeKey, onSelect, tiles, custom, onCustomFrom, onCustomTo, today } = props
   return (
     <div className={styles.card} data-dsh-part="range-card">
       <span className={styles.cardTitle}>{t('usage.range.title')}</span>
@@ -706,7 +790,7 @@ function RangeStrip(props: {
             <span className={styles.rangeTileValue}>
               {tile.hint !== undefined ? tile.hint : tile.loading ? '…' : formatTokens(totalOf(tile.totals))}
             </span>
-            {tile.hint === undefined && <span className={styles.rangeTileMeta}>{tile.meta}</span>}
+            {tile.hint === undefined && !tile.loading && <span className={styles.rangeTileMeta}>{tile.meta}</span>}
           </button>
         ))}
       </div>
@@ -718,7 +802,7 @@ function RangeStrip(props: {
               type="date"
               className={styles.dateInput}
               value={custom.from}
-              max={custom.to === '' ? undefined : custom.to}
+              max={custom.to === '' || custom.to > today ? today : custom.to}
               onChange={(event) => { onCustomFrom(event.target.value === '' ? undefined : event.target.value) }}
             />
           </label>
@@ -729,6 +813,7 @@ function RangeStrip(props: {
               className={styles.dateInput}
               value={custom.to}
               min={custom.from === '' ? undefined : custom.from}
+              max={today}
               onChange={(event) => { onCustomTo(event.target.value === '' ? undefined : event.target.value) }}
             />
           </label>
@@ -753,11 +838,18 @@ function ChannelBreakdown(props: { summary: UsageWindowSummary; providers: Provi
   if (summary.providers.length === 0 || grand === 0) return <span className={styles.muted}>{t('usage.range.empty')}</span>
   const nameOf = (id: string): string => providers.find((provider) => provider.provider === id)?.displayName ?? id
   const labelOf = (model: string): string => modelLabels.get(model) ?? model
+  // Channel shares are rounded with the largest-remainder method: rounding each
+  // channel on its own made the headers add up to 99 % or 102 %, which reads as
+  // a bug in the numbers rather than in the rounding.
+  const sharePcts = roundShares(summary.providers.map((row) => (totalOf(row.totals) / grand) * 100))
   return (
     <div className={styles.chart} data-dsh-part="channel-breakdown">
-      {summary.providers.map((row) => {
+      {summary.providers.map((row, index) => {
         const total = totalOf(row.totals)
-        const share = Math.round((total / grand) * 100)
+        const share = sharePcts[index] ?? 0
+        // The model rows inside one channel round to 100 % together, the same
+        // way the channels above do: three equal models read 34/33/33, not 99.
+        const modelPcts = roundShares(row.models.map((model) => (total > 0 ? (totalOf(model.totals) / total) * 100 : 0)))
         return (
           <div key={row.provider} className={styles.chartProvider}>
             <span className={styles.chartHead}>
@@ -788,7 +880,7 @@ function ChannelBreakdown(props: { summary: UsageWindowSummary; providers: Provi
             </span>
             {row.models.length > 0 && (
               <div className={styles.modelRows} data-dsh-part="model-rows">
-                {row.models.map((model) => {
+                {row.models.map((model, modelIndex) => {
                   const modelTotal = totalOf(model.totals)
                   const label = labelOf(model.model)
                   // Sub-bar widths share the CHANNEL total — the mother bar's
@@ -806,7 +898,7 @@ function ChannelBreakdown(props: { summary: UsageWindowSummary; providers: Provi
                           style={{ width: `${Math.max(3, Math.round(sharePct))}%`, background: modelColors.get(model.model) ?? MODEL_COLOR_OTHER }}
                         />
                       </span>
-                      <span className={styles.chartTokens}>{formatTokens(modelTotal)} · {t('usage.calls', { n: model.totals.calls })} · {Math.round(sharePct)}%</span>
+                      <span className={styles.chartTokens}>{formatTokens(modelTotal)} · {t('usage.calls', { n: model.totals.calls })} · {modelPcts[modelIndex] ?? 0}%</span>
                     </span>
                   )
                 })}
@@ -836,7 +928,21 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   const [customFrom, setCustomFrom] = useState<string | undefined>(undefined)
   const [customTo, setCustomTo] = useState<string | undefined>(undefined)
   const dayCacheRef = useRef<DayCache>(new Map())
+  // A fresh mount starts from an empty range cache: it refetches its per-day
+  // windows anyway (that cache is per mount), and a previous mount's aggregate
+  // would then sit beside newer numbers. A peer import or a late backfill can
+  // change a past window while the panel is closed, which is exactly when that
+  // mismatch would appear.
+  const freshRangeCacheRef = useRef(false)
+  if (!freshRangeCacheRef.current) {
+    freshRangeCacheRef.current = true
+    rangeResults.clear()
+  }
   const [cacheEpoch, setCacheEpoch] = useState(0)
+  // A tick the poll hands to the loaders so a failed day or window retries on
+  // its own: without it one dropped request left a tile at "—" until the user
+  // pressed refresh.
+  const [retryTick, setRetryTick] = useState(0)
   // The enable checkbox writes through the shared form, so subscribing here
   // keeps the flag below live: the form republishes the Host's accepted value,
   // and the poll starts and stops with it instead of waiting for an unrelated
@@ -846,8 +952,11 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   const enabled = settingsValue.enabled ?? true
 
   // Poll while mounted, enabled and visible; the overview is cheap (no probes —
-  // the host's own cycle owns those) so 10 s keeps balances fresh-ish between
-  // manual refreshes.
+  // the host's own cycle owns those) so the panel follows the shared cadence
+  // instead of a private constant: a user who sets the interval to five minutes
+  // expects the panel to stop asking every ten seconds. The floor keeps a very
+  // short setting from turning the panel into a poll loop.
+  const pollIntervalMs = Math.max(SECTION_POLL_MS, (settingsValue.pollIntervalSec ?? 60) * 1000)
   useEffect(() => {
     // A disabled plugin deregisters its host routes, so the poll must stop with
     // it; the section re-enables by writing the flag back through the checkbox.
@@ -855,7 +964,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
     poll()
     let timer: number | undefined
     const start = (): void => {
-      if (timer === undefined && document.visibilityState === 'visible') timer = window.setInterval(poll, SECTION_POLL_MS)
+      if (timer === undefined && document.visibilityState === 'visible') timer = window.setInterval(poll, pollIntervalMs)
     }
     const onVisibility = (): void => {
       if (document.visibilityState === 'visible') {
@@ -872,7 +981,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
       if (timer !== undefined) window.clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [poll, enabled])
+  }, [poll, enabled, pollIntervalMs])
 
   const snapshot = ui.snapshot
   const todayView = snapshot?.usage.today
@@ -910,19 +1019,29 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   // instead — one request for however long the span is.
   const customSpanDays = customPicked ? dateKeysBetween(customWindow.from, customWindow.to).length : 0
   const customIsRange = customSpanDays > RANGE_FETCH_MAX_DAYS
-  const last30Days = useWindowDays(loadDay, recordedIn(last30Window, recorded, todayDate), cache, cacheEpoch)
+  const last30Days = useWindowDays(loadDay, recordedIn(last30Window, recorded, todayDate), cache, cacheEpoch, retryTick)
   // An untouched custom range has nothing to fetch: the prompt state renders
   // instead, so opening the section never fires requests for a window the user
   // has not asked for yet.
-  const customDays = useWindowDays(loadDay, customPicked && !customIsRange ? recordedIn(customWindow, recorded, todayDate) : [], cache, cacheEpoch)
+  const customDays = useWindowDays(loadDay, customPicked && !customIsRange ? recordedIn(customWindow, recorded, todayDate) : [], cache, cacheEpoch, retryTick)
   // Both multi-month windows fetch up to YESTERDAY: today rides the live
   // overview, so the aggregate never carries a stale copy of it.
-  const last180Load = useRangeData(loadRange, fetchSpanOf(last180Window, todayDate), cacheEpoch)
-  const allLoad = useRangeData(loadRange, fetchSpanOf(allWindow, todayDate), cacheEpoch)
-  const customRangeLoad = useRangeData(loadRange, customPicked && customIsRange ? fetchSpanOf(customWindow, todayDate) : undefined, cacheEpoch)
+  const last180Load = useRangeData(loadRange, fetchSpanOf(last180Window, todayDate), cacheEpoch, retryTick)
+  const allLoad = useRangeData(loadRange, fetchSpanOf(allWindow, todayDate), cacheEpoch, retryTick)
+  const customRangeLoad = useRangeData(loadRange, customPicked && customIsRange ? fetchSpanOf(customWindow, todayDate) : undefined, cacheEpoch, retryTick)
   /** One range-kind window as the panel states it: the fetched aggregate plus the live day. */
   const rangeSummaryOf = (window: RangeWindow, load: RangeLoad): UsageWindowSummary =>
     withLiveToday({ from: window.from, to: window.to, ...(load.summary ?? { totals: emptyTotals(), providers: [] }) }, window, todayView)
+  // A failed day or window retries on the poll's own cadence: the loaders only
+  // re-run when their inputs change, and a dropped request is not an input, so
+  // without this tick a tile stayed at "—" until the user pressed refresh.
+  const loadsFailed = last30Days.error !== undefined || customDays.error !== undefined
+    || last180Load.status === 'error' || allLoad.status === 'error' || customRangeLoad.status === 'error'
+  useEffect(() => {
+    if (!loadsFailed) return undefined
+    const timer = window.setInterval(() => setRetryTick((tick) => tick + 1), pollIntervalMs)
+    return () => window.clearInterval(timer)
+  }, [loadsFailed, pollIntervalMs])
 
   const dayOptions = snapshot === null
     ? []
@@ -931,7 +1050,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   // A selection retention no longer holds falls back to the tab's default
   // window, so the picker can never keep displaying a day the host dropped.
   const bankSelection = bankDay !== undefined && dayOptions.includes(bankDay) ? bankDay : undefined
-  const bankDayLoad = useDayView(loadDay, bankSelection, todayDate)
+  const bankDayLoad = useDayView(loadDay, bankSelection, todayDate, cacheEpoch)
   const bankDayView = bankSelection === undefined
     ? undefined
     : bankSelection === todayDate ? snapshot?.usage.today : bankDayLoad?.view
@@ -944,9 +1063,11 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   const onRefresh = (): void => {
     setRefreshing(true)
     // A late host backfill or peer import can still change a past window, so a
-    // manual refresh drops both caches and refetches every window.
+    // manual refresh drops both caches and refetches every window — including
+    // the requests already in flight, which would otherwise settle into the
+    // caches with the data this refresh is meant to replace.
     dayCacheRef.current.clear()
-    rangeResults.clear()
+    clearUsageCaches()
     setCacheEpoch((epoch) => epoch + 1)
     try {
       refresh()
@@ -956,10 +1077,12 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
     }
   }
 
-  // Disabled, failed and still-loading states keep the settings row mounted:
-  // it owns the enable checkbox, so replacing the whole panel would leave the
-  // user no way back from the UI.
-  if (!enabled || ui.status === 'error' || snapshot === null) {
+  // Disabled and still-loading states keep the settings row mounted: it owns
+  // the enable checkbox, so replacing the whole panel would leave the user no
+  // way back from the UI. A failed poll keeps the last snapshot on screen
+  // instead (a stale line marks it): one dropped request must not blank a
+  // panel whose data is still the best answer available.
+  if (!enabled || snapshot === null) {
     return (
       <div className={styles.section} data-dsh-plugin="usage">
         <span className={styles.muted} data-dsh-part="status-line">
@@ -1005,20 +1128,42 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
       : { window: customWindow, kind: 'days', load: customDays },
   }
   const keysOf = (key: RangeKey): string[] => recordedIn(windowSlices[key].window, recorded, todayDate)
+  // The five short windows share one 30-day day load, so its status says nothing
+  // about a single window: `today` needs no day request at all (the overview
+  // already holds it), and a window whose own dates arrived is done even while
+  // the rest of the 30 days is still landing. Tiles and card judge by this.
+  const slicePending = (slice: WindowSlice, key: RangeKey): boolean => {
+    if (slice.kind === 'range') return slice.load.status === 'loading'
+    if (slice.load.status !== 'loading') return false
+    return keysOf(key).some((date) => slice.load.days[date] === undefined)
+  }
+  /** The failure that actually belongs to this window (a shared load can fail elsewhere). */
+  const sliceFailed = (slice: WindowSlice, key: RangeKey): string | undefined => {
+    if (slice.kind === 'range') return slice.load.status === 'error' ? slice.load.error ?? '' : undefined
+    if (slice.load.error === undefined) return undefined
+    return keysOf(key).some((date) => slice.load.days[date] === undefined) ? slice.load.error : undefined
+  }
   const activeSlice = windowSlices[rangeKey]
   const activeWindow = activeSlice.window
+  /** The failure this window's own numbers are missing because of. */
+  const activeError = sliceFailed(activeSlice, rangeKey)
   const summaryRaw: UsageWindowSummary = activeSlice.kind === 'range'
     ? rangeSummaryOf(activeWindow, activeSlice.load)
     : summaryIn(activeWindow, keysOf(rangeKey), activeSlice.load, todayView)
   const tiles: Array<{ key: RangeKey; totals: UsageTokenTotals; meta: string; loading: boolean; hint?: string }> = (Object.keys(windowSlices) as RangeKey[]).map((key) => {
     const slice = windowSlices[key]
     const totals = slice.kind === 'range' ? rangeSummaryOf(slice.window, slice.load).totals : totalsIn(slice.window, keysOf(key), slice.load, todayView)
-    const loading = slice.load.status === 'loading'
+    const loading = slicePending(slice, key)
+    // A window whose days did not all arrive has no total to state: the sum of
+    // the days that loaded is a wrong number, not a small one. The card below
+    // carries the reason and the refresh button retries it.
+    const partial = slice.kind === 'days' && slice.load.status === 'ready'
+      && keysOf(key).some((date) => slice.load.days[date] === undefined)
     // The custom tile has no window of its own until the user picks one; a
     // failed range fetch reads as an em dash rather than a fake zero.
     const hint = key === 'custom' && !customPicked && !loading
       ? t('usage.range.customPick')
-      : slice.kind === 'range' && slice.load.status === 'error' ? '—' : undefined
+      : partial || (slice.kind === 'range' && slice.load.status === 'error') ? '—' : undefined
     return {
       key,
       totals,
@@ -1085,6 +1230,21 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
         </span>
       </div>
 
+      {/* Both notices sit above the tabs: they describe the snapshot every tab
+          reads, not just the one that happens to be open. */}
+      {ui.status === 'error' && (
+        <span className={styles.errorLine} role="status" data-dsh-part="stale-line">
+          {t('usage.stale', { error: describeError(ui.error ?? ''), time: formatTime(snapshot.updatedAt) })}
+        </span>
+      )}
+      {/* A ledger the host could not read makes every number below suspect, so
+          the reason is stated before the numbers themselves. */}
+      {snapshot.usage.ledgerError !== undefined && (
+        <span className={styles.errorLine} role="status" data-dsh-part="ledger-error">
+          {t('usage.ledger.error', { error: snapshot.usage.ledgerError })}
+        </span>
+      )}
+
       <div className={styles.tabs} role="tablist" data-dsh-part="tabs">
         <button type="button" role="tab" aria-selected={tab === 'usage'} className={tab === 'usage' ? `${styles.tab} ${styles.tabActive}` : styles.tab} onClick={() => setTab('usage')}>
           {t('usage.tab.usage')}
@@ -1104,8 +1264,12 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
             onSelect={setRangeKey}
             tiles={tiles}
             custom={customPicked ? customWindow : { from: '', to: '' }}
-            onCustomFrom={setCustomFrom}
-            onCustomTo={setCustomTo}
+            // The `max` attribute stops the picker's own calendar, not a typed
+            // or pasted date, so the window's ends are clamped here as well: a
+            // window cannot run into the future.
+            onCustomFrom={(value) => { setCustomFrom(value !== undefined && todayDate !== '' && value > todayDate ? todayDate : value) }}
+            onCustomTo={(value) => { setCustomTo(value !== undefined && todayDate !== '' && value > todayDate ? todayDate : value) }}
+            today={todayDate}
           />
 
           <div className={styles.card} data-dsh-part="window-card">
@@ -1119,14 +1283,20 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
             {deepseekVisible && (
               <PeakBadge peak={deepseekPeriod.peak} boundaryMs={deepseekPeriod.boundaryMs} variant="full" />
             )}
-            {activeSlice.load.error !== undefined && <span className={styles.errorLine}>{t('usage.range.error', { error: activeSlice.load.error })}</span>}
+            {activeError !== undefined && <span className={styles.errorLine} role="status">{t('usage.range.error', { error: describeError(activeError) })}</span>}
             {rangeKey === 'custom' && !customPicked
               ? <span className={styles.muted} data-dsh-part="custom-prompt">{t('usage.range.customPrompt')}</span>
-              : activeSlice.load.status === 'loading'
+              : slicePending(activeSlice, rangeKey)
                 ? <span className={styles.muted}>{t('usage.range.loading')}</span>
-                : isEmptyTotals(summary.totals) && summary.providers.length === 0
-                  ? <span className={styles.muted}>{t('usage.range.empty')}</span>
-                  : <>
+                : activeError !== undefined
+                  // The days that did arrive are a WRONG total, not a small one,
+                  // so a failed window states the failure and the per-day trend
+                  // (each bar is that day's own number) instead of a sum that
+                  // contradicts the "—" the tile shows for the same window.
+                  ? trendRows.length >= TREND_CHART_MIN_DAYS && <TrendChart rows={trendRows} colors={modelColors} labels={modelLabels} />
+                  : isEmptyTotals(summary.totals) && summary.providers.length === 0
+                    ? <span className={styles.muted}>{t('usage.range.empty')}</span>
+                    : <>
                       <TotalsRow totals={summary.totals} />
                       {summary.totals.cost > 0 && (
                         <div className={styles.providerRow} data-dsh-part="window-cost">
@@ -1167,7 +1337,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
             devices={snapshot.usage.devices}
             devicesError={snapshot.usage.devicesError}
             api={deviceSync}
-            onChanged={refresh}
+            onChanged={onRefresh}
           />
 
           <SettingsRow settings={settings} snapshot={settingsSnapshot.status === 'ready' ? settingsSnapshot : undefined} value={settingsValue} />
@@ -1197,7 +1367,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
             // voucher falls back to that day's fold-time estimate.
             observedSpend={bankSelection === undefined ? snapshot.usage.observedSpend : undefined}
             loading={bankSelection !== undefined && bankDayLoad?.status === 'loading'}
-            {...(bankDayLoad?.status === 'error' ? { error: bankDayLoad.error ?? '' } : {})}
+            {...(bankDayLoad?.status === 'error' ? { error: describeError(bankDayLoad.error ?? '') } : {})}
           />
         </>
       )}
@@ -1287,7 +1457,7 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
             : <>
             <span className={styles.muted}>{t('usage.bank.hint')}</span>
             <div className={styles.voucherPreview} data-dsh-part="voucher-preview">
-              <canvas ref={canvasRef} aria-label={t('usage.bank.title')} />
+              <canvas ref={canvasRef} role="img" aria-label={t('usage.bank.title')} />
             </div>
             {drawError !== undefined && <span className={styles.errorLine}>{t('usage.bank.drawError', { error: drawError })}</span>}
             <div className={styles.providerRow}>

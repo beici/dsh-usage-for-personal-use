@@ -128,6 +128,8 @@ export function foldTranscript(
   seen?: Set<string>,
   onDuplicate?: (dayKey: string, provider: string, model: string, totals: UsageTokenTotals) => void,
 ): void {
+  /** Keys already met inside this file, so a no-id record still folds once. */
+  const local = new Set<string>()
   for (const line of text.split('\n')) {
     if (line === '' || line[0] !== '{') continue
     let record: unknown
@@ -150,12 +152,32 @@ export function foldTranscript(
     const atMs = typeof rec.time === 'number' && Number.isFinite(rec.time) ? rec.time : Date.now()
     const totals = transcriptTotals(usage as Record<string, unknown>)
     const id = rec.data?.message?.id
-    if (seen !== undefined && typeof id === 'string' && id !== '') {
-      if (seen.has(id)) {
+    if (seen !== undefined) {
+      // The route is part of the key: one id replayed under a different
+      // provider is a different call, not a copy of the first one.
+      const key = typeof id === 'string' && id !== ''
+        ? source.provider + '\u0000' + model + '\u0000' + id
+        // A copy is a verbatim record, so its whole content identifies it: the
+        // same route at the same millisecond with the same four counters. Only
+        // a repeat from *another* file counts — two calls inside one session can
+        // legitimately look alike, while a seeded subagent's opening records are
+        // byte-for-byte the parent's.
+        : 'c\u0000' + [
+          source.provider,
+          model,
+          String(atMs),
+          String(totals.inputTokens),
+          String(totals.outputTokens),
+          String(totals.cacheReadTokens),
+          String(totals.cacheWriteTokens),
+        ].join('\u0000')
+      const fromThisFile = local.has(key)
+      if (seen.has(key) && (typeof id === 'string' && id !== '' || !fromThisFile)) {
         onDuplicate?.(localDateKey(atMs), source.provider, model, totals)
         continue
       }
-      seen.add(id)
+      seen.add(key)
+      local.add(key)
     }
     foldUsage(doc, atMs, source.provider, model, totals)
   }

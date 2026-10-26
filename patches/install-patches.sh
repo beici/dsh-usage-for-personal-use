@@ -87,7 +87,8 @@ echo
 echo "verifying markers:"
 printf '  client customPick : %s\n' "$(grep -c 'usage.range.customPick' "$pkg/lib/client.js" || true)"
 printf '  client device card: %s\n' "$(grep -c 'device-card' "$pkg/lib/client.js" || true)"
-printf '  host   backfill   : %s\n' "$(grep -c 'backfillSessionLogs' "$pkg/lib/index.js" || true)"
+printf '  host   replay     : %s\n' "$(grep -c 'replaySessionLogs' "$pkg/lib/index.js" || true)"
+printf '  host   repair     : %s\n' "$(grep -c 'repairDuplicatedReplay' "$pkg/lib/index.js" || true)"
 printf '  host   device split: %s\n' "$(grep -c 'usage-ledger\.' "$pkg/lib/index.js" || true)"
 printf '  hardlinked files  : %s\n' "$(find "$pkg" -type f -links +1 2>/dev/null | wc -l)"
 echo

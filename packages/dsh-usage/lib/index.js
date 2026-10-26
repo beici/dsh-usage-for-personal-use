@@ -1319,6 +1319,24 @@ function subtractTotals(bucket, extra) {
 	};
 }
 /**
+* Per-field maximum of two totals.
+*
+* The floor of a correction: subtracting a duplicate copy may never take a
+* bucket below what the deduped replay says that day really billed.
+*/
+function maxTotals(a, b) {
+	const pick = (x, y) => x > y ? x : y;
+	return {
+		inputTokens: pick(a.inputTokens, b.inputTokens),
+		outputTokens: pick(a.outputTokens, b.outputTokens),
+		cacheReadTokens: pick(a.cacheReadTokens, b.cacheReadTokens),
+		cacheWriteTokens: pick(a.cacheWriteTokens, b.cacheWriteTokens),
+		reasoningTokens: pick(a.reasoningTokens, b.reasoningTokens),
+		calls: pick(a.calls, b.calls),
+		cost: pick(a.cost, b.cost)
+	};
+}
+/**
 * Add `current`'s growth since `baseline` onto `target`, per bucket.
 *
 * The write path of one process that shares its ledger file with another: the
@@ -1493,9 +1511,15 @@ const DEVICE_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/;
 * names, leading/trailing punctuation, and anything over 64 characters — an
 * id arrives from an imported file, so it is untrusted input that becomes a
 * filename.
+*
+* A dot is rejected outright: every id this plugin mints is a host slug plus a
+* hex digest, so a dotted name is never one of ours — it is a copy sitting next
+* to the real file (`usage-ledger.<id>.bak.json`). Reading those as devices is
+* how one machine's history gets summed twice.
 */
 function isDeviceId(value) {
 	if (!DEVICE_ID_PATTERN.test(value)) return false;
+	if (value.includes(".")) return false;
 	return value !== "." && value !== "..";
 }
 /**
@@ -1694,6 +1718,8 @@ function transcriptTotals(usage) {
 * dropped. Pass the same set for every transcript of one pass.
 */
 function foldTranscript(text, doc, seen, onDuplicate) {
+	/** Keys already met inside this file, so a no-id record still folds once. */
+	const local = /* @__PURE__ */ new Set();
 	for (const line of text.split("\n")) {
 		if (line === "" || line[0] !== "{") continue;
 		let record;
@@ -1712,12 +1738,23 @@ function foldTranscript(text, doc, seen, onDuplicate) {
 		const atMs = typeof rec.time === "number" && Number.isFinite(rec.time) ? rec.time : Date.now();
 		const totals = transcriptTotals(usage);
 		const id = rec.data?.message?.id;
-		if (seen !== void 0 && typeof id === "string" && id !== "") {
-			if (seen.has(id)) {
+		if (seen !== void 0) {
+			const key = typeof id === "string" && id !== "" ? source.provider + "\0" + model + "\0" + id : "c\0" + [
+				source.provider,
+				model,
+				String(atMs),
+				String(totals.inputTokens),
+				String(totals.outputTokens),
+				String(totals.cacheReadTokens),
+				String(totals.cacheWriteTokens)
+			].join("\0");
+			const fromThisFile = local.has(key);
+			if (seen.has(key) && (typeof id === "string" && id !== "" || !fromThisFile)) {
 				onDuplicate?.(localDateKey(atMs), source.provider, model, totals);
 				continue;
 			}
-			seen.add(id);
+			seen.add(key);
+			local.add(key);
 		}
 		foldUsage(doc, atMs, source.provider, model, totals);
 	}
@@ -1795,6 +1832,34 @@ async function collectSessionLogUsage(root, merge, onDuplicate) {
 * ever sees the overview document.
 * @module @linxin666/dsh-usage/host/usage-service
 */
+/**
+* The bucket for one route inside one day, matched loosely.
+*
+* Provider and model spellings arrive from two places that do not agree: the
+* transcript records and the persisted ledger. An exact lookup misses a bucket
+* whose name drifted (`WorkBuddy` vs `workbuddy`), and the repair would then
+* skip it while the replay adds a second bucket beside it — one day, two rows,
+* and the copies stay counted.
+*/
+function findLedgerBucket(day, provider, model) {
+	if (day === void 0) return void 0;
+	const exact = day[provider]?.[model];
+	if (exact !== void 0) return {
+		provider,
+		model,
+		totals: exact
+	};
+	const wantProvider = provider.trim().toLowerCase();
+	const wantModel = model.trim().toLowerCase();
+	for (const [name, models] of Object.entries(day)) {
+		if (name.trim().toLowerCase() !== wantProvider) continue;
+		for (const [label, totals] of Object.entries(models)) if (label.trim().toLowerCase() === wantModel) return {
+			provider: name,
+			model: label,
+			totals
+		};
+	}
+}
 /** Probe timeout per HTTP call. */
 const PROBE_TIMEOUT_MS = 1e4;
 /** Ledger flush debounce. */
@@ -1830,6 +1895,27 @@ function service(ctx, name) {
 	} catch {
 		return;
 	}
+}
+/**
+* Read a totals-shaped value back from JSON, or undefined when it is not one.
+*
+* Used for the repair marker, which is written by this code but must never be
+* trusted blindly: a hand-edited or truncated marker would otherwise seed the
+* repair's floor with garbage and skew the subtraction.
+*/
+function readTotals(value) {
+	if (typeof value !== "object" || value === null) return void 0;
+	const record = value;
+	const num = (key) => typeof record[key] === "number" && Number.isFinite(record[key]) ? record[key] : 0;
+	return {
+		inputTokens: num("inputTokens"),
+		outputTokens: num("outputTokens"),
+		cacheReadTokens: num("cacheReadTokens"),
+		cacheWriteTokens: num("cacheWriteTokens"),
+		reasoningTokens: num("reasoningTokens"),
+		calls: num("calls"),
+		cost: num("cost")
+	};
 }
 /**
 * Atomic JSON write through a unique temp file + fsync + rename. The temp
@@ -2385,10 +2471,51 @@ var UsageService = class {
 				error: String(code ?? error)
 			};
 		}
+		const parsed = this.ledgerFromJson(raw);
+		return parsed.kind === "ok" ? {
+			kind: "ok",
+			doc: parsed.doc
+		} : {
+			kind: "corrupt",
+			error: parsed.error
+		};
+	}
+	/**
+	* Parse ledger JSON, accepting the `/export` envelope as well as a bare document.
+	*
+	* An export wraps the document as `{schema, version, deviceId, exportedAt,
+	* ledger}`, and restoring a backup means dropping exactly that file back in
+	* place. Reading only the top-level `days` would call it a valid *empty*
+	* ledger, and the first flush would then write that emptiness over the
+	* history — while `importPeer` refuses this device's own export, leaving no
+	* recovery path at all. So the envelope is unwrapped here, and a file naming
+	* another device is refused instead of adopted (it belongs in the peers path).
+	*/
+	ledgerFromJson(raw) {
+		let parsed;
+		try {
+			parsed = JSON.parse(raw);
+		} catch (error) {
+			return {
+				kind: "corrupt",
+				error: error instanceof Error ? error.message : String(error)
+			};
+		}
+		if (typeof parsed !== "object" || parsed === null) return {
+			kind: "corrupt",
+			error: "not a ledger document"
+		};
+		const record = parsed;
+		const deviceId = typeof record.deviceId === "string" ? record.deviceId : "";
+		if (deviceId !== "" && deviceId !== localDeviceId()) return {
+			kind: "corrupt",
+			error: `names device ${deviceId}`
+		};
+		const inner = typeof record.ledger === "object" && record.ledger !== null ? record.ledger : record;
 		try {
 			return {
 				kind: "ok",
-				doc: deserializeLedger(JSON.parse(raw))
+				doc: deserializeLedger(inner)
 			};
 		} catch (error) {
 			return {
@@ -2398,6 +2525,14 @@ var UsageService = class {
 		}
 	}
 	async loadPersisted() {
+		try {
+			await this.loadPersistedOnce();
+		} catch (error) {
+			this.ledgerError = `ledger load failed (${error instanceof Error ? error.message : String(error)})`;
+			this.scheduleLoadRetry();
+		}
+	}
+	async loadPersistedOnce() {
 		const read = await this.readLedgerFile();
 		if (read.kind === "unreadable") {
 			this.ledgerError = `ledger unreadable (${read.error})`;
@@ -2417,19 +2552,25 @@ var UsageService = class {
 		else if (read.kind === "missing") await this.adoptLegacyLedger();
 		await this.refreshPeers();
 		await this.loadSnapshots();
-		const repaired = await this.repairDuplicatedReplay();
-		await this.backfillSessionLogs();
+		const replay = await this.replaySessionLogs();
+		const prior = await this.readRepairRecord();
+		const repaired = await this.repairDuplicatedReplay(replay, prior);
 		this.lastPrune = void 0;
 		this.pruneIfNeeded();
 		this.loaded = true;
+		this.loadRetries = 0;
 		this.ledgerWritten = structuredClone(this.ledger);
 		if (read.kind !== "corrupt") this.ledgerError = void 0;
-		if (repaired !== void 0) {
-			if (repaired.buckets === 0 || await this.writeLedgerVerbatim()) await writeJsonAtomic(join(this.persistDir, DEDUPE_MARKER_FILE), {
-				version: 1,
+		if (repaired.buckets > 0) {
+			if (await this.persistRepair(repaired.repaired)) await writeJsonAtomic(join(this.persistDir, DEDUPE_MARKER_FILE), {
+				version: 2,
 				appliedAt: Date.now(),
 				buckets: repaired.buckets,
-				removedTokens: repaired.removedTokens
+				removedTokens: repaired.removedTokens,
+				after: {
+					...Object.fromEntries([...prior].map(([key, totals]) => [key, totals])),
+					...Object.fromEntries([...repaired.repaired].map(([key, entry]) => [key, entry.after]))
+				}
 			}).catch(() => void 0);
 		}
 		this.scheduleFlush();
@@ -2474,70 +2615,144 @@ var UsageService = class {
 	* replay never shrinks a live bucket, and a ledger rebuilt from an older
 	* transcript never loses a newer live fold, so running this on every start
 	* is idempotent.
+	*
+	* The pass also reports the duplicate copies it dropped, so the repair below
+	* can use them without walking the transcripts (287 MB, ~18 s) again.
 	*/
-	async backfillSessionLogs() {
+	async replaySessionLogs() {
+		const pass = {
+			doc: createLedgerDocument(),
+			duplicates: /* @__PURE__ */ new Map()
+		};
 		try {
 			await collectSessionLogUsage(join(dshHome(), "sessions"), (replay) => {
+				pass.doc = replay;
 				for (const [dayKey, providers] of Object.entries(replay.days)) {
 					const atMs = (/* @__PURE__ */ new Date(dayKey + "T12:00:00")).getTime();
 					if (!Number.isFinite(atMs)) continue;
 					const day = this.ledger.days[dayKey] ?? (this.ledger.days[dayKey] = {});
 					for (const [provider, models] of Object.entries(providers)) for (const [model, totals] of Object.entries(models)) {
-						const bucket = day[provider]?.[model];
-						if (bucket !== void 0 && totalTokens(bucket) >= totalTokens(totals)) continue;
+						const found = findLedgerBucket(day, provider, model);
+						if (found !== void 0 && totalTokens(found.totals) >= totalTokens(totals)) continue;
 						const folded = isDeepSeekProviderRoute(provider) ? {
 							...totals,
 							cost: deepseekModelSpend(model, totals, atMs)
 						} : totals;
+						if (found !== void 0) {
+							day[found.provider][found.model] = folded;
+							continue;
+						}
 						const route = day[provider] ?? (day[provider] = {});
 						route[model] = folded;
 					}
 				}
+			}, (dayKey, provider, model, totals) => {
+				const key = `${dayKey}\u0000${provider}\u0000${model}`;
+				const entry = pass.duplicates.get(key);
+				if (entry === void 0) pass.duplicates.set(key, {
+					dayKey,
+					provider,
+					model,
+					totals: { ...totals }
+				});
+				else entry.totals = addTotals(entry.totals, totals);
 			});
 		} catch {}
+		return pass;
 	}
 	/**
-	* One-time correction for the seeded-subagent duplicate.
+	* Correction for the seeded-subagent duplicate.
 	*
 	* A seeded subagent's transcript opens with a verbatim copy of its parent's
 	* assistant messages (same id, time and usage), and the replay used to fold
 	* both copies into the same bucket. Deduping the replay stops new inflation
 	* but cannot undo what is already written — the merge rule keeps the larger
 	* total, so an inflated bucket would never come back down. The extra copies
-	* are therefore subtracted once, exactly, and a sidecar marker records it:
-	* subtracting twice would take real calls away.
+	* are therefore subtracted once, and a sidecar marker records what was done.
+	*
+	* The subtraction is judged twice over, because a wrong subtraction cannot be
+	* undone by any later merge:
+	*
+	* - `clean` is the deduped replay, the truth for that day. A bucket at or
+	*   below it holds no copy at all, so it is left alone.
+	* - `prior` is what an earlier start already left in the bucket (read back
+	*   from the marker). A bucket still at that floor has already been corrected
+	*   — subtracting again on every start would slowly eat real calls, which is
+	*   exactly what a plain "big enough to subtract" guard allows once the day
+	*   holds calls the replay cannot see.
 	*/
-	async repairDuplicatedReplay() {
-		const markerPath = join(this.persistDir, DEDUPE_MARKER_FILE);
-		try {
-			await stat(markerPath);
-			return;
-		} catch {}
+	async repairDuplicatedReplay(replay, prior) {
+		const repaired = /* @__PURE__ */ new Map();
 		let buckets = 0;
 		let removedTokens = 0;
-		try {
-			await collectSessionLogUsage(join(dshHome(), "sessions"), () => {}, (dayKey, provider, model, totals) => {
-				const bucket = this.ledger.days[dayKey]?.[provider]?.[model];
-				if (bucket === void 0) return;
-				const next = subtractTotals(bucket, totals);
-				const dropped = totalTokens(bucket) - totalTokens(next);
-				if (dropped <= 0) return;
-				const atMs = (/* @__PURE__ */ new Date(dayKey + "T12:00:00")).getTime();
-				const repriced = isDeepSeekProviderRoute(provider) && Number.isFinite(atMs) ? {
-					...next,
-					cost: deepseekModelSpend(model, next, atMs)
-				} : next;
-				this.ledger.days[dayKey][provider][model] = repriced;
-				buckets += 1;
-				removedTokens += dropped;
+		for (const [key, duplicate] of replay.duplicates) {
+			const target = findLedgerBucket(this.ledger.days[duplicate.dayKey], duplicate.provider, duplicate.model);
+			if (target === void 0) continue;
+			const bucket = target.totals;
+			const clean = findLedgerBucket(replay.doc.days[duplicate.dayKey], duplicate.provider, duplicate.model)?.totals ?? emptyTotals();
+			const base = prior.get(key) ?? clean;
+			if (bucket.calls - base.calls !== duplicate.totals.calls) continue;
+			if (totalTokens(bucket) - totalTokens(base) !== totalTokens(duplicate.totals)) continue;
+			const next = maxTotals(subtractTotals(bucket, duplicate.totals), base);
+			const dropped = totalTokens(bucket) - totalTokens(next);
+			if (dropped <= 0) continue;
+			const repriced = this.priceBucket(duplicate.dayKey, target.provider, target.model, next);
+			this.ledger.days[duplicate.dayKey][target.provider][target.model] = repriced;
+			repaired.set(key, {
+				...duplicate,
+				provider: target.provider,
+				model: target.model,
+				clean,
+				after: repriced
 			});
-		} catch {
-			return;
+			buckets += 1;
+			removedTokens += dropped;
 		}
 		return {
 			buckets,
-			removedTokens
+			removedTokens,
+			repaired
 		};
+	}
+	/**
+	* Price one bucket at its day's noon rate.
+	*
+	* Shared by the repair and the file-side pass so both write the same numbers:
+	* the day is priced as a whole, which is why the noon instant stands in for
+	* the calls inside it.
+	*/
+	priceBucket(dayKey, provider, model, totals) {
+		const atMs = (/* @__PURE__ */ new Date(dayKey + "T12:00:00")).getTime();
+		return isDeepSeekProviderRoute(provider) && Number.isFinite(atMs) ? {
+			...totals,
+			cost: deepseekModelSpend(model, totals, atMs)
+		} : totals;
+	}
+	/**
+	* What the last repair left in each bucket, read back from the marker.
+	*
+	* The marker is a record, not a gate: the numbers it holds are the floor a
+	* later start must not subtract below. A marker written before this field
+	* existed (or one damaged by hand) yields an empty map, and the repair then
+	* falls back to the replay's own total.
+	*/
+	async readRepairRecord() {
+		const record = /* @__PURE__ */ new Map();
+		let raw;
+		try {
+			raw = await readFile(join(this.persistDir, DEDUPE_MARKER_FILE), "utf8");
+		} catch {
+			return record;
+		}
+		try {
+			const parsed = JSON.parse(raw);
+			if (typeof parsed.after !== "object" || parsed.after === null) return record;
+			for (const [key, value] of Object.entries(parsed.after)) {
+				const totals = readTotals(value);
+				if (totals !== void 0) record.set(key, totals);
+			}
+		} catch {}
+		return record;
 	}
 	/**
 	* Fold a parsed document into a target ledger.
@@ -2558,17 +2773,25 @@ var UsageService = class {
 	* pre-existing history would otherwise be gone, and a `.migrated` sibling is
 	* cheap. A failed rename (read-only directory) leaves the legacy file in
 	* place — the next start retries, and the ledger is still summed in.
+	*
+	* The `.migrated` sibling is read as well: it is what a successful migration
+	* leaves behind, and it is the only copy of the pre-migration history once
+	* this device's file is deleted or damaged. Re-adopting it is safe — the fold
+	* is a merge, and the buckets it restores are the ones the file states.
 	*/
 	async adoptLegacyLedger() {
 		const legacyPath = join(this.persistDir, LEGACY_LEDGER_FILE);
-		let raw;
+		const migratedPath = `${legacyPath}.migrated`;
+		const source = await readFile(legacyPath, "utf8").then((raw) => ({
+			raw,
+			path: legacyPath
+		}), () => readFile(migratedPath, "utf8").then((raw) => ({
+			raw,
+			path: migratedPath
+		}), () => void 0));
+		if (source === void 0) return;
 		try {
-			raw = await readFile(legacyPath, "utf8");
-		} catch {
-			return;
-		}
-		try {
-			this.absorb(this.ledger, deserializeLedger(JSON.parse(raw)));
+			this.absorb(this.ledger, deserializeLedger(JSON.parse(source.raw)));
 			pruneLedger(this.ledger, localDateKey(Date.now()), this.options.retainDays);
 			this.lastPrune = {
 				dayKey: localDateKey(Date.now()),
@@ -2577,7 +2800,7 @@ var UsageService = class {
 		} catch {
 			return;
 		}
-		if (await writeJsonAtomic(this.ledgerPath, this.ledger).then(() => true, () => false)) await rename(legacyPath, `${legacyPath}.migrated`).catch(() => void 0);
+		if (await writeJsonAtomic(this.ledgerPath, this.ledger).then(() => true, () => false) && source.path === legacyPath) await rename(legacyPath, migratedPath).catch(() => void 0);
 	}
 	/**
 	* Re-read every peer ledger file in the persist directory.
@@ -2599,8 +2822,11 @@ var UsageService = class {
 		const peers = [];
 		const failures = [];
 		for (const name of names) {
-			const deviceId = deviceIdOfFile(basename(name));
-			if (deviceId === void 0 || deviceId === this.deviceId) continue;
+			const file = basename(name);
+			const deviceId = deviceIdOfFile(file);
+			if (deviceId === void 0) continue;
+			if (deviceId === this.deviceId || deviceId.startsWith(this.deviceId + ".")) continue;
+			if (file.includes(".corrupt-")) continue;
 			const filePath = join(this.persistDir, name);
 			try {
 				const [raw, info] = await Promise.all([readFile(filePath, "utf8"), stat(filePath)]);
@@ -2648,36 +2874,73 @@ var UsageService = class {
 		try {
 			await mkdir(dirname(this.ledgerPath), { recursive: true });
 			const disk = await this.readDiskLedger();
-			if (disk !== void 0) {
-				if (this.ledgerWritten !== void 0) mergeLedgerDelta(disk, this.ledger, this.ledgerWritten);
-				else mergeLedgerMax(disk, this.ledger);
-				this.ledger = disk;
+			if (disk.kind === "bad") {
+				this.ledgerError = `ledger unreadable (${disk.error}); write skipped`;
+				return;
+			}
+			if (disk.kind === "ok") {
+				const target = disk.doc;
+				if (this.ledgerWritten !== void 0) mergeLedgerDelta(target, this.ledger, this.ledgerWritten);
+				mergeLedgerMax(target, this.ledger);
+				pruneLedger(target, localDateKey(Date.now()), this.options.retainDays);
+				this.ledger = target;
 			}
 			await writeJsonAtomic(this.ledgerPath, this.ledger);
 			this.ledgerWritten = structuredClone(this.ledger);
-		} catch {}
-	}
-	/** The ledger file as another writer left it, or undefined when absent/unreadable. */
-	async readDiskLedger() {
-		try {
-			const raw = await readFile(this.ledgerPath, "utf8");
-			return deserializeLedger(JSON.parse(raw));
-		} catch {
-			return;
+		} catch (error) {
+			this.ledgerError = `ledger write failed (${error instanceof Error ? error.message : String(error)})`;
 		}
 	}
+	/** The ledger file as another writer left it: absent, parsed, or unreadable. */
+	async readDiskLedger() {
+		let raw;
+		try {
+			raw = await readFile(this.ledgerPath, "utf8");
+		} catch (error) {
+			const code = error.code;
+			return code === "ENOENT" ? { kind: "missing" } : {
+				kind: "bad",
+				error: String(code ?? error)
+			};
+		}
+		const parsed = this.ledgerFromJson(raw);
+		return parsed.kind === "ok" ? {
+			kind: "ok",
+			doc: parsed.doc
+		} : {
+			kind: "bad",
+			error: parsed.error
+		};
+	}
 	/**
-	* Write this process's document over the file, ignoring what is there.
+	* Write the duplicate repair over the file, keeping what other writers added.
 	*
-	* The normal flush merges the file's growth in and keeps the larger total of
-	* each bucket — right for adding calls, wrong for a correction, which has to
-	* replace the number the old replay wrote. Only the duplicate repair uses it.
+	* A verbatim overwrite would also drop the calls another process folded while
+	* this one spent ~18 s replaying the transcripts, so the correction is applied
+	* to the file's own document: a bucket is capped at its repaired value only
+	* while it still carries the inflated total.
 	*/
-	async writeLedgerVerbatim() {
+	async persistRepair(repaired) {
 		try {
 			await mkdir(dirname(this.ledgerPath), { recursive: true });
-			await writeJsonAtomic(this.ledgerPath, this.ledger);
-			this.ledgerWritten = structuredClone(this.ledger);
+			const disk = await this.readDiskLedger();
+			if (disk.kind === "bad") {
+				this.ledgerError = `ledger unreadable (${disk.error}); repair not written`;
+				return false;
+			}
+			const target = disk.kind === "ok" ? disk.doc : this.ledger;
+			for (const entry of repaired.values()) {
+				const found = findLedgerBucket(target.days[entry.dayKey], entry.provider, entry.model);
+				if (found === void 0) continue;
+				const bucket = found.totals;
+				if (bucket.calls - entry.after.calls !== entry.totals.calls) continue;
+				if (totalTokens(bucket) - totalTokens(entry.after) !== totalTokens(entry.totals)) continue;
+				const next = maxTotals(subtractTotals(bucket, entry.totals), entry.after);
+				target.days[entry.dayKey][found.provider][found.model] = this.priceBucket(entry.dayKey, found.provider, found.model, next);
+			}
+			pruneLedger(target, localDateKey(Date.now()), this.options.retainDays);
+			await writeJsonAtomic(this.ledgerPath, target);
+			this.ledgerWritten = structuredClone(target);
 			return true;
 		} catch (error) {
 			this.ledgerError = `ledger write failed (${error instanceof Error ? error.message : String(error)})`;

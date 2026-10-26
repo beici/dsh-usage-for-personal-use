@@ -213,7 +213,20 @@ export declare class UsageService {
      * real ledger with an empty one.
      */
     private readLedgerFile;
+    /**
+     * Parse ledger JSON, accepting the `/export` envelope as well as a bare document.
+     *
+     * An export wraps the document as `{schema, version, deviceId, exportedAt,
+     * ledger}`, and restoring a backup means dropping exactly that file back in
+     * place. Reading only the top-level `days` would call it a valid *empty*
+     * ledger, and the first flush would then write that emptiness over the
+     * history — while `importPeer` refuses this device's own export, leaving no
+     * recovery path at all. So the envelope is unwrapped here, and a file naming
+     * another device is refused instead of adopted (it belongs in the peers path).
+     */
+    private ledgerFromJson;
     private loadPersisted;
+    private loadPersistedOnce;
     /** Retry a ledger read that failed for a transient reason (lock, sharing). */
     private scheduleLoadRetry;
     /** Revive the probe cache and the spend watch; both are best-effort. */
@@ -227,20 +240,50 @@ export declare class UsageService {
      * replay never shrinks a live bucket, and a ledger rebuilt from an older
      * transcript never loses a newer live fold, so running this on every start
      * is idempotent.
+     *
+     * The pass also reports the duplicate copies it dropped, so the repair below
+     * can use them without walking the transcripts (287 MB, ~18 s) again.
      */
-    private backfillSessionLogs;
+    private replaySessionLogs;
     /**
-     * One-time correction for the seeded-subagent duplicate.
+     * Correction for the seeded-subagent duplicate.
      *
      * A seeded subagent's transcript opens with a verbatim copy of its parent's
      * assistant messages (same id, time and usage), and the replay used to fold
      * both copies into the same bucket. Deduping the replay stops new inflation
      * but cannot undo what is already written — the merge rule keeps the larger
      * total, so an inflated bucket would never come back down. The extra copies
-     * are therefore subtracted once, exactly, and a sidecar marker records it:
-     * subtracting twice would take real calls away.
+     * are therefore subtracted once, and a sidecar marker records what was done.
+     *
+     * The subtraction is judged twice over, because a wrong subtraction cannot be
+     * undone by any later merge:
+     *
+     * - `clean` is the deduped replay, the truth for that day. A bucket at or
+     *   below it holds no copy at all, so it is left alone.
+     * - `prior` is what an earlier start already left in the bucket (read back
+     *   from the marker). A bucket still at that floor has already been corrected
+     *   — subtracting again on every start would slowly eat real calls, which is
+     *   exactly what a plain "big enough to subtract" guard allows once the day
+     *   holds calls the replay cannot see.
      */
     private repairDuplicatedReplay;
+    /**
+     * Price one bucket at its day's noon rate.
+     *
+     * Shared by the repair and the file-side pass so both write the same numbers:
+     * the day is priced as a whole, which is why the noon instant stands in for
+     * the calls inside it.
+     */
+    private priceBucket;
+    /**
+     * What the last repair left in each bucket, read back from the marker.
+     *
+     * The marker is a record, not a gate: the numbers it holds are the floor a
+     * later start must not subtract below. A marker written before this field
+     * existed (or one damaged by hand) yields an empty map, and the repair then
+     * falls back to the replay's own total.
+     */
+    private readRepairRecord;
     /**
      * Fold a parsed document into a target ledger.
      *
@@ -255,6 +298,11 @@ export declare class UsageService {
      * pre-existing history would otherwise be gone, and a `.migrated` sibling is
      * cheap. A failed rename (read-only directory) leaves the legacy file in
      * place — the next start retries, and the ledger is still summed in.
+     *
+     * The `.migrated` sibling is read as well: it is what a successful migration
+     * leaves behind, and it is the only copy of the pre-migration history once
+     * this device's file is deleted or damaged. Re-adopting it is safe — the fold
+     * is a merge, and the buckets it restores are the ones the file states.
      */
     private adoptLegacyLedger;
     /**
@@ -274,16 +322,17 @@ export declare class UsageService {
      */
     private flushLedger;
     private writeLedgerOnce;
-    /** The ledger file as another writer left it, or undefined when absent/unreadable. */
+    /** The ledger file as another writer left it: absent, parsed, or unreadable. */
     private readDiskLedger;
     /**
-     * Write this process's document over the file, ignoring what is there.
+     * Write the duplicate repair over the file, keeping what other writers added.
      *
-     * The normal flush merges the file's growth in and keeps the larger total of
-     * each bucket — right for adding calls, wrong for a correction, which has to
-     * replace the number the old replay wrote. Only the duplicate repair uses it.
+     * A verbatim overwrite would also drop the calls another process folded while
+     * this one spent ~18 s replaying the transcripts, so the correction is applied
+     * to the file's own document: a bucket is capped at its repaired value only
+     * while it still carries the inflated total.
      */
-    private writeLedgerVerbatim;
+    private persistRepair;
     /**
      * Prune days past retention. Runs at most once per local day and whenever
      * `retainDays` shrinks — not only at startup, so long-lived processes and

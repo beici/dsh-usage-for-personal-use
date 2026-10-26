@@ -16,6 +16,7 @@ export declare const zh: {
     'usage.updated': string;
     'usage.loading': string;
     'usage.error': string;
+    'usage.error.network': string;
     'usage.disabled': string;
     'usage.current': string;
     'usage.today': string;
@@ -104,6 +105,8 @@ export declare const zh: {
     'usage.device.copied': string;
     'usage.device.none': string;
     'usage.device.error': string;
+    'usage.ledger.error': string;
+    'usage.stale': string;
     'usage.device.export': string;
     'usage.device.import': string;
     'usage.device.importing': string;

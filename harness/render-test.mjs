@@ -600,6 +600,266 @@ console.log('   plans tab text:', text(container).slice(0, 200))
   host.remove()
 }
 
+// ---- a ledger the host could not read is stated, not hidden --------------
+// The numbers stay on screen (they are the best data available), so the reason
+// has to be visible: a silent zero would read as "you used nothing".
+{
+  const variant = JSON.parse(JSON.stringify(overview))
+  variant.usage.ledgerError = 'ledger unreadable (EBUSY: resource busy)'
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const state = { snapshot: variant, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
+
+  const line = host.querySelector('[data-dsh-part="ledger-error"]')
+  check('a ledger read failure is surfaced', line !== null && text(line).includes('EBUSY'), line === null ? 'no line' : text(line))
+  check('the tiles stay rendered under it', host.querySelectorAll('[data-dsh-part="range-tiles"] button').length === 8,
+    String(host.querySelectorAll('[data-dsh-part="range-tiles"] button').length))
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- a failed poll keeps the panel, not a blank line --------------------
+// The last snapshot is still the best answer available, so one dropped request
+// must not replace the whole panel with an error sentence.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const state = { snapshot, status: 'error', error: 'ECONNREFUSED' }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
+
+  const line = host.querySelector('[data-dsh-part="stale-line"]')
+  // The wire's own words are diagnostics; the panel states a network failure in
+  // the user's language instead of echoing "ECONNREFUSED".
+  check('a failed poll is stated, not fatal',
+    line !== null && text(line).includes('网络请求失败') && !text(line).includes('ECONNREFUSED'),
+    line === null ? 'no line' : text(line))
+  check('the panel survives the failed poll',
+    host.querySelectorAll('[data-dsh-part="range-tiles"] button').length === 8,
+    String(host.querySelectorAll('[data-dsh-part="range-tiles"] button').length))
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- a window whose days did not all arrive states no total -------------
+// Summing the days that loaded would print a number that is simply wrong; the
+// tile says "—" instead and the card carries the reason.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const state = { snapshot, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  const failingDay = () => Promise.reject(new Error('day fetch failed'))
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay: failingDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
+
+  const tileText = (label) => {
+    const tile = [...host.querySelectorAll('[data-dsh-part="range-tiles"] button')].find((button) => text(button).includes(label))
+    return tile === undefined ? 'missing' : text(tile)
+  }
+  check('a window with missing days states no total', tileText('近 7 天').includes('—'), tileText('近 7 天'))
+  check('today still states its own total', !tileText('今日').includes('—'), tileText('今日'))
+  // The card must not print the sum of the days that happened to load: it is a
+  // wrong number, and the tile above already says "—" for the same window.
+  const weekTile = [...host.querySelectorAll('[data-dsh-part="range-tiles"] button')].find((button) => text(button).includes('近 7 天'))
+  await act(async () => {
+    weekTile?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 150))
+  })
+  const card = host.querySelector('[data-dsh-part="window-card"]')
+  check('a failed window prints no totals row',
+    card !== null && text(card).includes('部分日期加载失败') && !text(card).includes('总 tokens'),
+    card === null ? 'no card' : text(card).slice(0, 120))
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- refresh drops the in-flight reads too ------------------------------
+// A request that started before the refresh must not settle into the caches
+// with the data the refresh was meant to replace.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const state = { snapshot, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  const seen = new Map()
+  const countingDay = (date) => {
+    seen.set(date, (seen.get(date) ?? 0) + 1)
+    return loadDay(date)
+  }
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay: countingDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+  const before = new Map(seen)
+  const button = host.querySelector('[data-dsh-part="header"] button')
+  await act(async () => {
+    button?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 200))
+  })
+  const refetched = [...before].filter(([date, count]) => (seen.get(date) ?? 0) > count).map(([date]) => date)
+  check('refresh refetches days it had already cached', refetched.length > 0,
+    'refetched=' + JSON.stringify(refetched) + ' before=' + JSON.stringify([...before]))
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- the model rows inside one channel add up to 100 % -------------------
+// Rounding each row on its own made three equal models read 33+33+33 = 99.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const bucket = (calls, input) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const today = snapshot.usage.today
+  const threeModels = {
+    ...snapshot,
+    usage: {
+      ...snapshot.usage,
+      today: {
+        date: today.date,
+        totals: bucket(3, 300),
+        providers: [{
+          provider: 'buddy',
+          totals: bucket(3, 300),
+          models: [
+            { model: 'alpha', totals: bucket(1, 100) },
+            { model: 'beta', totals: bucket(1, 100) },
+            { model: 'gamma', totals: bucket(1, 100) },
+          ],
+        }],
+      },
+    },
+  }
+  const threeState = { snapshot: threeModels, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => threeState, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+
+  const rows = [...host.querySelectorAll('[data-dsh-part="model-rows"] [title]')]
+  const pcts = rows.map((row) => {
+    const match = /(\d+)%$/.exec(text(row).trim())
+    return match === null ? Number.NaN : Number(match[1])
+  })
+  check('model rows add up to 100 %',
+    pcts.length === 3 && pcts.every((value) => Number.isFinite(value)) && pcts.reduce((sum, value) => sum + value, 0) === 100,
+    pcts.join('+'))
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- a custom window cannot run into the future -------------------------
+// The picker's `max` only stops its own calendar: a typed or pasted date went
+// straight into the window, which then counted days that have not happened.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const clampState = { snapshot, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => clampState, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
+
+  const customTile = [...host.querySelectorAll('[data-dsh-part="range-tiles"] button')]
+    .find((button) => text(button).includes('自定义'))
+  await act(async () => {
+    customTile?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 120))
+  })
+  const inputs = [...host.querySelectorAll('[data-dsh-part="custom-range"] input[type="date"]')]
+  const future = '2099-12-31'
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(inputs[1], future)
+    inputs[1].dispatchEvent(new window.Event('input', { bubbles: true }))
+    inputs[1].dispatchEvent(new window.Event('change', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 150))
+  })
+  const today = snapshot.usage.today.date
+  check('a typed future date clamps to today', inputs[1]?.value === today && inputs[0]?.value <= today,
+    `from=${inputs[0]?.value} to=${inputs[1]?.value} today=${today}`)
+
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
 const failed = report.filter((row) => !row.ok)
 console.log('\n=== ' + (report.length - failed.length) + '/' + report.length + ' checks passed ===')
 if (failed.length > 0) process.exitCode = 1

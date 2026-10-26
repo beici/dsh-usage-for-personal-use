@@ -199,12 +199,15 @@ export function UsageFootCard(props: UsageFootCardProps): ReactNode {
   }
 
   // The permanently seated card pays a relaxed cadence; a hidden tab pauses.
+  // The configured interval wins when it is the longer of the two: a user who
+  // slows polling down means this card too, not just the settings panel.
+  const pollIntervalMs = Math.max(FOOT_CARD_POLL_MS, (settings.getSnapshot().value?.pollIntervalSec ?? 60) * 1000)
   useEffect(() => {
     if (!enabled) return undefined
     poll()
     let timer: number | undefined
     const start = (): void => {
-      if (timer === undefined && document.visibilityState === 'visible') timer = window.setInterval(poll, FOOT_CARD_POLL_MS)
+      if (timer === undefined && document.visibilityState === 'visible') timer = window.setInterval(poll, pollIntervalMs)
     }
     const onVisibility = (): void => {
       if (document.visibilityState === 'visible') {
@@ -221,7 +224,7 @@ export function UsageFootCard(props: UsageFootCardProps): ReactNode {
       if (timer !== undefined) window.clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [poll, enabled])
+  }, [poll, enabled, pollIntervalMs])
 
   if (!enabled) return null
   const snapshot = ui.snapshot

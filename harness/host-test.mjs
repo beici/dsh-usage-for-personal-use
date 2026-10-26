@@ -283,9 +283,20 @@ async function writeTranscript(home, lines, session = 'sess1') {
   let plainDoc
   await collectSessionLogUsage(join(plain, 'sessions'), (replayed) => { plainDoc = replayed })
   check('id-less records still fold', plainDoc.days['2026-10-18']?.buddy?.m1?.calls === 2, JSON.stringify(plainDoc.days).slice(0, 160))
+
+  // The id alone is not a copy: the same request replayed under another route is
+  // a different call and must keep its own bucket.
+  const routed = await freshHome()
+  await writeTranscript(routed, [
+    JSON.stringify({ type: 'assistant/message', time: at, data: { usage: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }, message: { id: 'msg-7', source: { provider: 'buddy', model: 'm1' } } } }),
+    JSON.stringify({ type: 'assistant/message', time: at, data: { usage: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }, message: { id: 'msg-7', source: { provider: 'other', model: 'm1' } } } }),
+  ], 'routed')
+  let routedDoc
+  await collectSessionLogUsage(join(routed, 'sessions'), (replayed) => { routedDoc = replayed })
+  check('the same id under another route still folds', routedDoc.days['2026-10-16']?.buddy?.m1?.calls === 1 && routedDoc.days['2026-10-16']?.other?.m1?.calls === 1, JSON.stringify(routedDoc.days).slice(0, 200))
 }
 
-// ---- the duplicate repair runs exactly once -----------------------------
+// ---- the duplicate repair subtracts once and stays idempotent -----------
 {
   const home = await freshHome()
   const at = new Date('2026-10-16T09:00:00').getTime()
@@ -318,11 +329,442 @@ async function writeTranscript(home, lines, session = 'sess1') {
   const second = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
   await second.loadPersisted()
   const again = second.overview().usage.days.find((row) => row.date === '2026-10-16')
-  check('the repair never runs twice', again?.totals.calls === 2 && again?.totals.inputTokens === 400, `${again?.totals.calls}/${again?.totals.inputTokens}`)
+  check('a second start does not subtract again', again?.totals.calls === 2 && again?.totals.inputTokens === 400, `${again?.totals.calls}/${again?.totals.inputTokens}`)
+  await second.stop()
+
+  // A ledger restored from a backup is inflated again while the marker is still
+  // there. The marker is a record, not a gate: the next start judges the buckets
+  // again and corrects them, instead of trusting a claim about a file that has
+  // since been replaced.
+  await writeFile(join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`), JSON.stringify(inflated))
+  const third = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await third.loadPersisted()
+  const restored = third.overview().usage.days.find((row) => row.date === '2026-10-16')
+  check('a ledger restored from a backup is corrected again',
+    restored?.totals.calls === 2 && restored?.totals.inputTokens === 400,
+    `${restored?.totals.calls}/${restored?.totals.inputTokens}`)
+  await third.stop()
+}
+
+// ---- the repair never takes real calls away -----------------------------
+// The copies were only ever written into buckets the old replay inflated: a
+// bucket at or below what the deduped replay bills cannot hold one, and taking
+// its calls away is the one mistake no later merge can undo.
+{
+  const home = await freshHome()
+  const at = new Date('2026-10-16T09:00:00').getTime()
+  const call = (id, input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { id, source: { provider: 'buddy', model: 'm1' } },
+    },
+  })
+  await writeTranscript(home, [call('msg-1', 100)], 'parent')
+  await writeTranscript(home, [call('msg-1', 100), call('msg-2', 300)], 'child')
+  // The file holds only the two real calls: the copy never reached this bucket.
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const honest = {
+    version: 1,
+    days: { '2026-10-16': { buddy: { m1: { inputTokens: 400, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 2, cost: 0 } } } },
+  }
+  await writeFile(join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`), JSON.stringify(honest))
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const day = svc.overview().usage.days.find((row) => row.date === '2026-10-16')
+  check('a bucket the copy never reached keeps its calls', day?.totals.calls === 2 && day?.totals.inputTokens === 400, `${day?.totals.calls}/${day?.totals.inputTokens}`)
+  // Nothing was taken away, so nothing is claimed: the marker records what the
+  // repair did, and an empty record would only mislead a later reader.
+  check('the repair claims nothing when it takes nothing away', !(await readdir(join(home, 'dsh-usage'))).includes('usage-dedupe-marker.json'))
+  await svc.stop()
+}
+
+// ---- a bucket the repair cannot explain is left alone -------------------
+// The day holds the copy AND two real calls the replay cannot see (a transcript
+// rotated away), so the bucket sits three calls above the deduped replay when
+// only one of them is a copy. Nothing distinguishes the copy from those calls,
+// and taking real usage away is the one mistake no later merge can undo: the
+// bucket stays exactly as it is, on every start, and no floor is claimed.
+{
+  const home = await freshHome()
+  const at = new Date('2026-10-16T09:00:00').getTime()
+  const call = (id, input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { id, source: { provider: 'buddy', model: 'm1' } },
+    },
+  })
+  await writeTranscript(home, [call('msg-1', 100)], 'parent')
+  await writeTranscript(home, [call('msg-1', 100), call('msg-2', 300)], 'child')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
+  const bucket = (input, output, calls) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  // clean 400/20 over 2 calls + copy 100/10 + two real calls 200/20.
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, days: { '2026-10-16': { buddy: { m1: bucket(700, 50, 5) } } } }))
+
+  const { UsageService } = await load('host/usage-service.ts')
+  const first = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await first.loadPersisted()
+  check('an ambiguous bucket is left alone', first.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens === 700, String(first.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens))
+  check('an ambiguous bucket claims no floor', !(await readdir(join(home, 'dsh-usage'))).includes('usage-dedupe-marker.json'))
+  await first.stop()
+  const second = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await second.loadPersisted()
+  check('a second start leaves the ambiguous bucket alone too', second.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens === 700 && second.ledger.days['2026-10-16']?.buddy?.m1?.calls === 5,
+    `${second.ledger.days['2026-10-16']?.buddy?.m1?.calls}/${second.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens}`)
   await second.stop()
 }
 
-// ---- a corrupt ledger is quarantined, not wiped -------------------------
+// ---- floors from an earlier start survive a later repair ----------------
+// Start 1 corrects day A and records its floor. Start 2 corrects day C — if the
+// marker were replaced wholesale, A's floor would be gone and start 3 would take
+// another copy out of A, eating the calls the replay cannot see.
+{
+  const home = await freshHome()
+  const atA = new Date('2026-10-16T09:00:00').getTime()
+  const atC = new Date('2026-10-17T09:00:00').getTime()
+  const call = (at, id, input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { id, source: { provider: 'buddy', model: 'm1' } },
+    },
+  })
+  await writeTranscript(home, [call(atA, 'msg-a', 100)], 'parent-a')
+  await writeTranscript(home, [call(atA, 'msg-a', 100), call(atC, 'msg-c', 100)], 'child-a')
+  await writeTranscript(home, [call(atC, 'msg-c', 100)], 'parent-c')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
+  const bucket = (input, output, calls) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  // Day A: clean 100/10 + copy 100/10. Day C is not inflated yet.
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, days: { '2026-10-16': { buddy: { m1: bucket(200, 20, 2) } } } }))
+  const { UsageService } = await load('host/usage-service.ts')
+  const first = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await first.loadPersisted()
+  check('the first start corrects day A', first.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens === 100, String(first.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens))
+  await first.stop()
+
+  // Day C is inflated now, and day A also grew by real calls while the marker holds A's floor.
+  const marker = JSON.parse(await readFile(join(home, 'dsh-usage', 'usage-dedupe-marker.json'), 'utf8'))
+  check('the marker records the floor it left behind', typeof marker.after?.['2026-10-16\u0000buddy\u0000m1'] === 'object', JSON.stringify(marker.after ?? null))
+  const doc = JSON.parse(await readFile(ledgerPath, 'utf8'))
+  doc.days['2026-10-16'].buddy.m1 = bucket(300, 30, 3) // +100/10 real calls
+  doc.days['2026-10-17'] = { buddy: { m1: bucket(200, 20, 2) } } // clean 100/10 + copy 100/10
+  await writeFile(ledgerPath, JSON.stringify(doc))
+
+  const second = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await second.loadPersisted()
+  check('the later start corrects the new day', second.ledger.days['2026-10-17']?.buddy?.m1?.inputTokens === 100, String(second.ledger.days['2026-10-17']?.buddy?.m1?.inputTokens))
+  check('the later start leaves the earlier floor alone', second.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens === 300, String(second.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens))
+  await second.stop()
+  const merged = JSON.parse(await readFile(join(home, 'dsh-usage', 'usage-dedupe-marker.json'), 'utf8'))
+  check('the marker keeps both floors', merged.after?.['2026-10-16\u0000buddy\u0000m1'] !== undefined && merged.after?.['2026-10-17\u0000buddy\u0000m1'] !== undefined,
+    JSON.stringify(Object.keys(merged.after ?? {})))
+}
+
+// ---- a bucket that grew after the repair is not subtracted again ---------
+// Another process (or a restored backup) can add calls to a bucket the repair
+// already corrected. Those calls are indistinguishable from a fresh copy, so the
+// guard must not subtract on sight.
+{
+  const home = await freshHome()
+  const at = new Date('2026-10-16T09:00:00').getTime()
+  const call = (id, input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { id, source: { provider: 'buddy', model: 'm1' } },
+    },
+  })
+  await writeTranscript(home, [call('msg-1', 100)], 'parent')
+  await writeTranscript(home, [call('msg-1', 100), call('msg-2', 300)], 'child')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
+  const bucket = (input, output, calls) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, days: { '2026-10-16': { buddy: { m1: bucket(500, 30, 3) } } } }))
+  const { UsageService } = await load('host/usage-service.ts')
+  const first = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await first.loadPersisted()
+  check('the copy is taken on the first start', first.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens === 400, String(first.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens))
+  await first.stop()
+
+  const doc = JSON.parse(await readFile(ledgerPath, 'utf8'))
+  doc.days['2026-10-16'].buddy.m1 = bucket(600, 40, 4) // +100/10 real calls
+  await writeFile(ledgerPath, JSON.stringify(doc))
+  const second = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await second.loadPersisted()
+  check('growth after the repair is not mistaken for a copy', second.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens === 600 && second.ledger.days['2026-10-16']?.buddy?.m1?.calls === 4,
+    `${second.ledger.days['2026-10-16']?.buddy?.m1?.calls}/${second.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens}`)
+  await second.stop()
+}
+
+// ---- copies without a message id are caught by their content -------------
+// Upstream does not have to write a message id. A seeded subagent's opening
+// records are still byte-identical, so the whole content identifies the copy —
+// but only across files: two look-alike calls inside one session are real.
+{
+  const home = await freshHome()
+  const at = new Date('2026-10-16T09:00:00').getTime()
+  const noId = (input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { source: { provider: 'buddy', model: 'm1' } },
+    },
+  })
+  await writeTranscript(home, [noId(100)], 'parent')
+  await writeTranscript(home, [noId(100), noId(300)], 'child')
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const day = svc.overview().usage.days.find((row) => row.date === '2026-10-16')
+  check('a copy without an id is deduped across files', day?.totals.calls === 2 && day?.totals.inputTokens === 400, `${day?.totals.calls}/${day?.totals.inputTokens}`)
+  await svc.stop()
+}
+
+// ---- a successful load restores the retry budget ------------------------
+// The retry budget is for transient locks at startup. If it is never reset, one
+// bad episode spends it and a later lock leaves the process unable to persist.
+{
+  const home = await freshHome()
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, days: {} }))
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  svc.loadRetries = 4
+  await svc.loadPersisted()
+  check('a successful load resets the retry budget', svc.loadRetries === 0, String(svc.loadRetries))
+  await svc.stop()
+}
+
+// ---- calls another process folds while the repair runs survive it --------
+// The repair reads the file, replays ~18 s of transcripts, then writes. Anything
+// another process folded into the same bucket in between is real usage, so a
+// bucket the repair cannot fully explain is left alone — it is never rewritten
+// down to the replay's own total.
+{
+  const home = await freshHome()
+  const at = new Date('2026-10-16T09:00:00').getTime()
+  const call = (id, input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { id, source: { provider: 'buddy', model: 'm1' } },
+    },
+  })
+  await writeTranscript(home, [call('msg-1', 100)], 'parent')
+  await writeTranscript(home, [call('msg-1', 100), call('msg-2', 300)], 'child')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
+  const bucket = (input, output, calls) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, days: { '2026-10-16': { buddy: { m1: bucket(700, 50, 5) } } } }))
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  await svc.stop()
+  // Another process folded two more real calls into the same bucket afterwards.
+  const grown = JSON.parse(await readFile(ledgerPath, 'utf8'))
+  grown.days['2026-10-16'].buddy.m1 = bucket(900, 70, 7)
+  await writeFile(ledgerPath, JSON.stringify(grown))
+  const next = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await next.loadPersisted()
+  check('a bucket it cannot explain keeps everything, before and after growing',
+    next.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens === 900 && next.ledger.days['2026-10-16']?.buddy?.m1?.calls === 7,
+    `${next.ledger.days['2026-10-16']?.buddy?.m1?.calls}/${next.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens}`)
+  await next.stop()
+}
+
+// ---- a ledger restored from an export keeps its history ------------------
+// `/export` wraps the document as `{schema, version, deviceId, exportedAt,
+// ledger}`. Reading only the top-level `days` made a restored backup look like a
+// valid empty ledger, and the first flush then wrote that emptiness over it.
+{
+  const home = await freshHome()
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
+  const day = { buddy: { m1: { inputTokens: 500, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 5, cost: 0 } } }
+  await writeFile(ledgerPath, JSON.stringify({
+    schema: 'dsh-usage-ledger', version: 1, deviceId: localDeviceId(), exportedAt: '2026-10-16T00:00:00.000Z',
+    ledger: { version: 1, days: { '2026-10-16': day } },
+  }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  check('an exported ledger is read as a ledger', svc.ledger.days['2026-10-16']?.buddy?.m1?.calls === 5, JSON.stringify(Object.keys(svc.ledger.days)))
+  await svc.flushLedger()
+  const persisted = JSON.parse(await readFile(ledgerPath, 'utf8'))
+  check('the flush keeps the restored history', persisted.days?.['2026-10-16']?.buddy?.m1?.calls === 5, JSON.stringify(Object.keys(persisted.days ?? {})))
+  await svc.stop()
+}
+
+// ---- another device's export is refused, not adopted --------------------
+{
+  const home = await freshHome()
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
+  await writeFile(ledgerPath, JSON.stringify({
+    schema: 'dsh-usage-ledger', version: 1, deviceId: 'laptop-4f7b21', exportedAt: '2026-10-16T00:00:00.000Z',
+    ledger: { version: 1, days: { '2026-10-16': { buddy: { m1: { inputTokens: 500, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 5, cost: 0 } } } } },
+  }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const names = await readdir(join(home, 'dsh-usage'))
+  check('a foreign export is quarantined, not adopted',
+    names.some((name) => name.includes('.corrupt-')) && svc.ledger.days['2026-10-16'] === undefined,
+    names.join(','))
+  check('the refusal says whose file it was', String(svc.ledgerError ?? '').includes('names device laptop-4f7b21'), String(svc.ledgerError))
+  await svc.stop()
+}
+
+// ---- a backup copy of our own ledger is not a second device -------------
+// `usage-ledger.<id>.bak.json` keeps the device prefix, so it used to be read as
+// a peer and every one of this machine's calls was counted twice.
+{
+  const home = await freshHome()
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const dir = join(home, 'dsh-usage')
+  const todayKey = (await load('core/ledger.ts')).localDateKey(Date.now())
+  const day = { buddy: { m1: { inputTokens: 1000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 10, cost: 0 } } }
+  await writeFile(join(dir, `usage-ledger.${localDeviceId()}.json`), JSON.stringify({ version: 1, days: { [todayKey]: day } }))
+  await writeFile(join(dir, `usage-ledger.${localDeviceId()}.bak.json`), JSON.stringify({ version: 1, days: { [todayKey]: day } }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const totals = svc.overview().usage.all.totals
+  check('a backup copy is not summed in', totals.calls === 10 && totals.inputTokens === 1000, `${totals.calls}/${totals.inputTokens}`)
+  check('a backup copy is not a device', svc.overview().usage.devices.length === 1, JSON.stringify(svc.overview().usage.devices))
+  await svc.stop()
+}
+
+// ---- a quarantined file is not a peer ----------------------------------
+{
+  const home = await freshHome()
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const dir = join(home, 'dsh-usage')
+  const todayKey = (await load('core/ledger.ts')).localDateKey(Date.now())
+  const day = { buddy: { m1: { inputTokens: 700, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 7, cost: 0 } } }
+  await writeFile(join(dir, `usage-ledger.${localDeviceId()}.json`), JSON.stringify({ version: 1, days: { [todayKey]: day } }))
+  await writeFile(join(dir, 'usage-ledger.izuf6gqghj119maddgtu7yz-2c08fa.json.corrupt-1.json'), JSON.stringify({ version: 1, days: { [todayKey]: day } }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  check('a quarantined file is not a peer', svc.overview().usage.devices.length === 1 && svc.overview().usage.devicesError === undefined,
+    JSON.stringify(svc.overview().usage.devices) + '/' + String(svc.overview().usage.devicesError))
+  await svc.stop()
+}
+
+// ---- a peer's backup copy is not a second device -----------------------
+// A peer ledger copied aside keeps the `usage-ledger.<id>.bak.json` shape, so the
+// id reads as `peerone.bak` and a bare (deviceId-less) document passes the
+// identity check — the peer's history is then summed in twice.
+{
+  const home = await freshHome()
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const dir = join(home, 'dsh-usage')
+  const todayKey = (await load('core/ledger.ts')).localDateKey(Date.now())
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const day = (input, calls) => JSON.stringify({ version: 1, days: { [todayKey]: { buddy: { m1: bucket(input, calls) } } } })
+  await writeFile(join(dir, `usage-ledger.${localDeviceId()}.json`), day(100, 1))
+  await writeFile(join(dir, 'usage-ledger.peerone.json'), day(700, 7))
+  await writeFile(join(dir, 'usage-ledger.peerone.bak.json'), day(700, 7))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const totals = svc.overview().usage.all.totals
+  check('a peer backup copy is not summed in', totals.calls === 8 && totals.inputTokens === 800, `${totals.calls}/${totals.inputTokens}`)
+  check('a peer backup copy is not a device', svc.overview().usage.devices.length === 2, JSON.stringify(svc.overview().usage.devices))
+  await svc.stop()
+}
+
+// ---- a bucket the ledger spells differently is still repaired -----------
+// Provider and model spellings come from two different sources. When they drift
+// (`WorkBuddy` in the ledger, `workbuddy` in the transcript) the repair used to
+// skip the bucket while the replay added a second one beside it: one day, two
+// rows, and the copies still counted.
+{
+  const home = await freshHome()
+  const at = new Date('2026-10-16T09:00:00').getTime()
+  const call = (id, input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { id, source: { provider: 'workbuddy', model: 'm1' } },
+    },
+  })
+  await writeTranscript(home, [call('msg-1', 100)], 'parent')
+  await writeTranscript(home, [call('msg-1', 100), call('msg-2', 300)], 'child')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
+  const bucket = (input, output, calls) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, days: { '2026-10-16': { WorkBuddy: { M1: bucket(500, 30, 3) } } } }))
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const day = svc.overview().usage.days.find((row) => row.date === '2026-10-16')
+  check('a drifted spelling is repaired in place', day?.totals.calls === 2 && day?.totals.inputTokens === 400, `${day?.totals.calls}/${day?.totals.inputTokens}`)
+  check('a drifted spelling does not become a second bucket', Object.keys(svc.ledger.days['2026-10-16'] ?? {}).length === 1,
+    JSON.stringify(Object.keys(svc.ledger.days['2026-10-16'] ?? {})))
+  await svc.stop()
+}
+
+// ---- a replay recovery and the retention prune survive the next flush ---
+// The first flush used to merge the file's own document back in: the bucket the
+// replay had just recovered was replaced by the file's older number, and the day
+// the prune had dropped came back from the file.
+{
+  const home = await freshHome()
+  const { localDateKey } = await load('core/ledger.ts')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const recoveredDay = localDateKey(Date.now() - 2 * 86_400_000)
+  const staleDay = localDateKey(Date.now() - 60 * 86_400_000)
+  await writeTranscript(home, [JSON.stringify({
+    type: 'assistant/message',
+    time: Date.now() - 2 * 86_400_000,
+    data: { usage: { inputTokens: 120, outputTokens: 12, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }, message: { id: 'msg-9', source: { provider: 'buddy', model: 'm1' } } },
+  })])
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, days: { [staleDay]: { buddy: { m1: bucket(900, 9) } } } }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 7 })
+  await svc.loadPersisted()
+  check('the replay recovers the missing call', svc.ledger.days[recoveredDay]?.buddy?.m1?.calls === 1, JSON.stringify(Object.keys(svc.ledger.days)))
+  check('the prune drops the stale day', svc.ledger.days[staleDay] === undefined, JSON.stringify(Object.keys(svc.ledger.days)))
+  await svc.flushLedger()
+  const persisted = JSON.parse(await readFile(ledgerPath, 'utf8'))
+  check('the flush keeps the recovered call', persisted.days[recoveredDay]?.buddy?.m1?.calls === 1, JSON.stringify(Object.keys(persisted.days)))
+  check('the flush keeps the stale day dropped', persisted.days[staleDay] === undefined, JSON.stringify(Object.keys(persisted.days)))
+  await svc.stop()
+}
+
+// ---- a flush never writes over a ledger it could not parse --------------
+{
+  const home = await freshHome()
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  // Corrupted between the load and the flush: the bytes may be the only copy.
+  await writeFile(ledgerPath, '{ broken')
+  await svc.flushLedger()
+  check('a flush leaves an unparseable file alone', (await readFile(ledgerPath, 'utf8')) === '{ broken')
+  check('a skipped flush is reported', String(svc.overview().usage.ledgerError ?? '').includes('write skipped'), String(svc.overview().usage.ledgerError))
+  await svc.stop()
+}
+
+
 {
   const home = await freshHome()
   const { localDeviceId } = await load('host/device-ledger.ts')

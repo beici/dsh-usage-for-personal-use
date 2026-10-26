@@ -143,6 +143,25 @@ export function subtractTotals(bucket: Readonly<UsageTokenTotals>, extra: Readon
 }
 
 /**
+ * Per-field maximum of two totals.
+ *
+ * The floor of a correction: subtracting a duplicate copy may never take a
+ * bucket below what the deduped replay says that day really billed.
+ */
+export function maxTotals(a: Readonly<UsageTokenTotals>, b: Readonly<UsageTokenTotals>): UsageTokenTotals {
+  const pick = (x: number, y: number): number => (x > y ? x : y)
+  return {
+    inputTokens: pick(a.inputTokens, b.inputTokens),
+    outputTokens: pick(a.outputTokens, b.outputTokens),
+    cacheReadTokens: pick(a.cacheReadTokens, b.cacheReadTokens),
+    cacheWriteTokens: pick(a.cacheWriteTokens, b.cacheWriteTokens),
+    reasoningTokens: pick(a.reasoningTokens, b.reasoningTokens),
+    calls: pick(a.calls, b.calls),
+    cost: pick(a.cost, b.cost),
+  }
+}
+
+/**
  * Add `current`'s growth since `baseline` onto `target`, per bucket.
  *
  * The write path of one process that shares its ledger file with another: the

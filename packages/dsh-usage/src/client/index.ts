@@ -207,12 +207,14 @@ export function apply(ctx: ClientContext): void {
   }
   // The refresh response is authoritative: it reflects the completed probe
   // cycle, so it applies even when a faster section poll already bumped the
-  // sequence past it (the poll's pre-cycle snapshot is the stale one).
+  // sequence past it (the poll's pre-cycle snapshot is the stale one). It must
+  // not touch `pollSeq` though — rewinding the counter lets a poll that was
+  // already in flight keep its claim on a sequence number, and the older of the
+  // two answers then wins simply by landing last.
   const refresh = (): void => {
     const seq = pollSeq + 1
     pollSeq = seq
     usageApi.refresh().then((snapshot) => {
-      pollSeq = seq
       store.actions.setSnapshot(snapshot)
     }, (error: unknown) => {
       if (seq !== pollSeq) return

@@ -26,7 +26,7 @@ days, not a calendar window, and the host offers no arbitrary-range route.
 `src/client/UsageSectionCard.tsx`:
 
 - **Today rides the live overview** (`usage.today`), so it keeps updating with
-  the 10 s poll without any extra request.
+  the panel's poll without any extra request.
 - **Every other window is merged in the browser** from one
   `GET /api/dsh-usage/day` request per *recorded day inside the window*
   (`overview.usage.availableDays` is the candidate list). Only days the ledger
@@ -38,8 +38,18 @@ days, not a calendar window, and the host offers no arbitrary-range route.
   a past day.
 - The four fixed windows are all inside 近 30 天, so one load
   (`last30Days = useWindowDays(..., recordedIn(last30Window, ...))`) feeds all
-  of them; each tile slices the same loaded set.
+  of them; each tile slices the same loaded set. A tile judges its own window
+  (`slicePending` / `sliceFailed`), so a day that is still in flight elsewhere
+  in the shared load cannot hold a window whose dates already arrived at "…",
+  and a day that lands republishes the load immediately.
+- A failed day or window retries on the panel's own cadence (`retryTick`), so
+  one dropped request no longer pins a tile at "—" until the user refreshes.
 - The custom range gets its own load keyed by the picked pair.
+- Polling follows the shared `pollIntervalSec` setting (floored at 10 s), so a
+  user who slows the host down also slows the panel; the sidebar card does the
+  same with its own 30 s floor.
+- Percentages are rounded with the largest-remainder method — channel headers to
+  100 % together, and the model rows inside one channel likewise.
 
 ## Window definitions
 
@@ -116,11 +126,45 @@ count those calls twice — yesterday read 17 % high on the real ledger, and no
 later run could bring it back down. `foldTranscript` now shares one `seen` set
 across all files, keyed by `data.message.id` (records without an id still fold;
 the older single-session format has none). The already-inflated buckets are
-corrected once: `repairDuplicatedReplay` subtracts exactly the extra copies,
-reprices them at the day's noon rate and writes the result over the file
-verbatim — the merge-based flush keeps the larger total and would drop the
-correction. A `usage-dedupe-marker.json` sidecar is written *after* that write,
-so a failed write retries on the next start instead of being skipped forever.
+corrected by `repairDuplicatedReplay`, which subtracts the extra copies, reprices
+them at the day's noon rate and writes the result over the file verbatim — the
+merge-based flush keeps the larger total and would drop the correction.
+
+Two rules make that correction safe to repeat on every start:
+
+- It is judged, not blind, and the yardstick is *where the bucket stood before*
+  this repair: the total an earlier start already left behind (read back from the
+  marker), or — on the first start — what the deduped replay bills. A copy sits on
+  top of exactly that, so only a bucket still carrying `base + copies` is touched.
+  A lower bucket holds real calls the replay cannot see (they must stay), and a
+  bucket already at `base` was corrected once — subtracting again on every start is
+  how a repair turns into a slow leak of real usage.
+- `usage-dedupe-marker.json` is a record, not a gate. Version 2 stores the totals
+  the repair left in each bucket (`after`), which is the floor the next start
+  compares against; it is written only after the corrected file landed (a crash in
+  between re-runs an idempotent pass instead of leaving a claim over an inflated
+  ledger). A ledger restored from a backup is therefore corrected again instead of
+  staying inflated forever.
+
+The correction is applied to the file's own document rather than written over it
+verbatim: reading, replaying ~18 s of transcripts and writing leaves a window in
+which another process folds real calls into the same buckets, and a verbatim
+overwrite would drop them.
+
+Two more things the ledger file must survive, because both end in a silent wipe:
+
+- A `/export` envelope (`{schema, version, deviceId, exportedAt, ledger}`) is a
+  legitimate way to restore a backup, and `importPeer` refuses this device's own
+  export. `ledgerFromJson` unwraps the envelope, and a file naming *another*
+  device is quarantined instead of adopted as an empty ledger.
+- `usage-ledger.<id>.bak.json` is a copy, not a second machine. Peer discovery
+  skips any name carrying this device's prefix (and any `.corrupt-` quarantine),
+  so a backup dropped beside the live file no longer doubles every number.
+
+The pre-rename `usage-ledger.json` is read when this device's file is missing,
+and so is the `.migrated` sibling a successful migration leaves behind: that
+sibling is the only copy of the pre-migration history once the device file is
+deleted or damaged.
 
 Two more write-path rules:
 
@@ -222,7 +266,7 @@ only ever nav-picked, never re-opened.
 ## Verification
 
 - `node harness/render-test.mjs` — jsdom, real bundle, saved live fixtures,
-  **61/61 checks**: eight tiles with correct labels/values/`aria-pressed`
+  **71/71 checks**: eight tiles with correct labels/values/`aria-pressed`
   (近 3 天 sums 今日 + 10-19; 近 6 个月 / 全部 read the range aggregate, which the
   stub answers only up to yesterday — 49.2 M / 584 calls — so their 135 M / 1251
   tiles prove the panel folded the live today in itself, and no range fetch may
@@ -240,9 +284,18 @@ only ever nav-picked, never re-opened.
   is 1.6 % of the window, asserting the model sub-bars read each model's share
   of that channel (74 % / 26 %, both in bar width and row text — the window
   scale would clamp both to the 3 % floor, so the assertion pins the channel
-  denominator).
-- `node --experimental-strip-types harness/host-test.mjs` — range aggregate +
-  per-model series, route guards, device ledger, loopback fence, peak clock.
+  denominator), a ledger read failure stated above the numbers, a failed poll
+  that keeps the panel and marks it stale (with the wire's `ECONNREFUSED`
+  replaced by a localized sentence), a window whose days did not arrive
+  stating no total at all (and printing no totals row either), three equal
+  models in one channel whose rows add up to exactly 100 %, a typed future
+  custom date clamped back to today, and a refresh that refetches days it had
+  cached.
+- `node --experimental-strip-types harness/host-test.mjs` — 142 checks: range
+  aggregate + per-model series, route guards, device ledger, loopback fence,
+  peak clock, the record-carried route of the live fold, transcript dedupe and
+  the judged repair, ledger quarantine and unreadable-file protection, and the
+  delta merge between two processes.
 - Live bundle serving was proven against the running host:
   `GET /plugins/events` (loopback-exempt) lists the plugin row's `rev`, and
   `GET /plugins/??@linxin666/dsh-usage/client.js&rev=<rev>` returns the new
@@ -258,3 +311,9 @@ only ever nav-picked, never re-opened.
   Other step.
 - The usage tab does not use `overview.usage.range`/`all`; only the Token 银行
   tab does (`BANK_ALL_DAYS`).
+- A window wider than `TREND_MAX_DAYS` (731) draws its most recent 731 days: the
+  key walk starts at the window's end, so a decade-long custom range keeps the
+  days near today instead of the oldest 731.
+- The trend chart is drawn on a canvas with `role="img"` and an `aria-label`;
+  the tab strip still lacks `aria-controls`/`tabpanel` wiring, so a screen
+  reader announces the tabs but not the panel they switch.

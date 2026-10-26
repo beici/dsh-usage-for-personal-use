@@ -19,7 +19,7 @@ import { adapterFor, balanceAppliesToRoute, isDeepSeekProviderRoute, providerErr
 import type { BalanceParse, PlanParse } from '../core/adapters.ts'
 import { foldAliasRoutes } from '../core/provider-routes.ts'
 import { deepseekModelSpend } from '../core/pricing.ts'
-import { createLedgerDocument, deserializeLedger, foldUsage, ledgerDayKeys, localDateKey, mergeLedgerDelta, mergeLedgerMax, mergeLedgerSum, pruneLedger, subtractTotals, summarizeDays, totalTokens } from '../core/ledger.ts'
+import { createLedgerDocument, deserializeLedger, foldUsage, ledgerDayKeys, localDateKey, maxTotals, mergeLedgerDelta, mergeLedgerMax, mergeLedgerSum, pruneLedger, subtractTotals, summarizeDays, totalTokens } from '../core/ledger.ts'
 import { deviceIdOfFile, isDeviceId, LEGACY_LEDGER_FILE, ledgerFileName, localDeviceId, parsePeerLedger } from './device-ledger.ts'
 import type { LoadedLedgerFile } from './device-ledger.ts'
 import { collectSessionLogUsage } from './session-log-backfill.ts'
@@ -63,6 +63,63 @@ interface ProviderRoute {
 export interface UsageServiceOptions {
   pollIntervalSec: number
   retainDays: number
+}
+
+/** One day bucket a duplicate copy was folded into, and the totals that copy added. */
+interface DuplicateBucket {
+  dayKey: string
+  provider: string
+  model: string
+  totals: UsageTokenTotals
+}
+
+/** A duplicate bucket after the repair: what the day keeps once the copies go. */
+interface RepairBucket extends DuplicateBucket {
+  /** The deduped replay's own total for this bucket. */
+  clean: UsageTokenTotals
+  /** What the repair leaves in the bucket; never subtracted below on a later start. */
+  after: UsageTokenTotals
+}
+
+/** What one transcript replay produced: the deduped document and the copies it dropped. */
+interface ReplayPass {
+  doc: UsageLedgerDocument
+  duplicates: Map<string, DuplicateBucket>
+}
+
+/** The repair as applied in memory: what to write over the file, and what it removed. */
+interface RepairResult {
+  buckets: number
+  removedTokens: number
+  repaired: Map<string, RepairBucket>
+}
+
+/**
+ * The bucket for one route inside one day, matched loosely.
+ *
+ * Provider and model spellings arrive from two places that do not agree: the
+ * transcript records and the persisted ledger. An exact lookup misses a bucket
+ * whose name drifted (`WorkBuddy` vs `workbuddy`), and the repair would then
+ * skip it while the replay adds a second bucket beside it — one day, two rows,
+ * and the copies stay counted.
+ */
+function findLedgerBucket(
+  day: Record<string, Record<string, UsageTokenTotals>> | undefined,
+  provider: string,
+  model: string,
+): { provider: string; model: string; totals: UsageTokenTotals } | undefined {
+  if (day === undefined) return undefined
+  const exact = day[provider]?.[model]
+  if (exact !== undefined) return { provider, model, totals: exact }
+  const wantProvider = provider.trim().toLowerCase()
+  const wantModel = model.trim().toLowerCase()
+  for (const [name, models] of Object.entries(day)) {
+    if (name.trim().toLowerCase() !== wantProvider) continue
+    for (const [label, totals] of Object.entries(models)) {
+      if (label.trim().toLowerCase() === wantModel) return { provider: name, model: label, totals }
+    }
+  }
+  return undefined
 }
 
 /** Probe timeout per HTTP call. */
@@ -110,6 +167,28 @@ function service<T>(ctx: Context, name: string): T | undefined {
     return (ctx as unknown as { get(name: string): unknown }).get(name) as T | undefined
   } catch {
     return undefined
+  }
+}
+
+/**
+ * Read a totals-shaped value back from JSON, or undefined when it is not one.
+ *
+ * Used for the repair marker, which is written by this code but must never be
+ * trusted blindly: a hand-edited or truncated marker would otherwise seed the
+ * repair's floor with garbage and skew the subtraction.
+ */
+function readTotals(value: unknown): UsageTokenTotals | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const record = value as Record<string, unknown>
+  const num = (key: string): number => (typeof record[key] === 'number' && Number.isFinite(record[key] as number) ? (record[key] as number) : 0)
+  return {
+    inputTokens: num('inputTokens'),
+    outputTokens: num('outputTokens'),
+    cacheReadTokens: num('cacheReadTokens'),
+    cacheWriteTokens: num('cacheWriteTokens'),
+    reasoningTokens: num('reasoningTokens'),
+    calls: num('calls'),
+    cost: num('cost'),
   }
 }
 
@@ -755,14 +834,52 @@ export class UsageService {
       const code = (error as { code?: unknown }).code
       return code === 'ENOENT' ? { kind: 'missing' } : { kind: 'unreadable', error: String(code ?? error) }
     }
+    const parsed = this.ledgerFromJson(raw)
+    return parsed.kind === 'ok' ? { kind: 'ok', doc: parsed.doc } : { kind: 'corrupt', error: parsed.error }
+  }
+
+  /**
+   * Parse ledger JSON, accepting the `/export` envelope as well as a bare document.
+   *
+   * An export wraps the document as `{schema, version, deviceId, exportedAt,
+   * ledger}`, and restoring a backup means dropping exactly that file back in
+   * place. Reading only the top-level `days` would call it a valid *empty*
+   * ledger, and the first flush would then write that emptiness over the
+   * history — while `importPeer` refuses this device's own export, leaving no
+   * recovery path at all. So the envelope is unwrapped here, and a file naming
+   * another device is refused instead of adopted (it belongs in the peers path).
+   */
+  private ledgerFromJson(raw: string): { kind: 'ok'; doc: UsageLedgerDocument } | { kind: 'corrupt'; error: string } {
+    let parsed: unknown
     try {
-      return { kind: 'ok', doc: deserializeLedger(JSON.parse(raw)) }
+      parsed = JSON.parse(raw)
+    } catch (error) {
+      return { kind: 'corrupt', error: error instanceof Error ? error.message : String(error) }
+    }
+    if (typeof parsed !== 'object' || parsed === null) return { kind: 'corrupt', error: 'not a ledger document' }
+    const record = parsed as Record<string, unknown>
+    const deviceId = typeof record.deviceId === 'string' ? record.deviceId : ''
+    if (deviceId !== '' && deviceId !== localDeviceId()) return { kind: 'corrupt', error: `names device ${deviceId}` }
+    const inner = typeof record.ledger === 'object' && record.ledger !== null ? record.ledger : record
+    try {
+      return { kind: 'ok', doc: deserializeLedger(inner) }
     } catch (error) {
       return { kind: 'corrupt', error: error instanceof Error ? error.message : String(error) }
     }
   }
 
   private async loadPersisted(): Promise<void> {
+    try {
+      await this.loadPersistedOnce()
+    } catch (error) {
+      // Nothing below may reject out of the loader: it is started without an
+      // await, and an unhandled rejection ends the host process.
+      this.ledgerError = `ledger load failed (${error instanceof Error ? error.message : String(error)})`
+      this.scheduleLoadRetry()
+    }
+  }
+
+  private async loadPersistedOnce(): Promise<void> {
     const read = await this.readLedgerFile()
     if (read.kind === 'unreadable') {
       // Keep the write guard armed: nothing may replace a file we could not read.
@@ -788,31 +905,50 @@ export class UsageService {
     else if (read.kind === 'missing') await this.adoptLegacyLedger()
     await this.refreshPeers()
     await this.loadSnapshots()
-    // The repair subtracts from the buckets as they were written, so it runs
-    // before the replay's max-merge can restore the inflated totals.
-    const repaired = await this.repairDuplicatedReplay()
-    await this.backfillSessionLogs()
-    // Prune last: the replay re-adds days the retention window already dropped,
-    // so pruning first would only resurrect them.
+    // One replay pass serves both the backfill and the repair.
+    const replay = await this.replaySessionLogs()
+    // The repair subtracts from the buckets as written, judged against the
+    // deduped replay of the same pass and against what an earlier start already
+    // left behind: a bucket that matches either was never inflated (or has
+    // already been corrected), so real calls are never taken away.
+    const prior = await this.readRepairRecord()
+    const repaired = await this.repairDuplicatedReplay(replay, prior)
+    // Prune after the replay (it re-adds days retention already dropped) and
+    // before the write below, so the file gets the pruned document too.
     this.lastPrune = undefined
     this.pruneIfNeeded()
     // Only now may flushes overwrite the persisted files.
     this.loaded = true
+    // A successful load restores the retry budget: a transient lock later in the
+    // process's life must not find it spent.
+    this.loadRetries = 0
     // Everything folded so far is already on disk: the first flush must add
     // only the calls that arrive after this point.
     this.ledgerWritten = structuredClone(this.ledger)
     if (read.kind !== 'corrupt') this.ledgerError = undefined
-    if (repaired !== undefined) {
-      // The file still holds the inflated totals and the merge-based flush
-      // keeps the larger one, so the correction is written over it verbatim.
-      // The marker follows the write: a marker without a corrected file would
-      // block the only chance to undo the inflation.
-      if (repaired.buckets === 0 || await this.writeLedgerVerbatim()) {
+    if (repaired.buckets > 0) {
+      // The correction is written first and claimed second: a crash in between
+      // re-runs a repair that is idempotent by construction, while the opposite
+      // order would leave a claim standing over a ledger that still holds the
+      // inflated totals. The marker is a record, not a gate — the next start
+      // judges the buckets again instead of trusting it, so a ledger restored
+      // from a backup is corrected instead of staying inflated forever.
+      const written = await this.persistRepair(repaired.repaired)
+      if (written) {
         await writeJsonAtomic(join(this.persistDir, DEDUPE_MARKER_FILE), {
-          version: 1,
+          version: 2,
           appliedAt: Date.now(),
           buckets: repaired.buckets,
           removedTokens: repaired.removedTokens,
+          // The floor for every later start: these are the totals the repair
+          // left in each bucket, so a bucket still at them is not re-subtracted.
+          // Floors from earlier starts are carried over — dropping them would
+          // let a later repair on another day take real calls out of a bucket
+          // this run no longer knows about.
+          after: {
+            ...Object.fromEntries([...prior].map(([key, totals]) => [key, totals])),
+            ...Object.fromEntries([...repaired.repaired].map(([key, entry]) => [key, entry.after])),
+          },
         }).catch(() => undefined)
       }
     }
@@ -872,75 +1008,151 @@ export class UsageService {
    * replay never shrinks a live bucket, and a ledger rebuilt from an older
    * transcript never loses a newer live fold, so running this on every start
    * is idempotent.
+   *
+   * The pass also reports the duplicate copies it dropped, so the repair below
+   * can use them without walking the transcripts (287 MB, ~18 s) again.
    */
-  private async backfillSessionLogs(): Promise<void> {
+  private async replaySessionLogs(): Promise<ReplayPass> {
+    const pass: ReplayPass = { doc: createLedgerDocument(), duplicates: new Map() }
     try {
       await collectSessionLogUsage(join(dshHome(), 'sessions'), (replay) => {
+        pass.doc = replay
         for (const [dayKey, providers] of Object.entries(replay.days)) {
           const atMs = new Date(dayKey + 'T12:00:00').getTime()
           if (!Number.isFinite(atMs)) continue
           const day = this.ledger.days[dayKey] ?? (this.ledger.days[dayKey] = {})
           for (const [provider, models] of Object.entries(providers)) {
             for (const [model, totals] of Object.entries(models)) {
-              const bucket = day[provider]?.[model]
-              if (bucket !== undefined && totalTokens(bucket) >= totalTokens(totals)) continue
+              // Match loosely: a bucket the ledger already holds under a drifted
+              // spelling (`WorkBuddy` vs `workbuddy`) is the same bucket, and
+              // adding a second one would bill the day twice.
+              const found = findLedgerBucket(day, provider, model)
+              if (found !== undefined && totalTokens(found.totals) >= totalTokens(totals)) continue
               const folded = isDeepSeekProviderRoute(provider)
                 ? { ...totals, cost: deepseekModelSpend(model, totals, atMs) }
                 : totals
+              if (found !== undefined) {
+                day[found.provider]![found.model] = folded
+                continue
+              }
               const route = day[provider] ?? (day[provider] = {})
               route[model] = folded
             }
           }
         }
+      }, (dayKey, provider, model, totals) => {
+        const key = `${dayKey}\u0000${provider}\u0000${model}`
+        const entry = pass.duplicates.get(key)
+        if (entry === undefined) pass.duplicates.set(key, { dayKey, provider, model, totals: { ...totals } })
+        else entry.totals = addTotals(entry.totals, totals)
       })
     } catch {
       // A failed replay costs the pre-mount calls only; the live fold is intact.
     }
+    return pass
   }
 
   /**
-   * One-time correction for the seeded-subagent duplicate.
+   * Correction for the seeded-subagent duplicate.
    *
    * A seeded subagent's transcript opens with a verbatim copy of its parent's
    * assistant messages (same id, time and usage), and the replay used to fold
    * both copies into the same bucket. Deduping the replay stops new inflation
    * but cannot undo what is already written — the merge rule keeps the larger
    * total, so an inflated bucket would never come back down. The extra copies
-   * are therefore subtracted once, exactly, and a sidecar marker records it:
-   * subtracting twice would take real calls away.
+   * are therefore subtracted once, and a sidecar marker records what was done.
+   *
+   * The subtraction is judged twice over, because a wrong subtraction cannot be
+   * undone by any later merge:
+   *
+   * - `clean` is the deduped replay, the truth for that day. A bucket at or
+   *   below it holds no copy at all, so it is left alone.
+   * - `prior` is what an earlier start already left in the bucket (read back
+   *   from the marker). A bucket still at that floor has already been corrected
+   *   — subtracting again on every start would slowly eat real calls, which is
+   *   exactly what a plain "big enough to subtract" guard allows once the day
+   *   holds calls the replay cannot see.
    */
-  private async repairDuplicatedReplay(): Promise<{ buckets: number; removedTokens: number } | undefined> {
-    const markerPath = join(this.persistDir, DEDUPE_MARKER_FILE)
-    try {
-      await stat(markerPath)
-      return undefined
-    } catch {
-      // No marker yet: this machine has never been repaired.
-    }
+  private async repairDuplicatedReplay(replay: ReplayPass, prior: Map<string, UsageTokenTotals>): Promise<RepairResult> {
+    const repaired = new Map<string, RepairBucket>()
     let buckets = 0
     let removedTokens = 0
-    try {
-      await collectSessionLogUsage(join(dshHome(), 'sessions'), () => {}, (dayKey, provider, model, totals) => {
-        const bucket = this.ledger.days[dayKey]?.[provider]?.[model]
-        if (bucket === undefined) return
-        const next = subtractTotals(bucket, totals)
-        const dropped = totalTokens(bucket) - totalTokens(next)
-        if (dropped <= 0) return
-        // Reprice: a stored cost cannot be split, and the replay priced the
-        // bucket it inflated at the day's noon rate (see backfillSessionLogs).
-        const atMs = new Date(dayKey + 'T12:00:00').getTime()
-        const repriced = isDeepSeekProviderRoute(provider) && Number.isFinite(atMs)
-          ? { ...next, cost: deepseekModelSpend(model, next, atMs) }
-          : next
-        this.ledger.days[dayKey]![provider]![model] = repriced
-        buckets += 1
-        removedTokens += dropped
-      })
-    } catch {
-      // No marker written: the next start retries the scan.
-      return undefined
+    for (const [key, duplicate] of replay.duplicates) {
+      // The ledger may spell the route differently than the transcript does
+      // (`WorkBuddy` vs `workbuddy`): a bucket that drifted is still the bucket
+      // the copies landed in, and a repair that only matches exact strings would
+      // skip it while the replay adds a second bucket beside it.
+      const target = findLedgerBucket(this.ledger.days[duplicate.dayKey], duplicate.provider, duplicate.model)
+      if (target === undefined) continue
+      const bucket = target.totals
+      const clean = findLedgerBucket(replay.doc.days[duplicate.dayKey], duplicate.provider, duplicate.model)?.totals ?? emptyTotals()
+      // Where the bucket stood before this repair: the total an earlier start
+      // already left behind, or — on the first start — what the deduped replay
+      // bills. Either way, a copy on top of it is exactly `base + copies`.
+      const base = prior.get(key) ?? clean
+      // How far the bucket has moved past that floor. A copy sits exactly on the
+      // floor, so growth equal to the copies is the only state this repair can
+      // undo: growth below it means no full copy is there, and growth above it
+      // means real calls the replay cannot see are mixed in (or the file was
+      // grown by another process since) — indistinguishable from copies, and
+      // taking them away is the one mistake no later merge can bring back.
+      if (bucket.calls - base.calls !== duplicate.totals.calls) continue
+      if (totalTokens(bucket) - totalTokens(base) !== totalTokens(duplicate.totals)) continue
+      const next = maxTotals(subtractTotals(bucket, duplicate.totals), base)
+      const dropped = totalTokens(bucket) - totalTokens(next)
+      if (dropped <= 0) continue
+      // Reprice: a stored cost cannot be split, and the replay priced the
+      // bucket it inflated at the day's noon rate (see replaySessionLogs).
+      const repriced = this.priceBucket(duplicate.dayKey, target.provider, target.model, next)
+      this.ledger.days[duplicate.dayKey]![target.provider]![target.model] = repriced
+      repaired.set(key, { ...duplicate, provider: target.provider, model: target.model, clean, after: repriced })
+      buckets += 1
+      removedTokens += dropped
     }
-    return { buckets, removedTokens }
+    return { buckets, removedTokens, repaired }
+  }
+
+  /**
+   * Price one bucket at its day's noon rate.
+   *
+   * Shared by the repair and the file-side pass so both write the same numbers:
+   * the day is priced as a whole, which is why the noon instant stands in for
+   * the calls inside it.
+   */
+  private priceBucket(dayKey: string, provider: string, model: string, totals: UsageTokenTotals): UsageTokenTotals {
+    const atMs = new Date(dayKey + 'T12:00:00').getTime()
+    return isDeepSeekProviderRoute(provider) && Number.isFinite(atMs)
+      ? { ...totals, cost: deepseekModelSpend(model, totals, atMs) }
+      : totals
+  }
+
+  /**
+   * What the last repair left in each bucket, read back from the marker.
+   *
+   * The marker is a record, not a gate: the numbers it holds are the floor a
+   * later start must not subtract below. A marker written before this field
+   * existed (or one damaged by hand) yields an empty map, and the repair then
+   * falls back to the replay's own total.
+   */
+  private async readRepairRecord(): Promise<Map<string, UsageTokenTotals>> {
+    const record = new Map<string, UsageTokenTotals>()
+    let raw: string
+    try {
+      raw = await readFile(join(this.persistDir, DEDUPE_MARKER_FILE), 'utf8')
+    } catch {
+      return record
+    }
+    try {
+      const parsed = JSON.parse(raw) as { after?: unknown }
+      if (typeof parsed.after !== 'object' || parsed.after === null) return record
+      for (const [key, value] of Object.entries(parsed.after as Record<string, unknown>)) {
+        const totals = readTotals(value)
+        if (totals !== undefined) record.set(key, totals)
+      }
+    } catch {
+      // A damaged marker only means the repair re-judges from the replay.
+    }
+    return record
   }
 
   /**
@@ -967,17 +1179,25 @@ export class UsageService {
    * pre-existing history would otherwise be gone, and a `.migrated` sibling is
    * cheap. A failed rename (read-only directory) leaves the legacy file in
    * place — the next start retries, and the ledger is still summed in.
+   *
+   * The `.migrated` sibling is read as well: it is what a successful migration
+   * leaves behind, and it is the only copy of the pre-migration history once
+   * this device's file is deleted or damaged. Re-adopting it is safe — the fold
+   * is a merge, and the buckets it restores are the ones the file states.
    */
   private async adoptLegacyLedger(): Promise<void> {
     const legacyPath = join(this.persistDir, LEGACY_LEDGER_FILE)
-    let raw: string | undefined
+    const migratedPath = `${legacyPath}.migrated`
+    const source = await readFile(legacyPath, 'utf8').then(
+      (raw) => ({ raw, path: legacyPath }),
+      () => readFile(migratedPath, 'utf8').then(
+        (raw) => ({ raw, path: migratedPath }),
+        () => undefined,
+      ),
+    )
+    if (source === undefined) return // No legacy file: fresh install.
     try {
-      raw = await readFile(legacyPath, 'utf8')
-    } catch {
-      return // No legacy file: fresh install.
-    }
-    try {
-      this.absorb(this.ledger, deserializeLedger(JSON.parse(raw)))
+      this.absorb(this.ledger, deserializeLedger(JSON.parse(source.raw)))
       pruneLedger(this.ledger, localDateKey(Date.now()), this.options.retainDays)
       this.lastPrune = { dayKey: localDateKey(Date.now()), retainDays: this.options.retainDays }
     } catch {
@@ -991,7 +1211,7 @@ export class UsageService {
       () => true,
       () => false,
     )
-    if (written) await rename(legacyPath, `${legacyPath}.migrated`).catch(() => undefined)
+    if (written && source.path === legacyPath) await rename(legacyPath, migratedPath).catch(() => undefined)
   }
 
   /**
@@ -1014,8 +1234,15 @@ export class UsageService {
     const peers: LoadedLedgerFile[] = []
     const failures: string[] = []
     for (const name of names) {
-      const deviceId = deviceIdOfFile(basename(name))
-      if (deviceId === undefined || deviceId === this.deviceId) continue
+      const file = basename(name)
+      const deviceId = deviceIdOfFile(file)
+      if (deviceId === undefined) continue
+      // Our own ledger, and every copy of it: a backup (`…p15-22893b.bak.json`)
+      // or a quarantine (`….json.corrupt-<ts>.json`) keeps the device prefix, so
+      // summing it as a peer would double this machine's own calls.
+      if (deviceId === this.deviceId || deviceId.startsWith(this.deviceId + '.')) continue
+      // A quarantined peer file is a broken copy, not a second device.
+      if (file.includes('.corrupt-')) continue
       const filePath = join(this.persistDir, name)
       try {
         const [raw, info] = await Promise.all([readFile(filePath, 'utf8'), stat(filePath)])
@@ -1074,42 +1301,89 @@ export class UsageService {
       // the last flush would otherwise own the history. Take the file's version
       // and add only our own growth since our last write.
       const disk = await this.readDiskLedger()
-      if (disk !== undefined) {
-        if (this.ledgerWritten !== undefined) mergeLedgerDelta(disk, this.ledger, this.ledgerWritten)
-        else mergeLedgerMax(disk, this.ledger)
+      if (disk.kind === 'bad') {
+        // The bytes may be a real ledger we merely failed to parse: writing
+        // over them would destroy the only copy.
+        this.ledgerError = `ledger unreadable (${disk.error}); write skipped`
+        return
+      }
+      if (disk.kind === 'ok') {
+        const target = disk.doc
+        if (this.ledgerWritten !== undefined) mergeLedgerDelta(target, this.ledger, this.ledgerWritten)
+        // A replay recovers buckets the file never held, and a retention prune
+        // drops days it still does: neither is expressible as growth, so the
+        // delta is completed by the max merge and the prune.
+        mergeLedgerMax(target, this.ledger)
+        pruneLedger(target, localDateKey(Date.now()), this.options.retainDays)
         // Adopt the merged document: our view then includes the other
         // process's calls, and the next delta is measured against it.
-        this.ledger = disk
+        this.ledger = target
       }
       await writeJsonAtomic(this.ledgerPath, this.ledger)
       this.ledgerWritten = structuredClone(this.ledger)
-    } catch {
-      // Persistence failures degrade silently; the in-memory ledger keeps counting.
+    } catch (error) {
+      // Persistence failures must not stop the counting, but the panel has to
+      // say why these numbers will not survive a restart.
+      this.ledgerError = `ledger write failed (${error instanceof Error ? error.message : String(error)})`
     }
   }
 
-  /** The ledger file as another writer left it, or undefined when absent/unreadable. */
-  private async readDiskLedger(): Promise<UsageLedgerDocument | undefined> {
+  /** The ledger file as another writer left it: absent, parsed, or unreadable. */
+  private async readDiskLedger(): Promise<
+    | { kind: 'missing' }
+    | { kind: 'ok'; doc: UsageLedgerDocument }
+    | { kind: 'bad'; error: string }
+  > {
+    let raw: string
     try {
-      const raw = await readFile(this.ledgerPath, 'utf8')
-      return deserializeLedger(JSON.parse(raw))
-    } catch {
-      return undefined
+      raw = await readFile(this.ledgerPath, 'utf8')
+    } catch (error) {
+      const code = (error as { code?: unknown }).code
+      return code === 'ENOENT' ? { kind: 'missing' } : { kind: 'bad', error: String(code ?? error) }
     }
+    const parsed = this.ledgerFromJson(raw)
+    return parsed.kind === 'ok' ? { kind: 'ok', doc: parsed.doc } : { kind: 'bad', error: parsed.error }
   }
 
   /**
-   * Write this process's document over the file, ignoring what is there.
+   * Write the duplicate repair over the file, keeping what other writers added.
    *
-   * The normal flush merges the file's growth in and keeps the larger total of
-   * each bucket — right for adding calls, wrong for a correction, which has to
-   * replace the number the old replay wrote. Only the duplicate repair uses it.
+   * A verbatim overwrite would also drop the calls another process folded while
+   * this one spent ~18 s replaying the transcripts, so the correction is applied
+   * to the file's own document: a bucket is capped at its repaired value only
+   * while it still carries the inflated total.
    */
-  private async writeLedgerVerbatim(): Promise<boolean> {
+  private async persistRepair(repaired: Map<string, RepairBucket>): Promise<boolean> {
     try {
       await mkdir(dirname(this.ledgerPath), { recursive: true })
-      await writeJsonAtomic(this.ledgerPath, this.ledger)
-      this.ledgerWritten = structuredClone(this.ledger)
+      const disk = await this.readDiskLedger()
+      if (disk.kind === 'bad') {
+        this.ledgerError = `ledger unreadable (${disk.error}); repair not written`
+        return false
+      }
+      const target = disk.kind === 'ok' ? disk.doc : this.ledger
+      for (const entry of repaired.values()) {
+        const found = findLedgerBucket(target.days[entry.dayKey], entry.provider, entry.model)
+        if (found === undefined) continue
+        const bucket = found.totals
+        // Same judgement as the in-memory pass, anchored at the repaired total:
+        // only a bucket sitting exactly one copy above it is corrected. One that
+        // merely grew is left alone — those are calls another process folded
+        // while the replay ran, and a verbatim overwrite would drop them.
+        if (bucket.calls - entry.after.calls !== entry.totals.calls) continue
+        if (totalTokens(bucket) - totalTokens(entry.after) !== totalTokens(entry.totals)) continue
+        const next = maxTotals(subtractTotals(bucket, entry.totals), entry.after)
+        target.days[entry.dayKey]![found.provider]![found.model] =
+          this.priceBucket(entry.dayKey, found.provider, found.model, next)
+      }
+      // The file's own document may still carry days the in-memory ledger just
+      // pruned; writing it back unchanged would resurrect them for one flush
+      // cycle (and forever, if the process dies in between).
+      pruneLedger(target, localDateKey(Date.now()), this.options.retainDays)
+      await writeJsonAtomic(this.ledgerPath, target)
+      // Our own growth is measured against what is now on disk; the buckets the
+      // replay recovered but this document lacks are added by the next flush.
+      this.ledgerWritten = structuredClone(target)
       return true
     } catch (error) {
       this.ledgerError = `ledger write failed (${error instanceof Error ? error.message : String(error)})`

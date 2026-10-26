@@ -74,23 +74,26 @@ cd packages/dsh-usage && ../../node_modules/.bin/tsc --noEmit -p tsconfig.json
 ```bash
 cd "$(git rev-parse --show-toplevel)"
 node harness/build-test-bundle.cjs    # derives harness/client.test.cjs from lib/client.js
-node harness/render-test.mjs          # must end: === 61/61 checks passed ===
-node --experimental-strip-types harness/host-test.mjs   # 108/108 checks passed
+node harness/render-test.mjs          # must end: === 71/71 checks passed ===
+node --experimental-strip-types harness/host-test.mjs   # 142/142 checks passed
 ```
 
 `render-test.mjs` takes 1–2 minutes (jsdom + the full bundle); give it a
 timeout rather than assuming it hung.
 
 Regression rule: **any change to the window logic, its copy, the peak badge, or
-the device card must keep all 61 render checks green**, and a new behaviour
+the device card must keep all 71 render checks green**, and a new behaviour
 needs a new `check(...)` line. `host-test.mjs` is the guard on everything a
 render test cannot reach: device id validation, export/import, ledger summing,
 legacy migration, transcript backfill (including the cross-file dedupe by
 `data.message.id` and the one-time repair of already-inflated buckets), the live
 fold (a call with no header event, a mid-session route switch, the record's own
 day bucket), the range aggregate, ledger quarantine and write-guard behaviour,
-two processes flushing one file, peer identity checks, the loopback fence and the
-peak clock.
+two processes flushing one file, the repair's own repeatability (a second start
+must not subtract again, a bucket that only grew keeps its new calls), restoring
+a ledger from an `/export` envelope, refusing another device's export, peer
+identity checks (a backup copy of this device's own ledger is not a device), the
+loopback fence and the peak clock.
 It runs the TypeScript sources directly via
 Node's type stripping, against a throwaway `DSH_HOME`, so it needs no build.
 

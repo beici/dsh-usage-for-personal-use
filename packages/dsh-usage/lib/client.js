@@ -56,6 +56,7 @@ window.__ModuleLoader__.load({
 			"usage.updated": "更新于 {time}",
 			"usage.loading": "正在加载用量数据…",
 			"usage.error": "加载失败：{error}",
+			"usage.error.network": "网络请求失败，请检查与 DSH 的连接",
 			"usage.disabled": "插件已停用：勾选下方「启用插件」即可恢复统计。",
 			"usage.current": "当前",
 			"usage.today": "今日用量",
@@ -144,6 +145,8 @@ window.__ModuleLoader__.load({
 			"usage.device.copied": "已复制",
 			"usage.device.none": "只有本机数据",
 			"usage.device.error": "部分文件无法读取：{error}",
+			"usage.ledger.error": "账本读取异常,下面的数字可能不完整：{error}",
+			"usage.stale": "上次刷新失败（{error}）,下面是 {time} 的数据",
 			"usage.device.export": "导出本机用量",
 			"usage.device.import": "导入其他设备",
 			"usage.device.importing": "导入中…",
@@ -164,6 +167,7 @@ window.__ModuleLoader__.load({
 			"usage.updated": "Updated {time}",
 			"usage.loading": "Loading usage data…",
 			"usage.error": "Failed to load: {error}",
+			"usage.error.network": "Network request failed. Check the connection to DSH.",
 			"usage.disabled": "Plugin disabled. Tick \"Enable plugin\" below to resume statistics.",
 			"usage.current": "Current",
 			"usage.today": "Today",
@@ -252,6 +256,8 @@ window.__ModuleLoader__.load({
 			"usage.device.copied": "Copied",
 			"usage.device.none": "This device only",
 			"usage.device.error": "Some files could not be read: {error}",
+			"usage.ledger.error": "The usage ledger could not be read, so the numbers below may be incomplete: {error}",
+			"usage.stale": "Last refresh failed ({error}); the numbers below are from {time}",
 			"usage.device.export": "Export this device",
 			"usage.device.import": "Import another device",
 			"usage.device.importing": "Importing…",
@@ -1992,8 +1998,8 @@ window.__ModuleLoader__.load({
 		* value rather than a date, so it can never collide with a day key.
 		*/
 		const BANK_ALL_DAYS = "all";
-		/** Longest window a custom date pair may describe (the ledger retains at most 730 days). */
-		const CUSTOM_MAX_DAYS = 366;
+		/** Longest span the render walk will enumerate (the host's own retention limit). */
+		const TREND_MAX_DAYS = 731;
 		/**
 		* The trend chart needs at least two columns to say anything: a single-day
 		* window would paint one bar across the full width, which reads as a solid
@@ -2040,16 +2046,49 @@ window.__ModuleLoader__.load({
 			date.setDate(date.getDate() + days);
 			return localDateKey(date.getTime());
 		}
-		/** Every local-date key from `from` to `to` inclusive; empty when inverted. */
+		/**
+		* Every local-date key from `from` to `to` inclusive; empty when inverted.
+		*
+		* The walk starts at `to` and goes back, so the cap drops the OLDEST days: a
+		* window wider than TREND_MAX_DAYS must still show the days the user cares
+		* about (the recent ones), not the first 731 days of a decade.
+		*/
 		function dateKeysBetween(from, to) {
 			const keys = [];
 			if (from === "" || to === "" || from > to) return keys;
-			let key = from;
-			while (key <= to && keys.length < CUSTOM_MAX_DAYS) {
+			let key = to;
+			while (key >= from && keys.length < TREND_MAX_DAYS) {
 				keys.push(key);
-				key = shiftDateKey(key, 1);
+				key = shiftDateKey(key, -1);
 			}
-			return keys;
+			return keys.reverse();
+		}
+		/**
+		* Whole percents that add up to 100: floor every exact share, then hand the
+		* leftover units to the largest remainders. Rounding each row on its own made a
+		* panel state 99 % or 102 %, which reads as a bug in the numbers.
+		*/
+		function roundShares(exact) {
+			const whole = exact.map((value) => Math.floor(value));
+			let left = 100 - whole.reduce((sum, value) => sum + value, 0);
+			const byRest = exact.map((value, index) => ({
+				index,
+				rest: value - Math.floor(value)
+			})).sort((a, b) => b.rest - a.rest || a.index - b.index);
+			for (const entry of byRest) {
+				if (left <= 0) break;
+				whole[entry.index] += 1;
+				left -= 1;
+			}
+			return whole;
+		}
+		/**
+		* A transport error as the panel states it: the wire's own words ("Failed to
+		* fetch", "ECONNREFUSED", a timeout) are diagnostics, not something a user can
+		* act on, so the network-shaped ones read as one localized sentence instead.
+		*/
+		function describeError(error) {
+			return /failed to fetch|networkerror|network error|econnrefused|timeout|timed out/i.test(error) ? t("usage.error.network") : error;
 		}
 		/** Locale key of each window's label. */
 		const RANGE_LABEL_KEYS = {
@@ -2068,22 +2107,33 @@ window.__ModuleLoader__.load({
 		*/
 		const RANGE_FETCH_MAX_DAYS = 45;
 		/**
+		* Cache generation. A manual refresh bumps it, so a request that started
+		* before the refresh can neither be joined by a later reader nor write its
+		* now-stale answer back into a cache.
+		*/
+		let cacheGeneration = 0;
+		/**
 		* In-flight day requests, so two windows overlapping on one day (or React's
-		* development double-mount) share one request instead of racing.
+		* development double-mount) share one request instead of racing. Each entry
+		* carries the generation it was started in.
 		*/
 		const dayRequests = /* @__PURE__ */ new Map();
 		function requestDay(loadDay, date, cache) {
 			const pending = dayRequests.get(date);
-			if (pending !== void 0) return pending;
+			if (pending !== void 0 && pending.generation === cacheGeneration) return pending.promise;
+			const generation = cacheGeneration;
 			const request = loadDay(date).then((view) => {
-				dayRequests.delete(date);
-				cache.set(date, view);
+				if (dayRequests.get(date)?.generation === generation) dayRequests.delete(date);
+				if (generation === cacheGeneration) cache.set(date, view);
 				return view;
 			}, (error) => {
-				dayRequests.delete(date);
+				if (dayRequests.get(date)?.generation === generation) dayRequests.delete(date);
 				throw error;
 			});
-			dayRequests.set(date, request);
+			dayRequests.set(date, {
+				promise: request,
+				generation
+			});
 			return request;
 		}
 		/** Run `run` over every item with at most `limit` in flight. */
@@ -2104,7 +2154,7 @@ window.__ModuleLoader__.load({
 		* lands because the effect cancels. A partially failed load still renders the
 		* days that arrived, plus the error line.
 		*/
-		function useWindowDays(loadDay, dateKeys, cache, epoch) {
+		function useWindowDays(loadDay, dateKeys, cache, epoch, retry) {
 			const signature = dateKeys.join(",");
 			const [load, setLoad] = (0, react.useState)(() => ({
 				status: dateKeys.length === 0 ? "ready" : "loading",
@@ -2136,6 +2186,10 @@ window.__ModuleLoader__.load({
 				mapPool(missing, DAY_FETCH_CONCURRENCY, async (date) => {
 					try {
 						days[date] = await requestDay(loadDay, date, cache);
+						if (!cancelled) setLoad({
+							status: "loading",
+							days: { ...days }
+						});
 					} catch (error) {
 						failed += 1;
 						firstError ??= error instanceof Error ? error.message : String(error);
@@ -2155,7 +2209,8 @@ window.__ModuleLoader__.load({
 				signature,
 				loadDay,
 				cache,
-				epoch
+				epoch,
+				retry
 			]);
 			return load;
 		}
@@ -2170,10 +2225,11 @@ window.__ModuleLoader__.load({
 		function requestRange(loadRange, from, to) {
 			const key = `${from}:${to}`;
 			const pending = rangeRequests.get(key);
-			if (pending !== void 0) return pending;
+			if (pending !== void 0 && pending.generation === cacheGeneration) return pending.promise;
+			const generation = cacheGeneration;
 			const request = loadRange(from, to).then((response) => {
-				rangeRequests.delete(key);
-				rangeResults.set(key, {
+				if (rangeRequests.get(key)?.generation === generation) rangeRequests.delete(key);
+				if (generation === cacheGeneration) rangeResults.set(key, {
 					summary: {
 						totals: response.totals,
 						providers: response.providers
@@ -2182,11 +2238,27 @@ window.__ModuleLoader__.load({
 				});
 				return response;
 			}, (error) => {
-				rangeRequests.delete(key);
+				if (rangeRequests.get(key)?.generation === generation) rangeRequests.delete(key);
 				throw error;
 			});
-			rangeRequests.set(key, request);
+			rangeRequests.set(key, {
+				promise: request,
+				generation
+			});
 			return request;
+		}
+		/**
+		* Drop every cached read and detach the in-flight ones.
+		*
+		* Called by a manual refresh: keeping an in-flight request would hand the
+		* refreshed windows the very answer the user asked to replace, and its settle
+		* handler would then cache that answer over the fresh one.
+		*/
+		function clearUsageCaches() {
+			cacheGeneration += 1;
+			dayRequests.clear();
+			rangeRequests.clear();
+			rangeResults.clear();
 		}
 		/**
 		* Fetch one window's aggregate. An empty or absent window stays idle (the
@@ -2194,7 +2266,7 @@ window.__ModuleLoader__.load({
 		* immediately, and a superseded window never lands because the effect
 		* cancels. `epoch` invalidates the cache the same way the day cache's does.
 		*/
-		function useRangeData(loadRange, window, epoch) {
+		function useRangeData(loadRange, window, epoch, retry) {
 			const key = window === void 0 || window.from === "" || window.to === "" ? "" : `${window.from}:${window.to}`;
 			const [load, setLoad] = (0, react.useState)({ status: "idle" });
 			(0, react.useEffect)(() => {
@@ -2236,7 +2308,8 @@ window.__ModuleLoader__.load({
 			}, [
 				key,
 				loadRange,
-				epoch
+				epoch,
+				retry
 			]);
 			return load;
 		}
@@ -2532,7 +2605,7 @@ window.__ModuleLoader__.load({
 		* never lands (the effect cancels), and a failed load reports its own message
 		* instead of leaving the card on a stale day.
 		*/
-		function useDayView(loadDay, date, today) {
+		function useDayView(loadDay, date, today, epoch) {
 			const [load, setLoad] = (0, react.useState)(void 0);
 			(0, react.useEffect)(() => {
 				if (date === void 0 || date === today) {
@@ -2558,7 +2631,8 @@ window.__ModuleLoader__.load({
 			}, [
 				date,
 				today,
-				loadDay
+				loadDay,
+				epoch
 			]);
 			return load;
 		}
@@ -2599,7 +2673,7 @@ window.__ModuleLoader__.load({
 		* four standard windows can be compared at a glance without switching.
 		*/
 		function RangeStrip(props) {
-			const { rangeKey, onSelect, tiles, custom, onCustomFrom, onCustomTo } = props;
+			const { rangeKey, onSelect, tiles, custom, onCustomFrom, onCustomTo, today } = props;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: usage_module_css_default.card,
 				"data-dsh-part": "range-card",
@@ -2627,7 +2701,7 @@ window.__ModuleLoader__.load({
 									className: usage_module_css_default.rangeTileValue,
 									children: tile.hint !== void 0 ? tile.hint : tile.loading ? "…" : formatTokens(totalOf(tile.totals))
 								}),
-								tile.hint === void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+								tile.hint === void 0 && !tile.loading && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 									className: usage_module_css_default.rangeTileMeta,
 									children: tile.meta
 								})
@@ -2643,7 +2717,7 @@ window.__ModuleLoader__.load({
 								type: "date",
 								className: usage_module_css_default.dateInput,
 								value: custom.from,
-								max: custom.to === "" ? void 0 : custom.to,
+								max: custom.to === "" || custom.to > today ? today : custom.to,
 								onChange: (event) => {
 									onCustomFrom(event.target.value === "" ? void 0 : event.target.value);
 								}
@@ -2655,6 +2729,7 @@ window.__ModuleLoader__.load({
 								className: usage_module_css_default.dateInput,
 								value: custom.to,
 								min: custom.from === "" ? void 0 : custom.from,
+								max: today,
 								onChange: (event) => {
 									onCustomTo(event.target.value === "" ? void 0 : event.target.value);
 								}
@@ -2682,12 +2757,14 @@ window.__ModuleLoader__.load({
 			});
 			const nameOf = (id) => providers.find((provider) => provider.provider === id)?.displayName ?? id;
 			const labelOf = (model) => modelLabels.get(model) ?? model;
+			const sharePcts = roundShares(summary.providers.map((row) => totalOf(row.totals) / grand * 100));
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 				className: usage_module_css_default.chart,
 				"data-dsh-part": "channel-breakdown",
-				children: summary.providers.map((row) => {
+				children: summary.providers.map((row, index) => {
 					const total = totalOf(row.totals);
-					const share = Math.round(total / grand * 100);
+					const share = sharePcts[index] ?? 0;
+					const modelPcts = roundShares(row.models.map((model) => total > 0 ? totalOf(model.totals) / total * 100 : 0));
 					return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: usage_module_css_default.chartProvider,
 						children: [
@@ -2735,7 +2812,7 @@ window.__ModuleLoader__.load({
 							row.models.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 								className: usage_module_css_default.modelRows,
 								"data-dsh-part": "model-rows",
-								children: row.models.map((model) => {
+								children: row.models.map((model, modelIndex) => {
 									const modelTotal = totalOf(model.totals);
 									const label = labelOf(model.model);
 									const sharePct = total > 0 ? modelTotal / total * 100 : 0;
@@ -2764,7 +2841,7 @@ window.__ModuleLoader__.load({
 													" · ",
 													t("usage.calls", { n: model.totals.calls }),
 													" · ",
-													Math.round(sharePct),
+													modelPcts[modelIndex] ?? 0,
 													"%"
 												]
 											})
@@ -2790,16 +2867,23 @@ window.__ModuleLoader__.load({
 			const [customFrom, setCustomFrom] = (0, react.useState)(void 0);
 			const [customTo, setCustomTo] = (0, react.useState)(void 0);
 			const dayCacheRef = (0, react.useRef)(/* @__PURE__ */ new Map());
+			const freshRangeCacheRef = (0, react.useRef)(false);
+			if (!freshRangeCacheRef.current) {
+				freshRangeCacheRef.current = true;
+				rangeResults.clear();
+			}
 			const [cacheEpoch, setCacheEpoch] = (0, react.useState)(0);
+			const [retryTick, setRetryTick] = (0, react.useState)(0);
 			const [, bumpSettings] = (0, react.useState)(0);
 			(0, react.useEffect)(() => settings.subscribe(() => bumpSettings((count) => count + 1)), [settings]);
 			const enabled = settingsValue.enabled ?? true;
+			const pollIntervalMs = Math.max(SECTION_POLL_MS, (settingsValue.pollIntervalSec ?? 60) * 1e3);
 			(0, react.useEffect)(() => {
 				if (!enabled) return void 0;
 				poll();
 				let timer;
 				const start = () => {
-					if (timer === void 0 && document.visibilityState === "visible") timer = window.setInterval(poll, SECTION_POLL_MS);
+					if (timer === void 0 && document.visibilityState === "visible") timer = window.setInterval(poll, pollIntervalMs);
 				};
 				const onVisibility = () => {
 					if (document.visibilityState === "visible") {
@@ -2816,7 +2900,11 @@ window.__ModuleLoader__.load({
 					if (timer !== void 0) window.clearInterval(timer);
 					document.removeEventListener("visibilitychange", onVisibility);
 				};
-			}, [poll, enabled]);
+			}, [
+				poll,
+				enabled,
+				pollIntervalMs
+			]);
 			const snapshot = ui.snapshot;
 			const todayView = snapshot?.usage.today;
 			const todayDate = todayView?.date ?? "";
@@ -2861,11 +2949,11 @@ window.__ModuleLoader__.load({
 			};
 			const cache = dayCacheRef.current;
 			const customIsRange = (customPicked ? dateKeysBetween(customWindow.from, customWindow.to).length : 0) > RANGE_FETCH_MAX_DAYS;
-			const last30Days = useWindowDays(loadDay, recordedIn(last30Window, recorded, todayDate), cache, cacheEpoch);
-			const customDays = useWindowDays(loadDay, customPicked && !customIsRange ? recordedIn(customWindow, recorded, todayDate) : [], cache, cacheEpoch);
-			const last180Load = useRangeData(loadRange, fetchSpanOf(last180Window, todayDate), cacheEpoch);
-			const allLoad = useRangeData(loadRange, fetchSpanOf(allWindow, todayDate), cacheEpoch);
-			const customRangeLoad = useRangeData(loadRange, customPicked && customIsRange ? fetchSpanOf(customWindow, todayDate) : void 0, cacheEpoch);
+			const last30Days = useWindowDays(loadDay, recordedIn(last30Window, recorded, todayDate), cache, cacheEpoch, retryTick);
+			const customDays = useWindowDays(loadDay, customPicked && !customIsRange ? recordedIn(customWindow, recorded, todayDate) : [], cache, cacheEpoch, retryTick);
+			const last180Load = useRangeData(loadRange, fetchSpanOf(last180Window, todayDate), cacheEpoch, retryTick);
+			const allLoad = useRangeData(loadRange, fetchSpanOf(allWindow, todayDate), cacheEpoch, retryTick);
+			const customRangeLoad = useRangeData(loadRange, customPicked && customIsRange ? fetchSpanOf(customWindow, todayDate) : void 0, cacheEpoch, retryTick);
 			/** One range-kind window as the panel states it: the fetched aggregate plus the live day. */
 			const rangeSummaryOf = (window, load) => withLiveToday({
 				from: window.from,
@@ -2875,9 +2963,15 @@ window.__ModuleLoader__.load({
 					providers: []
 				}
 			}, window, todayView);
+			const loadsFailed = last30Days.error !== void 0 || customDays.error !== void 0 || last180Load.status === "error" || allLoad.status === "error" || customRangeLoad.status === "error";
+			(0, react.useEffect)(() => {
+				if (!loadsFailed) return void 0;
+				const timer = window.setInterval(() => setRetryTick((tick) => tick + 1), pollIntervalMs);
+				return () => window.clearInterval(timer);
+			}, [loadsFailed, pollIntervalMs]);
 			const dayOptions = snapshot === null ? [] : [...new Set([todayDate, ...snapshot.usage.availableDays ?? []].filter((date) => date !== void 0 && date !== ""))].sort().reverse();
 			const bankSelection = bankDay !== void 0 && dayOptions.includes(bankDay) ? bankDay : void 0;
-			const bankDayLoad = useDayView(loadDay, bankSelection, todayDate);
+			const bankDayLoad = useDayView(loadDay, bankSelection, todayDate, cacheEpoch);
 			const bankDayView = bankSelection === void 0 ? void 0 : bankSelection === todayDate ? snapshot?.usage.today : bankDayLoad?.view;
 			const bankWindow = bankSelection === void 0 ? snapshot?.usage.all ?? snapshot?.usage.range : bankDayView === void 0 ? void 0 : {
 				from: bankDayView.date,
@@ -2888,7 +2982,7 @@ window.__ModuleLoader__.load({
 			const onRefresh = () => {
 				setRefreshing(true);
 				dayCacheRef.current.clear();
-				rangeResults.clear();
+				clearUsageCaches();
 				setCacheEpoch((epoch) => epoch + 1);
 				try {
 					refresh();
@@ -2896,7 +2990,7 @@ window.__ModuleLoader__.load({
 					window.setTimeout(() => setRefreshing(false), 3e3);
 				}
 			};
-			if (!enabled || ui.status === "error" || snapshot === null) return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+			if (!enabled || snapshot === null) return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: usage_module_css_default.section,
 				"data-dsh-plugin": "usage",
 				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
@@ -2961,14 +3055,28 @@ window.__ModuleLoader__.load({
 				}
 			};
 			const keysOf = (key) => recordedIn(windowSlices[key].window, recorded, todayDate);
+			const slicePending = (slice, key) => {
+				if (slice.kind === "range") return slice.load.status === "loading";
+				if (slice.load.status !== "loading") return false;
+				return keysOf(key).some((date) => slice.load.days[date] === void 0);
+			};
+			/** The failure that actually belongs to this window (a shared load can fail elsewhere). */
+			const sliceFailed = (slice, key) => {
+				if (slice.kind === "range") return slice.load.status === "error" ? slice.load.error ?? "" : void 0;
+				if (slice.load.error === void 0) return void 0;
+				return keysOf(key).some((date) => slice.load.days[date] === void 0) ? slice.load.error : void 0;
+			};
 			const activeSlice = windowSlices[rangeKey];
 			const activeWindow = activeSlice.window;
+			/** The failure this window's own numbers are missing because of. */
+			const activeError = sliceFailed(activeSlice, rangeKey);
 			const summaryRaw = activeSlice.kind === "range" ? rangeSummaryOf(activeWindow, activeSlice.load) : summaryIn(activeWindow, keysOf(rangeKey), activeSlice.load, todayView);
 			const tiles = Object.keys(windowSlices).map((key) => {
 				const slice = windowSlices[key];
 				const totals = slice.kind === "range" ? rangeSummaryOf(slice.window, slice.load).totals : totalsIn(slice.window, keysOf(key), slice.load, todayView);
-				const loading = slice.load.status === "loading";
-				const hint = key === "custom" && !customPicked && !loading ? t("usage.range.customPick") : slice.kind === "range" && slice.load.status === "error" ? "—" : void 0;
+				const loading = slicePending(slice, key);
+				const partial = slice.kind === "days" && slice.load.status === "ready" && keysOf(key).some((date) => slice.load.days[date] === void 0);
+				const hint = key === "custom" && !customPicked && !loading ? t("usage.range.customPick") : partial || slice.kind === "range" && slice.load.status === "error" ? "—" : void 0;
 				return {
 					key,
 					totals,
@@ -3049,6 +3157,21 @@ window.__ModuleLoader__.load({
 							})]
 						})]
 					}),
+					ui.status === "error" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+						className: usage_module_css_default.errorLine,
+						role: "status",
+						"data-dsh-part": "stale-line",
+						children: t("usage.stale", {
+							error: describeError(ui.error ?? ""),
+							time: formatTime(snapshot.updatedAt)
+						})
+					}),
+					snapshot.usage.ledgerError !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+						className: usage_module_css_default.errorLine,
+						role: "status",
+						"data-dsh-part": "ledger-error",
+						children: t("usage.ledger.error", { error: snapshot.usage.ledgerError })
+					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: usage_module_css_default.tabs,
 						role: "tablist",
@@ -3089,8 +3212,13 @@ window.__ModuleLoader__.load({
 								from: "",
 								to: ""
 							},
-							onCustomFrom: setCustomFrom,
-							onCustomTo: setCustomTo
+							onCustomFrom: (value) => {
+								setCustomFrom(value !== void 0 && todayDate !== "" && value > todayDate ? todayDate : value);
+							},
+							onCustomTo: (value) => {
+								setCustomTo(value !== void 0 && todayDate !== "" && value > todayDate ? todayDate : value);
+							},
+							today: todayDate
 						}),
 						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 							className: usage_module_css_default.card,
@@ -3114,17 +3242,22 @@ window.__ModuleLoader__.load({
 									boundaryMs: deepseekPeriod.boundaryMs,
 									variant: "full"
 								}),
-								activeSlice.load.error !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+								activeError !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 									className: usage_module_css_default.errorLine,
-									children: t("usage.range.error", { error: activeSlice.load.error })
+									role: "status",
+									children: t("usage.range.error", { error: describeError(activeError) })
 								}),
 								rangeKey === "custom" && !customPicked ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 									className: usage_module_css_default.muted,
 									"data-dsh-part": "custom-prompt",
 									children: t("usage.range.customPrompt")
-								}) : activeSlice.load.status === "loading" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+								}) : slicePending(activeSlice, rangeKey) ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 									className: usage_module_css_default.muted,
 									children: t("usage.range.loading")
+								}) : activeError !== void 0 ? trendRows.length >= TREND_CHART_MIN_DAYS && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TrendChart, {
+									rows: trendRows,
+									colors: modelColors,
+									labels: modelLabels
 								}) : isEmptyTotals(summary.totals) && summary.providers.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 									className: usage_module_css_default.muted,
 									children: t("usage.range.empty")
@@ -3191,7 +3324,7 @@ window.__ModuleLoader__.load({
 							devices: snapshot.usage.devices,
 							devicesError: snapshot.usage.devicesError,
 							api: deviceSync,
-							onChanged: refresh
+							onChanged: onRefresh
 						}),
 						/* @__PURE__ */ (0, react_jsx_runtime.jsx)(SettingsRow, {
 							settings,
@@ -3225,7 +3358,7 @@ window.__ModuleLoader__.load({
 						window: bankWindow,
 						observedSpend: bankSelection === void 0 ? snapshot.usage.observedSpend : void 0,
 						loading: bankSelection !== void 0 && bankDayLoad?.status === "loading",
-						...bankDayLoad?.status === "error" ? { error: bankDayLoad.error ?? "" } : {}
+						...bankDayLoad?.status === "error" ? { error: describeError(bankDayLoad.error ?? "") } : {}
 					})] })
 				]
 			});
@@ -3319,6 +3452,7 @@ window.__ModuleLoader__.load({
 						"data-dsh-part": "voucher-preview",
 						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("canvas", {
 							ref: canvasRef,
+							role: "img",
 							"aria-label": t("usage.bank.title")
 						})
 					}),
@@ -3770,12 +3904,13 @@ window.__ModuleLoader__.load({
 					return !current;
 				});
 			};
+			const pollIntervalMs = Math.max(FOOT_CARD_POLL_MS, (settings.getSnapshot().value?.pollIntervalSec ?? 60) * 1e3);
 			(0, react.useEffect)(() => {
 				if (!enabled) return void 0;
 				poll();
 				let timer;
 				const start = () => {
-					if (timer === void 0 && document.visibilityState === "visible") timer = window.setInterval(poll, FOOT_CARD_POLL_MS);
+					if (timer === void 0 && document.visibilityState === "visible") timer = window.setInterval(poll, pollIntervalMs);
 				};
 				const onVisibility = () => {
 					if (document.visibilityState === "visible") {
@@ -3792,7 +3927,11 @@ window.__ModuleLoader__.load({
 					if (timer !== void 0) window.clearInterval(timer);
 					document.removeEventListener("visibilitychange", onVisibility);
 				};
-			}, [poll, enabled]);
+			}, [
+				poll,
+				enabled,
+				pollIntervalMs
+			]);
 			if (!enabled) return null;
 			const snapshot = ui.snapshot;
 			if (snapshot === null && ui.status === "error" && /failed: 404/.test(ui.error ?? "")) return null;
@@ -4240,7 +4379,6 @@ window.__ModuleLoader__.load({
 				const seq = pollSeq + 1;
 				pollSeq = seq;
 				usageApi.refresh().then((snapshot) => {
-					pollSeq = seq;
 					store.actions.setSnapshot(snapshot);
 				}, (error) => {
 					if (seq !== pollSeq) return;

@@ -53,6 +53,13 @@ export declare function mergeLedgerMax(target: UsageLedgerDocument, source: Read
  */
 export declare function subtractTotals(bucket: Readonly<UsageTokenTotals>, extra: Readonly<UsageTokenTotals>): UsageTokenTotals;
 /**
+ * Per-field maximum of two totals.
+ *
+ * The floor of a correction: subtracting a duplicate copy may never take a
+ * bucket below what the deduped replay says that day really billed.
+ */
+export declare function maxTotals(a: Readonly<UsageTokenTotals>, b: Readonly<UsageTokenTotals>): UsageTokenTotals;
+/**
  * Add `current`'s growth since `baseline` onto `target`, per bucket.
  *
  * The write path of one process that shares its ledger file with another: the
