@@ -487,7 +487,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
 ## Verification
 
 - `node harness/render-test.mjs` — jsdom, real bundle, saved live fixtures,
-  **185/185 checks**: eight tiles with correct labels/values/`aria-pressed`
+  **187/187 checks**: eight tiles with correct labels/values/`aria-pressed`
   (近 3 天 sums 今日 + 10-19; 近 6 个月 / 全部 read the range aggregate, which the
   stub answers only up to yesterday — 49.2 M / 584 calls — so their 135 M / 1251
   tiles prove the panel folded the live today in itself, and no range fetch may
@@ -544,8 +544,13 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   mouse-only) while the visible sentence stays the only text in the status line,
   a range cache bounded to the six most recent spans, a null voucher blob stated
   as a save failure instead of vanishing, and a rescan that cannot overwrite a
-  newer poll's snapshot.
-- `node --experimental-strip-types harness/host-test.mjs` — 214 checks: range
+  newer poll's snapshot. Round 13 adds: control ids minted per card (`useId`) so
+  two cards on one page no longer hand the same id to two selects or two
+  tabpanels, the day picker's label pointing at its own select, the trend chart
+  exposed to assistive tech as one group (one label instead of dozens of stray
+  `img` nodes), a hidden tab that does not paint its canvas, a plan sub-bar whose
+  printed share matches its width, and the copy button describing what it copies.
+- `node --experimental-strip-types harness/host-test.mjs` — 226 checks: range
   aggregate + per-model series, route guards, device ledger, loopback fence,
   peak clock, the record-carried route of the live fold, transcript dedupe and
   the judged repair, ledger quarantine and unreadable-file protection, the
@@ -567,6 +572,15 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   shared day counted once, however often the path re-runs), an import keeping the
   window the peer file recorded rather than relabelling it with this machine's,
   and the `lock-busy` note retired only by a write that actually held the lock.
+  Round 13 adds: a load retry that no longer rolls the ledger back over calls
+  folded while it waited, a bucket the repair cannot finish being reported instead
+  of passed over in silence, an unverified peer losing only the buckets it shares
+  with a day this machine recorded (not the whole day), quarantine copies keeping
+  the newest file (the one the error message names), the retention note no longer
+  blaming the clock for a shrink the user asked for, `availableDays` covering
+  every day the totals count (peer-only days included), a BOM-prefixed export
+  importing, the stale-writer note naming the calls it did not re-adopt, and a
+  write that gave up on the lock standing down instead of writing anyway.
 - Live bundle serving was proven against the running host:
   `GET /plugins/events` (loopback-exempt) lists the plugin row's `rev`, and
   `GET /plugins/??@linxin666/dsh-usage/client.js&rev=<rev>` returns the new

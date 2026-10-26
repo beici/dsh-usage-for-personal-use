@@ -73,6 +73,8 @@ export declare class UsageService {
     private readonly notes;
     /** The document as it was before the first load absorb, so a retry starts clean. */
     private loadBaseline;
+    /** Calls folded while a load attempt was in flight; re-applied after a rollback. */
+    private loadFolds;
     /** True once the persisted document has been folded into memory this boot. */
     private loadAbsorbed;
     /**

@@ -98,6 +98,8 @@ interface RepairResult {
   buckets: number
   removedTokens: number
   repaired: Map<string, RepairBucket>
+  /** Buckets the exact-growth gate skipped: they still hold the copies. */
+  skipped: number
 }
 
 /** What the repair actually wrote: only the buckets it really corrected. */
@@ -118,6 +120,7 @@ interface RetentionSnapshot {
   shrankTo: number | undefined
   refused: boolean
   note: string | undefined
+  jumpNote: string | undefined
 }
 
 /**
@@ -483,6 +486,8 @@ export class UsageService {
   private readonly notes = new Map<string, string>()
   /** The document as it was before the first load absorb, so a retry starts clean. */
   private loadBaseline: UsageLedgerDocument | undefined
+  /** Calls folded while a load attempt was in flight; re-applied after a rollback. */
+  private loadFolds: UsageLedgerDocument | undefined
   /** True once the persisted document has been folded into memory this boot. */
   private loadAbsorbed = false
   /**
@@ -594,6 +599,7 @@ export class UsageService {
 
   /** Start the listeners, load persisted state, and arm the first poll. */
   start(): void {
+    this.disposed = false
     this.sessionListenerDisposer = this.ctx.on('session/event', (session, event) => this.onSessionEvent(session, event))
     void this.loadPersisted()
     this.rearmPoll(2_000)
@@ -672,7 +678,10 @@ export class UsageService {
     }
     let parsed: unknown
     try {
-      parsed = JSON.parse(text)
+      // A UTF-8 BOM is what any Windows editor adds on re-save; `JSON.parse`
+      // rejects it as a syntax error and the user is told a valid export is
+      // "not JSON". Stripping it is the whole fix.
+      parsed = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text)
     } catch {
       throw new UsageImportError('not JSON')
     }
@@ -714,6 +723,10 @@ export class UsageService {
       // machine can attribute into an "unverified" one, and its days would then be
       // counted only where this machine has no record — a silent undercount.
       const machine = doc.machine ?? existing?.machine
+      // The window the peer recorded, from the export or the file it lands in.
+      // Neither means unknown, and this machine's window must not be written in
+      // its place: a later reader would trust a number the peer never used.
+      const peerWindow = doc.retentionDays ?? existing?.retentionDays
       if (existing !== undefined) {
         const kept = ledgerDayKeys(existing.doc).filter((key) => doc.doc.days[key] === undefined)
         if (kept.length > 0) {
@@ -732,10 +745,7 @@ export class UsageService {
         // Record the window this machine prunes to, the same way a device ledger
         // does: a peer file without it is the shape the retention guard has to
         // treat as "unknown window", and the round trip is the only chance to say.
-        // An older export omits it, but the copy already on disk still knows it —
-        // overwriting that with this machine's window would relabel the peer's
-        // history as pruned to a window it never saw.
-        retentionDays: doc.retentionDays ?? existing?.retentionDays ?? this.recordedWindow(),
+        ...(peerWindow === undefined ? {} : { retentionDays: peerWindow }),
         ledger: merged,
       })
     })
@@ -1030,6 +1040,14 @@ export class UsageService {
         // just after midnight belongs to the day it was billed on.
         const atMs = typeof event.time === 'number' ? event.time : Date.now()
         foldUsage(this.ledger, atMs, route.provider, route.model || 'unknown', this.totalsFrom(usage, route.provider, route.model || 'unknown', atMs))
+        // A load retry rolls `this.ledger` back to the pre-load baseline; the
+        // calls folded while it waited are not in that baseline, so they are
+        // recorded here and re-applied after the rollback. Without this a failed
+        // load silently forgot up to LOAD_RETRY_MAX retries of usage.
+        if (this.loadBaseline !== undefined) {
+          this.loadFolds ??= createLedgerDocument()
+          foldUsage(this.loadFolds, atMs, route.provider, route.model || 'unknown', this.totalsFrom(usage, route.provider, route.model || 'unknown', atMs))
+        }
         this.scheduleFlush()
       }
     } catch {
@@ -1144,9 +1162,17 @@ export class UsageService {
       // baseline restores the pre-absorb document first, so a retry sees exactly
       // what the first attempt saw.
       if (this.loadBaseline === undefined) this.loadBaseline = structuredClone(this.ledger)
-      else if (!this.loadAbsorbed) this.ledger = structuredClone(this.loadBaseline)
+      else if (!this.loadAbsorbed) {
+        this.ledger = structuredClone(this.loadBaseline)
+        // The rollback above drops the calls folded while the last attempt was
+        // waiting; they are added back here so a retry loses nothing.
+        if (this.loadFolds !== undefined) mergeLedgerSum(this.ledger, this.loadFolds)
+      }
       await this.loadPersistedOnce()
-      if (this.loaded) this.loadBaseline = undefined
+      if (this.loaded) {
+        this.loadBaseline = undefined
+        this.loadFolds = undefined
+      }
     } catch (error) {
       // Nothing below may reject out of the loader: it is started without an
       // await, and an unhandled rejection ends the host process.
@@ -1188,7 +1214,7 @@ export class UsageService {
       // loss. Without this the pre-migration file is never folded back in and
       // the history is gone with only a "kept as" note to show for it.
       lostHistory = true
-      await this.trimQuarantine()
+      await this.trimQuarantine(kept)
       read = { kind: 'missing' }
     }
     if (read.kind === 'corrupt') {
@@ -1222,7 +1248,7 @@ export class UsageService {
           return
         }
         lostHistory = true
-        await this.trimQuarantine()
+        await this.trimQuarantine(kept)
       }
     }
     if (read.kind === 'ok') {
@@ -1243,16 +1269,10 @@ export class UsageService {
         this.retentionSeen = Math.max(this.retentionSeen, read.retentionDays)
         this.fileRetention = read.retentionDays
       }
-      if (read.retentionDays !== undefined && read.retentionDays === this.options.retainDays) {
-        // The file already sits at the window this session asks for, so whatever a
-        // shrink note reported has been written down: the note has done its job.
-        this.clearNote('retention')
-        // Same for a refusal: the file records the window the setting asks for, so
-        // the prune it refused is not pending any more. Keeping the note would
-        // leave "delete the ledger file to accept it" standing beside a healthy
-        // ledger long after the clock came back.
-        this.clearNote('retention-jump')
-      }
+      // No note clearing here: the map is empty on this pass, and the only prune
+      // that can raise a note runs below (`pruneIfNeeded`). A clear placed here
+      // could never fire, and the one that mattered — the refusal surviving a
+      // successful prune — lives in `pruneForWrite`.
     } else if (read.kind === 'missing') await this.adoptLegacyLedger()
     // The oldest days have no transcripts: the ledger is the only copy, and a
     // corrupt file takes them with it. The pre-migration file still holds them,
@@ -1327,6 +1347,16 @@ export class UsageService {
           },
         }).catch(() => undefined)
       }
+    }
+    if (repaired.skipped > 0) {
+      // The gate that keeps a subtraction safe also keeps it silent: a bucket
+      // that grew after the duplication (one more call, or the copies landed
+      // twice) is left inflated on purpose, and without this the panel would
+      // show a total it can never explain.
+      this.note(
+        'repair-skipped',
+        `${repaired.skipped} bucket(s) hold more than the duplicate set — left as recorded, so they may still be inflated`,
+      )
     }
     this.scheduleFlush()
   }
@@ -1530,13 +1560,17 @@ export class UsageService {
     const repaired = new Map<string, RepairBucket>()
     let buckets = 0
     let removedTokens = 0
+    let skipped = 0
     for (const [key, duplicate] of replay.duplicates) {
       // The ledger may spell the route differently than the transcript does
       // (`WorkBuddy` vs `workbuddy`): a bucket that drifted is still the bucket
       // the copies landed in, and a repair that only matches exact strings would
       // skip it while the replay adds a second bucket beside it.
       const target = findLedgerBucket(this.ledger.days[duplicate.dayKey], duplicate.provider, duplicate.model)
-      if (target === undefined) continue
+      if (target === undefined) {
+        skipped += 1
+        continue
+      }
       const bucket = target.totals
       const clean = findLedgerBucket(replay.doc.days[duplicate.dayKey], duplicate.provider, duplicate.model)?.totals ?? emptyTotals()
       // Where the bucket stood before this repair: the total an earlier start
@@ -1549,8 +1583,14 @@ export class UsageService {
       // means real calls the replay cannot see are mixed in (or the file was
       // grown by another process since) — indistinguishable from copies, and
       // taking them away is the one mistake no later merge can bring back.
-      if (bucket.calls - base.calls !== duplicate.totals.calls) continue
-      if (totalTokens(bucket) - totalTokens(base) !== totalTokens(duplicate.totals)) continue
+      if (bucket.calls - base.calls !== duplicate.totals.calls) {
+        skipped += 1
+        continue
+      }
+      if (totalTokens(bucket) - totalTokens(base) !== totalTokens(duplicate.totals)) {
+        skipped += 1
+        continue
+      }
       const next = maxTotals(subtractTotals(bucket, duplicate.totals), base)
       const dropped = totalTokens(bucket) - totalTokens(next)
       if (dropped <= 0) continue
@@ -1562,7 +1602,7 @@ export class UsageService {
       buckets += 1
       removedTokens += dropped
     }
-    return { buckets, removedTokens, repaired }
+    return { buckets, removedTokens, repaired, skipped }
   }
 
   /**
@@ -1771,11 +1811,17 @@ export class UsageService {
    * without a cap, a profile that keeps failing quietly fills the directory with
    * copies of the same broken file.
    */
-  private async trimQuarantine(limit = 3): Promise<void> {
+  private async trimQuarantine(keep?: string, limit = 3): Promise<void> {
     const prefix = `${basename(this.ledgerPath)}.`
     const names = await readdir(this.persistDir).catch(() => [] as string[])
-    const mine = names.filter((name) => name.startsWith(prefix) && /\.(unreadable|corrupt)-\d+\.json$/.test(name))
-    if (mine.length <= limit) return
+    // The file this boot just wrote is never a candidate: its mtime ties with a
+    // decoy written in the same millisecond, and deleting it would take the only
+    // forensic copy of the user's ledger while `ledgerError` still names it.
+    const mine = names
+      .filter((name) => name.startsWith(prefix) && /\.(unreadable|corrupt)-\d+\.json$/.test(name))
+      .filter((name) => name !== keep)
+    const keepCount = keep === undefined ? 0 : 1
+    if (mine.length + keepCount <= limit) return
     const dated = await Promise.all(
       mine.map(async (name) => ({
         name,
@@ -1785,8 +1831,10 @@ export class UsageService {
         ),
       })),
     )
-    dated.sort((a, b) => b.at - a.at)
-    for (const { name } of dated.slice(limit)) {
+    // Newest first, with the name as the tiebreak: without it two files written in
+    // the same millisecond sort arbitrarily and the survivor changes per boot.
+    dated.sort((a, b) => b.at - a.at || a.name.localeCompare(b.name))
+    for (const { name } of dated.slice(Math.max(0, limit - keepCount))) {
       await rm(join(this.persistDir, name), { force: true }).catch(() => undefined)
     }
   }
@@ -1867,17 +1915,30 @@ export class UsageService {
           // is how a copy of our own history got counted twice (2,766 calls on one
           // day), and dropping it loses a peer's history; so it contributes only
           // the days this machine has never recorded.
+          // ... and the unit is the bucket, not the day: a peer that ran a model
+          // this machine never did, on a day it did run others, holds a real
+          // bucket there. Judging by the day alone dropped it while the note said
+          // the day was "already recorded".
           const unrecorded: UsageLedgerDocument['days'] = {}
+          let taken = 0
           for (const [day, buckets] of Object.entries(parsed.doc.days)) {
-            if (this.ledger.days[day] === undefined) unrecorded[day] = buckets
+            const local = this.ledger.days[day]
+            const kept: UsageLedgerDocument['days'][string] = {}
+            for (const [provider, models] of Object.entries(buckets)) {
+              for (const [model, totals] of Object.entries(models)) {
+                if (findLedgerBucket(local, provider, model) !== undefined) continue
+                kept[provider] = { ...(kept[provider] ?? {}), [model]: totals }
+                taken += 1
+              }
+            }
+            if (Object.keys(kept).length > 0) unrecorded[day] = kept
           }
-          const taken = Object.keys(unrecorded).length
           peers.push({ deviceId, machine: undefined, doc: { ...parsed.doc, days: unrecorded }, updatedAt: info.mtimeMs })
           this.note(
             `unverified:${deviceId}`,
             taken === 0
-              ? `${name}: unverified (no machine id in the document), and every day in it is already recorded here, so it was not counted`
-              : `${name}: unverified (no machine id in the document), so only the ${taken} day(s) this machine has not recorded were counted`,
+              ? `${name}: unverified (no machine id in the document), and every bucket in it is already recorded here, so it was not counted`
+              : `${name}: unverified (no machine id in the document), so only the ${taken} bucket(s) this machine has no record of were counted`,
           )
           continue
         }
@@ -2029,6 +2090,14 @@ export class UsageService {
       // The bytes may be a real ledger we merely failed to parse: writing
       // over them would destroy the only copy.
       this.ledgerError = `ledger unreadable (${disk.error}); write skipped`
+      // A file that now names ANOTHER device (a sync or restore tool dropped it
+      // here) stops every write for the rest of the session. The next boot
+      // renames it to that device's file, reads "missing" and clears the error,
+      // so without a note the stranded calls simply disappear.
+      const foreign = foreignDeviceOf(disk.error)
+      if (foreign !== undefined) {
+        this.note('ledger-foreign', `the ledger file names device ${foreign}; this session's calls are not being written — restart to adopt it as a peer`)
+      }
       return
     }
     if (disk.kind === 'ok') {
@@ -2119,6 +2188,16 @@ export class UsageService {
       // process's calls, and the next delta is measured against it.
       this.ledger = target
     } else {
+      // The file was missing when it was read, and without the lock there is no
+      // merge to fall back on: a second writer that exhausted the same budget
+      // could create the file between this read and the rename below, and this
+      // document — which never saw those calls — would overwrite it. Keeping the
+      // calls in memory for one more flush interval is the cheap side of that
+      // trade; the lock clears itself within LOCK_STALE_MS.
+      if (!this.lockHeld) {
+        this.scheduleFlush()
+        return
+      }
       this.pruneForWrite(this.ledger)
     }
     try {
@@ -2162,7 +2241,15 @@ export class UsageService {
 
   /** The retention bookkeeping a write may move before it fails. */
   private retentionSnapshot(): RetentionSnapshot {
-    return { seen: this.retentionSeen, shrankTo: this.shrankTo, refused: this.windowRefused, note: this.notes.get('retention') }
+    return {
+      seen: this.retentionSeen,
+      shrankTo: this.shrankTo,
+      refused: this.windowRefused,
+      note: this.notes.get('retention'),
+      // The jump refusal lives under its own key: restoring the flag without its
+      // sentence would leave the panel telling the user to delete a healthy file.
+      jumpNote: this.notes.get('retention-jump'),
+    }
   }
 
   /** Put that bookkeeping back after a write that never landed. */
@@ -2172,6 +2259,8 @@ export class UsageService {
     this.windowRefused = snapshot.refused
     if (snapshot.note === undefined) this.clearNote('retention')
     else this.notes.set('retention', snapshot.note)
+    if (snapshot.jumpNote === undefined) this.clearNote('retention-jump')
+    else this.notes.set('retention-jump', snapshot.jumpNote)
   }
 
   /**
@@ -2205,13 +2294,9 @@ export class UsageService {
     // window would already have dropped those days, so a day still on disk
     // *outside* that window means the clock moved, not the setting.
     const fileWindow = Math.max(this.fileRetention ?? this.options.retainDays, this.options.retainDays)
-    // Days even the wider of the two windows calls stale: they can only be here
-    // because the clock they were written under was behind this one. The wider
-    // window is the file's own, so a setting the user lowered does not make its
-    // still-recent days look like a jump. The evidence only exists when the file
-    // records the window it was pruned against: a file from an older build keeps
-    // no such record, and its days would look stale merely because the setting is
-    // narrower than they are.
+    // The evidence only exists when the file records the window it was pruned
+    // against: a file from an older build keeps no such record, and its days
+    // would look stale merely because the setting is narrower than they are.
     const stale = this.fileRetention === undefined ? 0 : countPrunable(doc, todayKey, fileWindow)
     const seenBefore = this.retentionSeen
     const shrank = this.options.retainDays < seenBefore || this.shrankTo === this.options.retainDays
@@ -2225,7 +2310,15 @@ export class UsageService {
     // never for wiping the ledger: that case has no honest reading either way, and
     // the days a wipe takes have no transcripts to rebuild them from. So the
     // all-days refusal is not exempted by a shrink; the note says how to accept it.
-    const jump = (stale > 0 && prunable > days * 0.5) || prunable === days
+    // The share test above needs the file's own window, so it says nothing about
+    // a file that records none. Those still get one net: a prune that would drop
+    // nearly every recorded day is not a setting change anyone makes (a shrink
+    // from 90 to 30 over a 30-day history drops a handful), and an unstamped file
+    // that suddenly asks for 97 % of its days is the clock jump this guard exists
+    // for. Without it the first prune of a pre-stamp or freshly migrated history
+    // was exempt and took the whole slab.
+    const unstampedWipe = this.fileRetention === undefined && days >= 4 && prunable > days * 0.9
+    const jump = (stale > 0 && prunable > days * 0.5) || prunable === days || unstampedWipe
     if (days > 0 && jump) {
       // Sticky on purpose: the file keeps the old window (see `recordedWindow`),
       // so the next flush and the next boot see the same evidence and refuse the
@@ -2233,7 +2326,7 @@ export class UsageService {
       this.windowRefused = true
       this.note(
         'retention-jump',
-        `retention skipped: the clock would drop ${prunable} of ${days} recorded days — delete the ledger file to accept it`,
+        `retention skipped: the clock would drop ${prunable} of ${days} recorded days — delete the ledger file (and any .migrated copy beside it) to accept it`,
       )
       return 0
     }
@@ -2246,9 +2339,10 @@ export class UsageService {
     this.retentionSeen = Math.min(this.retentionSeen, this.options.retainDays)
     const pruned = pruneLedger(doc, todayKey, this.options.retainDays)
     // A jump drops a whole slab in one pass, where a steady clock drops one a
-    // day; a shrink can do the same, so the warning rides along with it rather
-    // than being hidden behind it.
-    const jumped = days >= 4 && pruned > days * 0.3
+    // day. A shrink can do the same, but it is the user's own doing: blaming the
+    // clock for it was wrong on essentially every deliberate 180→7, so the
+    // warning is only for a prune nothing asked for.
+    const jumped = !shrank && days >= 4 && pruned > days * 0.3
     if (pruned > 0 && (shrank || jumped)) {
       // A shrink is the user's own doing, so it is honoured — but deleting days
       // is still worth saying out loud, because the panel simply shows fewer.

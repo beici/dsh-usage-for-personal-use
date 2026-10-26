@@ -9,7 +9,7 @@
  *
  * Run:  node --experimental-strip-types harness/host-test.mjs
  */
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -107,10 +107,11 @@ async function writeTranscript(home, lines, session = 'sess1') {
   const { UsageService, UsageImportError } = await load('host/usage-service.ts')
   const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
   await svc.loadPersisted()
-  // The dedupe marker is a sidecar, not a ledger: only ledger files matter here.
-  const sidecars = new Set(['usage-dedupe-marker.json', 'machine-id.json'])
-  const ledgerFiles = async () => (await readdir(join(home, 'dsh-usage'))).filter((name) => !sidecars.has(name))
-  check('starts with one local file', (await ledgerFiles()).length === 0, 'no file before a fold')
+  // Only the device ledgers count: the dedupe marker and the machine id are
+  // sidecars, and a lock or a quarantine file (`.json.lock`, `.json.unreadable-…`)
+  // is not a ledger either — a leftover one used to make this count fail.
+  const ledgerFiles = async () => (await readdir(join(home, 'dsh-usage'))).filter((name) => /^usage-ledger\.[A-Za-z0-9_-]+\.json$/.test(name))
+  check('starts with no ledger file', (await ledgerFiles()).length === 0, (await ledgerFiles()).join(','))
 
   // The overview's `today` follows the wall clock, so this section folds into
   // the real today key — a fixed date went stale the day after it was written.
@@ -1110,7 +1111,8 @@ async function writeTranscript(home, lines, session = 'sess1') {
   }))
   const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
   await svc.loadPersisted()
-  check('a day this machine already holds is not counted twice', svc.overview().usage.all.totals.calls === 13, String(svc.overview().usage.all.totals.calls))
+  check('a bucket this machine never recorded is counted', svc.overview().usage.all.totals.calls === 20, String(svc.overview().usage.all.totals.calls))
+  check('a shared day adds only the bucket this machine lacks', svc.overview().usage.days.find((row) => row.date === todayKey)?.totals.calls === 17, JSON.stringify(svc.overview().usage.days.find((row) => row.date === todayKey)))
   check('a day this machine never recorded is counted', svc.overview().usage.days.some((row) => row.date === olderKey), JSON.stringify(svc.overview().usage.days.map((row) => row.date)))
   check('the unverified peer is reported', String(svc.overview().usage.ledgerNote ?? '').includes('unverified'), String(svc.overview().usage.ledgerNote))
   check('the unverified peer is listed as a device', svc.overview().usage.devices.length === 2, JSON.stringify(svc.overview().usage.devices))
@@ -1391,7 +1393,7 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await svc.loadPersisted()
   await svc.flushLedger()
   const kept = JSON.parse(await readFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), 'utf8'))
-  check('a slab prune still prunes', Object.keys(kept.days).length <= 61, Object.keys(kept.days).length)
+  check('a slab prune still prunes', Object.keys(kept.days).length === 59, String(Object.keys(kept.days).length))
   check('a slab prune is reported', String(svc.overview().usage.ledgerNote ?? '').includes('at once'), String(svc.overview().usage.ledgerNote))
   await svc.stop()
 }
@@ -1602,6 +1604,11 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await svc.flushLedger()
   const held = await readFile(lockPath, 'utf8').catch(() => undefined)
   check('a lock held by another process is left alone', held === 'other-process', String(held))
+  // The write still has to land, and it has to say that it ran unlocked: a lock
+  // that is only checked, never reported, hides the interleaving it warns about.
+  const unlocked = JSON.parse(await readFile(ledgerPath, 'utf8'))
+  check('the write still lands without the lock', unlocked.days[localDateKey(Date.now())]?.buddy?.m1?.calls === 1, JSON.stringify(unlocked.days))
+  check('writing without the lock is reported', String(svc.overview().usage.ledgerNote ?? '').includes('lock stayed taken'), String(svc.overview().usage.ledgerNote))
   await rm(lockPath, { force: true })
   await svc.stop()
 }
@@ -1705,7 +1712,8 @@ async function writeTranscript(home, lines, session = 'sess1') {
   const migrated = JSON.parse(await readFile(legacyPath + '.migrated', 'utf8'))
   check('a second migration keeps both halves', device.days[legacyDay] !== undefined && device.days[migratedDay] !== undefined, Object.keys(device.days).join(','))
   check('the retired file keeps the earlier days', migrated.days[migratedDay] !== undefined && migrated.days[legacyDay] !== undefined, Object.keys(migrated.days).join(','))
-  check('the legacy file is retired', await stat(legacyPath).then(() => false, () => true), 'legacy file still there')
+  const legacyLeft = await stat(legacyPath).then(() => 'still there', () => 'retired')
+  check('the legacy file is retired', legacyLeft === 'retired', legacyLeft)
   await svc.stop()
 }
 
@@ -1751,6 +1759,10 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await svc.loadPersisted()
   const names = (await readdir(dir)).filter((name) => name.includes('.corrupt-') || name.includes('.unreadable-'))
   check('old quarantined ledgers are trimmed', names.length <= 3, names.join(','))
+  // The copy this boot wrote is the only one that holds the user's real bytes;
+  // it must survive its own trim even when a decoy carries the same millisecond.
+  const reported = /kept as (\S+)/.exec(String(svc.overview().usage.ledgerError ?? ''))?.[1]
+  check('the copy this boot wrote is not trimmed away', reported !== undefined && names.includes(reported), `${String(reported)} in ${names.join(',')}`)
   await svc.stop()
 }
 
@@ -1769,9 +1781,15 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), JSON.stringify({ version: 1, days: { [today]: { buddy: { m1: bucket(100, 5) } } } }))
   await writeFile(join(dir, 'usage-ledger.peerone.json'), JSON.stringify({ version: 1, deviceId: 'peerone', days: { [today]: { buddy: { m1: bucket(100, 5) } } } }))
   const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 30 })
+  // The deferral itself is the guard: a scan that ran before the load would fold
+  // a same-machine peer into an unreplayed ledger. Removing it left the end-state
+  // assertion below unchanged, so the flag is what this test has to pin.
+  await svc.refreshPeers()
+  check('a peer scan before the load is deferred', svc.peersScanPending === true && svc.peers.length === 0, `${svc.peersScanPending} ${svc.peers.length}`)
   const loading = svc.loadPersisted()
   const refreshing = svc.refresh()
   await Promise.all([loading, refreshing])
+  check('the deferred scan runs once the load is done', svc.peersScanPending === false, String(svc.peersScanPending))
   await svc.flushLedger()
   const written = JSON.parse(await readFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), 'utf8'))
   check('a refresh during the load does not double count a peer', written.days[today]?.buddy?.m1?.calls === 5, String(written.days[today]?.buddy?.m1?.calls))
@@ -1858,6 +1876,79 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await svc.importPeer(envelope)
   const peerFile = JSON.parse(await readFile(join(dir, 'usage-ledger.laptop-4f7b21.json'), 'utf8'))
   check('an import keeps the window the peer recorded', peerFile.retentionDays === 90, String(peerFile.retentionDays))
+  await svc.stop()
+}
+
+// ---- a load retry keeps the calls folded while it waited -----------------
+// Each retry used to restore the pre-load document, so every call folded during
+// the 20 s wait was dropped and the next flush wrote the rolled-back ledger.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const ledgerPath = join(dir, 'usage-ledger.' + localDeviceId() + '.json')
+  const todayKey = localDateKey(Date.now())
+  // A directory where the ledger belongs: the read fails, so the loader arms its
+  // retry instead of finishing.
+  await mkdir(ledgerPath, { recursive: true })
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 30 })
+  await svc.loadPersisted()
+  check('an unreadable ledger is retried', svc.loadRetries > 0, String(svc.loadRetries))
+  svc.onSessionEvent({}, {
+    type: 'assistant/message',
+    time: Date.now(),
+    data: { usage: { inputTokens: 100, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }, message: { source: { provider: 'buddy', model: 'm1' } } },
+  })
+  check('the call folded while the retry waits is in memory', svc.ledger.days[todayKey]?.buddy?.m1?.calls === 1, JSON.stringify(svc.ledger.days[todayKey]))
+  // The obstacle goes away; the timer's next attempt is this call.
+  await rm(ledgerPath, { recursive: true, force: true })
+  await svc.loadPersisted()
+  check('the retry does not roll the folded call back', svc.ledger.days[todayKey]?.buddy?.m1?.calls === 1, JSON.stringify(svc.ledger.days[todayKey]))
+  await svc.stop()
+}
+
+// ---- a shrink is not blamed on the clock ---------------------------------
+// The "at once" warning is for a prune nobody asked for; appending it to a
+// deliberate 180→7 told the user their clock had jumped on every shrink.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const days = {}
+  for (let back = 0; back < 11; back += 1) days[localDateKey(Date.now() - back * 86_400_000)] = { buddy: { m1: bucket(100, 1) } }
+  await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), JSON.stringify({ version: 1, retentionDays: 180, days }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 7 })
+  await svc.loadPersisted()
+  await svc.flushLedger()
+  const note = String(svc.overview().usage.ledgerNote ?? '')
+  check('a shrink says what it pruned', note.includes('honour the 7-day window'), note)
+  check('a shrink is not blamed on the clock', !note.includes('clock may have jumped'), note)
+  await svc.stop()
+}
+
+// ---- a BOM-prefixed export imports ---------------------------------------
+// Any Windows editor re-saving an export adds a UTF-8 BOM; the importer used to
+// answer "not JSON" to a perfectly valid document.
+{
+  const home = await freshHome()
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const text = '\uFEFF' + JSON.stringify({
+    schema: 'dsh-usage-ledger',
+    version: 1,
+    deviceId: 'bom-peer',
+    days: { [localDateKey(Date.now())]: { peer: { p1: bucket(100, 1) } } },
+  })
+  const answer = await svc.importPeer(text).then(() => 'ok', (error) => String(error))
+  check('a BOM-prefixed export imports', answer === 'ok', answer)
   await svc.stop()
 }
 

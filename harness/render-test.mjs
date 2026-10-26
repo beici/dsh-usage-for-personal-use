@@ -777,9 +777,9 @@ console.log('   plans tab text:', text(container).slice(0, 200))
     card === null ? 'no card' : text(card).slice(0, 120))
   // The trend chart must not paint a failed request as an empty day: those are
   // different facts and the tooltip has to say which one it is.
-  // The plot is the image; the legend is a sibling, so the label lives on the
-  // element that carries role="img" and describes only the chart.
-  const figure = host.querySelector('[data-dsh-part="trend-chart"] [role="img"]')
+  // The plot is the group that carries the window summary; each bar inside it is
+  // its own image with its own label, so the summary lives one level up.
+  const figure = host.querySelector('[data-dsh-part="trend-chart"] [role="group"]')
   check('the trend chart names itself for screen readers',
     figure !== null && (figure.getAttribute('aria-label') ?? '').includes('用量趋势'),
     figure === null ? 'no figure' : String(figure.getAttribute('aria-label')))
@@ -1218,7 +1218,7 @@ console.log('   plans tab text:', text(container).slice(0, 200))
   check('a failed aggregate states the failure in the plot instead of drawing bars',
     failedNotice !== null && text(failedNotice).includes('加载失败') && bars.length === 0,
     failedNotice === null ? 'no notice' : text(failedNotice))
-  const figure = host.querySelector('[data-dsh-part="trend-chart"] [role="img"]')
+  const figure = host.querySelector('[data-dsh-part="trend-chart"] [role="group"]')
   const label = String(figure?.getAttribute('aria-label') ?? '')
   check('a failed aggregate states no total in the aria label',
     figure !== null && label.includes('部分日期加载失败') && !label.includes('合计'), label)
@@ -2587,6 +2587,54 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
     text(host.querySelector('[data-dsh-part="device-notice"]')))
   await act(async () => { localRoot.unmount() })
   host.remove()
+}
+
+// ---- the day picker's label points at its own select ---------------------
+// The ids used to be the constants 'dsh-usage-day-usage'/'…-all': two cards on
+// one page (the sidebar panel and an expanded one) handed the same id to two
+// selects, and one card's label pointed at the other card's control.
+{
+  const mount = async () => {
+    const host = window.document.createElement('div')
+    window.document.body.appendChild(host)
+    const state = { snapshot: overview, status: 'ready', error: null }
+    const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+    const localRoot = ReactDOMClient.createRoot(host)
+    await act(async () => {
+      localRoot.render(React.createElement(UsageSectionCard, {
+        store: localStore,
+        poll: () => {},
+        refresh: () => {},
+        loadDay,
+        loadRange,
+        settings,
+        deviceSync,
+        close: () => {},
+      }))
+    })
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)) })
+    return { host, localRoot }
+  }
+  const first = await mount()
+  const second = await mount()
+  const pickers = (host) => [...host.querySelectorAll('[data-dsh-part^="day-"]')]
+  const idsOf = (host) => pickers(host).flatMap((wrapper) => [...wrapper.querySelectorAll('select')].map((select) => select.id))
+  const firstIds = idsOf(first.host)
+  const secondIds = idsOf(second.host)
+  check('every day select is labelled by its own control',
+    pickers(first.host).every((wrapper) => {
+      const select = wrapper.querySelector('select')
+      const label = wrapper.querySelector('label')
+      return select !== null && label !== null && label.getAttribute('for') === select.id && select.id !== ''
+    }),
+    JSON.stringify(pickers(first.host).map((wrapper) => [wrapper.querySelector('label')?.getAttribute('for'), wrapper.querySelector('select')?.id])))
+  check('two cards do not share a day select id',
+    firstIds.length > 0 && firstIds.every((id) => !secondIds.includes(id)),
+    JSON.stringify({ firstIds, secondIds }))
+  for (const mounted of [first, second]) {
+    await act(async () => { mounted.localRoot.unmount() })
+    mounted.host.remove()
+  }
 }
 
 const failed = report.filter((row) => !row.ok)

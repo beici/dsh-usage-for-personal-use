@@ -2318,6 +2318,8 @@ var UsageService = class {
 	notes = /* @__PURE__ */ new Map();
 	/** The document as it was before the first load absorb, so a retry starts clean. */
 	loadBaseline;
+	/** Calls folded while a load attempt was in flight; re-applied after a rollback. */
+	loadFolds;
 	/** True once the persisted document has been folded into memory this boot. */
 	loadAbsorbed = false;
 	/**
@@ -2421,6 +2423,7 @@ var UsageService = class {
 	}
 	/** Start the listeners, load persisted state, and arm the first poll. */
 	start() {
+		this.disposed = false;
 		this.sessionListenerDisposer = this.ctx.on("session/event", (session, event) => this.onSessionEvent(session, event));
 		this.loadPersisted();
 		this.rearmPoll(2e3);
@@ -2486,7 +2489,7 @@ var UsageService = class {
 		if (Buffer.byteLength(text, "utf8") > IMPORT_MAX_BYTES$1) throw new UsageImportError(`ledger exceeds ${IMPORT_MAX_BYTES$1} bytes`);
 		let parsed;
 		try {
-			parsed = JSON.parse(text);
+			parsed = JSON.parse(text.charCodeAt(0) === 65279 ? text.slice(1) : text);
 		} catch {
 			throw new UsageImportError("not JSON");
 		}
@@ -2511,6 +2514,7 @@ var UsageService = class {
 			const merged = existing === void 0 ? doc.doc : structuredClone(existing.doc);
 			if (existing !== void 0) mergeLedgerMax(merged, doc.doc);
 			const machine = doc.machine ?? existing?.machine;
+			const peerWindow = doc.retentionDays ?? existing?.retentionDays;
 			if (existing !== void 0) {
 				const kept = ledgerDayKeys(existing.doc).filter((key) => doc.doc.days[key] === void 0);
 				if (kept.length > 0) this.note(`import:${claimedId}`, `import merged into the peer file; ${kept.length} day(s) it already held were kept`);
@@ -2521,7 +2525,7 @@ var UsageService = class {
 				deviceId: claimedId,
 				...machine === void 0 ? {} : { machine },
 				exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
-				retentionDays: doc.retentionDays ?? existing?.retentionDays ?? this.recordedWindow(),
+				...peerWindow === void 0 ? {} : { retentionDays: peerWindow },
 				ledger: merged
 			});
 		});
@@ -2804,6 +2808,10 @@ var UsageService = class {
 				if (route === void 0 || route.provider === "") return;
 				const atMs = typeof event.time === "number" ? event.time : Date.now();
 				foldUsage(this.ledger, atMs, route.provider, route.model || "unknown", this.totalsFrom(usage, route.provider, route.model || "unknown", atMs));
+				if (this.loadBaseline !== void 0) {
+					this.loadFolds ??= createLedgerDocument();
+					foldUsage(this.loadFolds, atMs, route.provider, route.model || "unknown", this.totalsFrom(usage, route.provider, route.model || "unknown", atMs));
+				}
 				this.scheduleFlush();
 			}
 		} catch {}
@@ -2911,9 +2919,15 @@ var UsageService = class {
 	async loadPersisted() {
 		try {
 			if (this.loadBaseline === void 0) this.loadBaseline = structuredClone(this.ledger);
-			else if (!this.loadAbsorbed) this.ledger = structuredClone(this.loadBaseline);
+			else if (!this.loadAbsorbed) {
+				this.ledger = structuredClone(this.loadBaseline);
+				if (this.loadFolds !== void 0) mergeLedgerSum(this.ledger, this.loadFolds);
+			}
 			await this.loadPersistedOnce();
-			if (this.loaded) this.loadBaseline = void 0;
+			if (this.loaded) {
+				this.loadBaseline = void 0;
+				this.loadFolds = void 0;
+			}
 		} catch (error) {
 			this.ledgerError = `ledger load failed (${error instanceof Error ? error.message : String(error)})`;
 			this.scheduleLoadRetry();
@@ -2939,7 +2953,7 @@ var UsageService = class {
 			this.ledgerError = `ledger unreadable (${read.error}); kept as ${basename(kept)}`;
 			this.note("ledger-unreadable", `ledger unreadable (${read.error}); kept as ${basename(kept)}, counting into a fresh file`);
 			lostHistory = true;
-			await this.trimQuarantine();
+			await this.trimQuarantine(kept);
 			read = { kind: "missing" };
 		}
 		if (read.kind === "corrupt") {
@@ -2961,7 +2975,7 @@ var UsageService = class {
 					return;
 				}
 				lostHistory = true;
-				await this.trimQuarantine();
+				await this.trimQuarantine(kept);
 			}
 		}
 		if (read.kind === "ok") {
@@ -2974,10 +2988,6 @@ var UsageService = class {
 			if (read.retentionDays !== void 0) {
 				this.retentionSeen = Math.max(this.retentionSeen, read.retentionDays);
 				this.fileRetention = read.retentionDays;
-			}
-			if (read.retentionDays !== void 0 && read.retentionDays === this.options.retainDays) {
-				this.clearNote("retention");
-				this.clearNote("retention-jump");
 			}
 		} else if (read.kind === "missing") await this.adoptLegacyLedger();
 		if (lostHistory) await this.restoreMigratedHistory();
@@ -3011,6 +3021,7 @@ var UsageService = class {
 				}
 			}).catch(() => void 0);
 		}
+		if (repaired.skipped > 0) this.note("repair-skipped", `${repaired.skipped} bucket(s) hold more than the duplicate set — left as recorded, so they may still be inflated`);
 		this.scheduleFlush();
 	}
 	/**
@@ -3179,14 +3190,24 @@ var UsageService = class {
 		const repaired = /* @__PURE__ */ new Map();
 		let buckets = 0;
 		let removedTokens = 0;
+		let skipped = 0;
 		for (const [key, duplicate] of replay.duplicates) {
 			const target = findLedgerBucket(this.ledger.days[duplicate.dayKey], duplicate.provider, duplicate.model);
-			if (target === void 0) continue;
+			if (target === void 0) {
+				skipped += 1;
+				continue;
+			}
 			const bucket = target.totals;
 			const clean = findLedgerBucket(replay.doc.days[duplicate.dayKey], duplicate.provider, duplicate.model)?.totals ?? emptyTotals();
 			const base = prior.get(key) ?? clean;
-			if (bucket.calls - base.calls !== duplicate.totals.calls) continue;
-			if (totalTokens(bucket) - totalTokens(base) !== totalTokens(duplicate.totals)) continue;
+			if (bucket.calls - base.calls !== duplicate.totals.calls) {
+				skipped += 1;
+				continue;
+			}
+			if (totalTokens(bucket) - totalTokens(base) !== totalTokens(duplicate.totals)) {
+				skipped += 1;
+				continue;
+			}
 			const next = maxTotals(subtractTotals(bucket, duplicate.totals), base);
 			const dropped = totalTokens(bucket) - totalTokens(next);
 			if (dropped <= 0) continue;
@@ -3205,7 +3226,8 @@ var UsageService = class {
 		return {
 			buckets,
 			removedTokens,
-			repaired
+			repaired,
+			skipped
 		};
 	}
 	/**
@@ -3373,16 +3395,17 @@ var UsageService = class {
 	* without a cap, a profile that keeps failing quietly fills the directory with
 	* copies of the same broken file.
 	*/
-	async trimQuarantine(limit = 3) {
+	async trimQuarantine(keep, limit = 3) {
 		const prefix = `${basename(this.ledgerPath)}.`;
-		const mine = (await readdir(this.persistDir).catch(() => [])).filter((name) => name.startsWith(prefix) && /\.(unreadable|corrupt)-\d+\.json$/.test(name));
-		if (mine.length <= limit) return;
+		const mine = (await readdir(this.persistDir).catch(() => [])).filter((name) => name.startsWith(prefix) && /\.(unreadable|corrupt)-\d+\.json$/.test(name)).filter((name) => name !== keep);
+		const keepCount = keep === void 0 ? 0 : 1;
+		if (mine.length + keepCount <= limit) return;
 		const dated = await Promise.all(mine.map(async (name) => ({
 			name,
 			at: await stat(join(this.persistDir, name)).then((info) => info.mtimeMs, () => 0)
 		})));
-		dated.sort((a, b) => b.at - a.at);
-		for (const { name } of dated.slice(limit)) await rm(join(this.persistDir, name), { force: true }).catch(() => void 0);
+		dated.sort((a, b) => b.at - a.at || a.name.localeCompare(b.name));
+		for (const { name } of dated.slice(Math.max(0, limit - keepCount))) await rm(join(this.persistDir, name), { force: true }).catch(() => void 0);
 	}
 	/**
 	* Re-read every peer ledger file in the persist directory.
@@ -3437,8 +3460,20 @@ var UsageService = class {
 				}
 				if (parsed.machine === void 0) {
 					const unrecorded = {};
-					for (const [day, buckets] of Object.entries(parsed.doc.days)) if (this.ledger.days[day] === void 0) unrecorded[day] = buckets;
-					const taken = Object.keys(unrecorded).length;
+					let taken = 0;
+					for (const [day, buckets] of Object.entries(parsed.doc.days)) {
+						const local = this.ledger.days[day];
+						const kept = {};
+						for (const [provider, models] of Object.entries(buckets)) for (const [model, totals] of Object.entries(models)) {
+							if (findLedgerBucket(local, provider, model) !== void 0) continue;
+							kept[provider] = {
+								...kept[provider] ?? {},
+								[model]: totals
+							};
+							taken += 1;
+						}
+						if (Object.keys(kept).length > 0) unrecorded[day] = kept;
+					}
 					peers.push({
 						deviceId,
 						machine: void 0,
@@ -3448,7 +3483,7 @@ var UsageService = class {
 						},
 						updatedAt: info.mtimeMs
 					});
-					this.note(`unverified:${deviceId}`, taken === 0 ? `${name}: unverified (no machine id in the document), and every day in it is already recorded here, so it was not counted` : `${name}: unverified (no machine id in the document), so only the ${taken} day(s) this machine has not recorded were counted`);
+					this.note(`unverified:${deviceId}`, taken === 0 ? `${name}: unverified (no machine id in the document), and every bucket in it is already recorded here, so it was not counted` : `${name}: unverified (no machine id in the document), so only the ${taken} bucket(s) this machine has no record of were counted`);
 					continue;
 				}
 				if (parsed.machine !== void 0 && this.sameMachine(parsed.machine)) {
@@ -3542,6 +3577,8 @@ var UsageService = class {
 		const disk = await this.readDiskLedger();
 		if (disk.kind === "bad") {
 			this.ledgerError = `ledger unreadable (${disk.error}); write skipped`;
+			const foreign = foreignDeviceOf(disk.error);
+			if (foreign !== void 0) this.note("ledger-foreign", `the ledger file names device ${foreign}; this session's calls are not being written — restart to adopt it as a peer`);
 			return;
 		}
 		if (disk.kind === "ok") {
@@ -3590,7 +3627,13 @@ var UsageService = class {
 			}
 			this.pruneForWrite(target);
 			this.ledger = target;
-		} else this.pruneForWrite(this.ledger);
+		} else {
+			if (!this.lockHeld) {
+				this.scheduleFlush();
+				return;
+			}
+			this.pruneForWrite(this.ledger);
+		}
 		try {
 			await writeJsonAtomic(this.ledgerPath, this.ledgerFileDocument());
 		} catch (error) {
@@ -3619,7 +3662,8 @@ var UsageService = class {
 			seen: this.retentionSeen,
 			shrankTo: this.shrankTo,
 			refused: this.windowRefused,
-			note: this.notes.get("retention")
+			note: this.notes.get("retention"),
+			jumpNote: this.notes.get("retention-jump")
 		};
 	}
 	/** Put that bookkeeping back after a write that never landed. */
@@ -3629,6 +3673,8 @@ var UsageService = class {
 		this.windowRefused = snapshot.refused;
 		if (snapshot.note === void 0) this.clearNote("retention");
 		else this.notes.set("retention", snapshot.note);
+		if (snapshot.jumpNote === void 0) this.clearNote("retention-jump");
+		else this.notes.set("retention-jump", snapshot.jumpNote);
 	}
 	/**
 	* The window the file should record as the one its days were pruned against.
@@ -3658,10 +3704,11 @@ var UsageService = class {
 		const stale = this.fileRetention === void 0 ? 0 : countPrunable(doc, todayKey, fileWindow);
 		const seenBefore = this.retentionSeen;
 		const shrank = this.options.retainDays < seenBefore || this.shrankTo === this.options.retainDays;
-		const jump = stale > 0 && prunable > days * .5 || prunable === days;
+		const unstampedWipe = this.fileRetention === void 0 && days >= 4 && prunable > days * .9;
+		const jump = stale > 0 && prunable > days * .5 || prunable === days || unstampedWipe;
 		if (days > 0 && jump) {
 			this.windowRefused = true;
-			this.note("retention-jump", `retention skipped: the clock would drop ${prunable} of ${days} recorded days — delete the ledger file to accept it`);
+			this.note("retention-jump", `retention skipped: the clock would drop ${prunable} of ${days} recorded days — delete the ledger file (and any .migrated copy beside it) to accept it`);
 			return 0;
 		}
 		this.windowRefused = false;
@@ -3669,7 +3716,7 @@ var UsageService = class {
 		if (shrank) this.shrankTo = this.options.retainDays;
 		this.retentionSeen = Math.min(this.retentionSeen, this.options.retainDays);
 		const pruned = pruneLedger(doc, todayKey, this.options.retainDays);
-		const jumped = days >= 4 && pruned > days * .3;
+		const jumped = !shrank && days >= 4 && pruned > days * .3;
 		if (pruned > 0 && (shrank || jumped)) {
 			const base = shrank ? `pruned ${pruned} of ${days} recorded days to honour the ${this.options.retainDays}-day window` : `pruned ${pruned} of ${days} recorded days at once`;
 			this.note("retention", jumped ? `${base} — the clock may have jumped` : base);

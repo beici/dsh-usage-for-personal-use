@@ -924,12 +924,15 @@ function DayPicker(props: {
   part: string
 }): ReactNode {
   const { value, options, today, leading, onSelect, part } = props
+  // Per instance, not per tab: two cards on one page would otherwise hand the
+  // same id to two selects and their labels would point at the wrong one.
+  const selectId = useId()
   if (options.length === 0) return null
   return (
-    <div className={styles.dayPicker}>
-      <label className={styles.dayPickerLabel} htmlFor={'dsh-usage-day-' + part}>{t('usage.day.label')}</label>
+    <div className={styles.dayPicker} data-dsh-part={'day-' + part}>
+      <label className={styles.dayPickerLabel} htmlFor={selectId}>{t('usage.day.label')}</label>
       <select
-        id={'dsh-usage-day-' + part}
+        id={selectId}
         className={styles.daySelect}
         value={value}
         onChange={(event) => { onSelect(event.target.value) }}
@@ -1119,6 +1122,17 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   // One id per card instance: the raw ledger error is a hidden description, and
   // two cards on one page must not point at each other's text.
   const ledgerDetailId = useId()
+  // Same reason for the tab and panel ids: `aria-controls` must resolve inside
+  // this card, not into whichever card mounted first.
+  const cardId = useId()
+  // One hidden detail node per error surface: a title is mouse-only, and the raw
+  // wire text must stay reachable without being printed in the sentence.
+  const staleDetailId = useId()
+  const providerDetailId = useId()
+  const saveDetailId = useId()
+  const drawDetailId = useId()
+  const tabIdOf = (key: TabKey): string => cardId + '-tab-' + key
+  const panelIdOf = (key: TabKey): string => cardId + '-panel-' + key
   const settingsSnapshot = settings.getSnapshot()
   const settingsValue = settingsSnapshot.value ?? {}
   const [tab, setTab] = useState<TabKey>('usage')
@@ -1557,9 +1571,18 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
       {ui.status === 'error' && (
         // The sentence is translated; the raw text stays in the title, where a
         // diagnostic belongs — it names the internal route and the status code.
-        <span className={styles.errorLine} role="status" data-dsh-part="stale-line" title={ui.error ?? ''}>
-          {t('usage.stale', { error: describeError(ui.error ?? ''), time: formatTime(snapshot.updatedAt) })}
-        </span>
+        <>
+          <span
+            className={styles.errorLine}
+            role="status"
+            data-dsh-part="stale-line"
+            title={ui.error ?? ''}
+            aria-describedby={staleDetailId}
+          >
+            {t('usage.stale', { error: describeError(ui.error ?? ''), time: formatTime(snapshot.updatedAt) })}
+          </span>
+          <span id={staleDetailId} className={styles.srOnly}>{ui.error ?? ''}</span>
+        </>
       )}
       {/* A ledger the host could not read makes every number below suspect, so
           the reason is stated before the numbers themselves. The sentence is
@@ -1594,8 +1617,8 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
             key={key}
             type="button"
             role="tab"
-            id={'dsh-usage-tab-' + key}
-            aria-controls={'dsh-usage-panel-' + key}
+            id={tabIdOf(key)}
+            aria-controls={panelIdOf(key)}
             aria-selected={tab === key}
             // Roving tabindex: Tab enters the tablist on the selected tab only,
             // the arrows move from there.
@@ -1615,8 +1638,8 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
       <div
         className={styles.panel}
         role="tabpanel"
-        id="dsh-usage-panel-usage"
-        aria-labelledby="dsh-usage-tab-usage"
+        id={panelIdOf('usage')}
+        aria-labelledby={tabIdOf('usage')}
         hidden={tab !== 'usage'}
       >
         <RangeStrip
@@ -1703,15 +1726,21 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
             ))
           })()}
           {snapshot.providers.some((provider) => isConfigured(provider) && provider.error !== undefined) && (
-            <span
-              className={styles.errorLine}
-              // The raw provider text stays reachable as a tooltip: it is what a
-              // bug report needs, and what the panel must not show in a locale
-              // it does not own.
-              title={snapshot.providers.filter((provider) => isConfigured(provider) && provider.error !== undefined).map((provider) => `${provider.displayName}: ${provider.error ?? ''}`).join('\n')}
-            >
-              {snapshot.providers.filter((provider) => isConfigured(provider) && provider.error !== undefined).map((provider) => `${provider.displayName}: ${t('usage.provider.error', { error: describeError(provider.error ?? '') })}`).join(t('usage.errorListSeparator'))}
-            </span>
+            <>
+              <span
+                className={styles.errorLine}
+                // The raw provider text stays reachable as a tooltip and to a
+                // screen reader: it is what a bug report needs, and what the
+                // panel must not show in a locale it does not own.
+                title={snapshot.providers.filter((provider) => isConfigured(provider) && provider.error !== undefined).map((provider) => `${provider.displayName}: ${provider.error ?? ''}`).join('\n')}
+                aria-describedby={providerDetailId}
+              >
+                {snapshot.providers.filter((provider) => isConfigured(provider) && provider.error !== undefined).map((provider) => `${provider.displayName}: ${t('usage.provider.error', { error: describeError(provider.error ?? '') })}`).join(t('usage.errorListSeparator'))}
+              </span>
+              <span id={providerDetailId} className={styles.srOnly}>
+                {snapshot.providers.filter((provider) => isConfigured(provider) && provider.error !== undefined).map((provider) => `${provider.displayName}: ${provider.error ?? ''}`).join('\n')}
+              </span>
+            </>
           )}
         </div>
 
@@ -1729,8 +1758,8 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
       <div
         className={styles.panel}
         role="tabpanel"
-        id="dsh-usage-panel-plans"
-        aria-labelledby="dsh-usage-tab-plans"
+        id={panelIdOf('plans')}
+        aria-labelledby={tabIdOf('plans')}
         hidden={tab !== 'plans'}
       >
         {planProviders.length === 0
@@ -1741,8 +1770,8 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
       <div
         className={styles.panel}
         role="tabpanel"
-        id="dsh-usage-panel-bank"
-        aria-labelledby="dsh-usage-tab-bank"
+        id={panelIdOf('bank')}
+        aria-labelledby={tabIdOf('bank')}
         hidden={tab !== 'bank'}
       >
         <DayPicker
@@ -1780,6 +1809,10 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
 function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: ObservedSpendView; loading?: boolean; error?: string }): ReactNode {
   const { window: ledger, observedSpend, loading, error } = props
   const data = voucherData(ledger)
+  // The raw failure text is a diagnostic (a canvas error, a URL API error) that
+  // belongs in the title and in a described-by sibling, not in the sentence.
+  const drawDetailId = useId()
+  const saveDetailId = useId()
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [drawError, setDrawError] = useState<string | undefined>(undefined)
   // A save can fail on its own (a canvas with no encoder, a blocked URL API),
@@ -1906,8 +1939,22 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
             <div className={styles.voucherPreview} data-dsh-part="voucher-preview">
               <canvas ref={canvasRef} role="img" aria-label={t('usage.bank.title')} />
             </div>
-            {drawError !== undefined && <span className={styles.errorLine}>{t('usage.bank.drawError', { error: drawError })}</span>}
-            {saveError !== undefined && <span className={styles.errorLine} title={saveError}>{t('usage.bank.saveError', { error: describeError(saveError) })}</span>}
+            {drawError !== undefined && (
+            <>
+              <span className={styles.errorLine} title={drawError} aria-describedby={drawDetailId}>
+                {t('usage.bank.drawError', { error: describeError(drawError) })}
+              </span>
+              <span id={drawDetailId} className={styles.srOnly}>{drawError}</span>
+            </>
+          )}
+            {saveError !== undefined && (
+            <>
+              <span className={styles.errorLine} title={saveError} aria-describedby={saveDetailId}>
+                {t('usage.bank.saveError', { error: describeError(saveError) })}
+              </span>
+              <span id={saveDetailId} className={styles.srOnly}>{saveError}</span>
+            </>
+          )}
             <div className={styles.providerRow}>
               <span className={styles.providerName}>{t('usage.bank.minted', { minted: formatDenomination(faceValue(data.tokens)), tokens: formatTokens(data.tokens) })}</span>
               <span className={styles.providerTokens}>{t('usage.calls', { n: data.calls })}</span>
@@ -1931,6 +1978,7 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
 
 function PlanCard(props: { provider: ProviderSnapshotView; current?: string }): ReactNode {
   const { provider, current } = props
+  const planDetailId = useId()
   return (
     <div className={`${styles.card} ${styles.planCard}`} data-dsh-part="plan-card">
       <div className={styles.planHead}>
@@ -1940,7 +1988,14 @@ function PlanCard(props: { provider: ProviderSnapshotView; current?: string }): 
           {provider.plan?.planName !== undefined ? ` · ${provider.plan.planName}` : ''}
         </span>
       </div>
-      {provider.error !== undefined && <span className={styles.errorLine} title={provider.error}>{t('usage.provider.error', { error: describeError(provider.error) })}</span>}
+      {provider.error !== undefined && (
+        <>
+          <span className={styles.errorLine} title={provider.error} aria-describedby={planDetailId}>
+            {t('usage.provider.error', { error: describeError(provider.error) })}
+          </span>
+          <span id={planDetailId} className={styles.srOnly}>{provider.error}</span>
+        </>
+      )}
       {provider.credential === 'none' && provider.plan === undefined
         ? <span className={styles.muted}>{t('usage.balance.noCredential')}</span>
         : provider.plan === undefined || provider.plan.windows.length === 0
@@ -1998,6 +2053,7 @@ function SettingsRow(props: {
   value: UsageSettings
 }): ReactNode {
   const { settings, snapshot, value } = props
+  const failureDetailId = useId()
   const disabled = snapshot === undefined || !snapshot.writable
   const [failure, setFailure] = useState<string | undefined>(undefined)
   // The interval field keeps its own draft text. Bound straight to the snapshot
@@ -2080,9 +2136,12 @@ function SettingsRow(props: {
         </label>
       </div>
       {failure !== undefined && (
-        <span className={styles.errorLine} role="status">
-          {t('usage.config.saveFailed')}{failure === '' ? '' : ' - ' + failure}
-        </span>
+        <>
+          <span className={styles.errorLine} role="status" title={failure} aria-describedby={failureDetailId}>
+            {t('usage.config.saveFailed')}{failure === '' ? '' : ' - ' + t('usage.error.unknown')}
+          </span>
+          <span id={failureDetailId} className={styles.srOnly}>{failure}</span>
+        </>
       )}
     </div>
   )

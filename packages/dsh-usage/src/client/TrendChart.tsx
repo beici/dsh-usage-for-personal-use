@@ -290,15 +290,25 @@ export function TrendChart(props: {
   const chartFrom = buckets[0].from
   const chartTo = buckets[buckets.length - 1].to
   const chartTotal = buckets.reduce((sum, bucket) => sum + totalOf(bucket.totals), 0)
+  // The last label is worth forcing only when it does not land on top of the
+  // previous stepped one: at a narrow plot the two overlapped by a character or
+  // two on the common 30- and 45-bucket windows.
+  const lastStepped = Math.floor((buckets.length - 1) / labelStep) * labelStep
+  const showXLabel = (index: number): boolean => {
+    if (index % labelStep === 0) return true
+    if (index !== buckets.length - 1) return false
+    return index - lastStepped >= Math.ceil(labelStep / 2)
+  }
 
   return (
     <div className={styles.trendWrap} data-dsh-part="trend-chart">
-      {/* The plot is one image to a screen reader, so it carries the role and the
-          label. role="img" makes its whole subtree presentational, so the legend
-          stays a sibling: wrapping it made the model names unreadable. */}
+      {/* The plot is a group, not one image: each bar carries its own label and
+          takes focus, so the per-day numbers are reachable without a mouse. The
+          window summary stays on the group, and the legend stays a sibling so
+          each series keeps its name. */}
       <div
         className={styles.trendPlot}
-        role="img"
+        role="group"
         aria-label={anyFailed
           ? t('usage.trend.labelFailed', { from: chartFrom, to: chartTo })
           : partial === true
@@ -332,6 +342,7 @@ export function TrendChart(props: {
                           .map((height, at) => ({ height, className: tokens[at].className }))
                       })()
                   const segments = stack.filter((segment) => segment.height > 0)
+                  const bucketLabel = bucket.from === bucket.to ? bucket.from : `${bucket.from} ~ ${bucket.to}`
                   return (
                     <div
                       key={bucket.from}
@@ -339,7 +350,14 @@ export function TrendChart(props: {
                       data-dsh-part="trend-bar"
                       data-recorded={bucket.recorded ? 'true' : 'false'}
                       data-failed={bucket.failed ? 'true' : 'false'}
+                      role="img"
+                      tabIndex={0}
+                      aria-label={bucket.recorded
+                        ? `${bucketLabel}: ${formatTokens(totalOf(bucket.totals))}, ${t('usage.calls', { n: bucket.totals.calls })}`
+                        : `${bucketLabel}: ${bucket.failed ? t('usage.range.loadFailed') : t('usage.range.noRecord')}`}
                       onMouseEnter={() => { setHovered(index) }}
+                      onFocus={() => { setHovered(index) }}
+                      onBlur={() => { setHovered(undefined) }}
                     >
                       {segments.map((segment, at) => (
                         <span
@@ -396,7 +414,7 @@ export function TrendChart(props: {
             className={styles.trendXLabel}
             style={{ left: `${((index + 0.5) / buckets.length) * 100}%` }}
           >
-            {index === 0 || index === buckets.length - 1 || index % labelStep === 0 ? bucket.label : ''}
+            {showXLabel(index) ? bucket.label : ''}
           </span>
         ))}
       </div>
