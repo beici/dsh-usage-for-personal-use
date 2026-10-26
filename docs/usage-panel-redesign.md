@@ -164,23 +164,32 @@ process that loaded the inflated copy sees the newer stamp on disk and adopts th
 corrected document whole, instead of max-merging its own stale totals back in.
 
 Retention is guarded the same way, but the guard has to tell a jumped clock from
-a setting the user lowered on purpose: a clock jump puts *every* recorded day
-outside the window at once, while a shrink keeps the recent days and drops the
-rest. So a prune that would delete all of them is refused and reported as a note.
-A *partial* jump — a forward step that leaves some days inside the window — cannot
-be refused without wedging the file forever (an older build that kept more days
-than the window would never shrink again), so it prunes and says so: one pass that
-drops more than 30 % of at least four recorded days is reported as "pruned N of M
-recorded days at once — the clock may have jumped". A shrink is honoured, once,
-and the threshold applies again afterwards — the file records the window it was
-written under (`retentionDays`), so a restart does not read the user's own change
-as a jumped clock. A shrink that deletes days says how many it dropped, because
-the panel then simply shows less history — and that note is not cleared by the
-first flush (it would be gone three seconds after the user asked for the shrink):
-it stays until a start finds the file's recorded window equal to the setting,
-i.e. until the shrink is actually on disk. Keeping `retainDays` days also means
-dropping anything older than `today-(retainDays-1)`, so the widest window and
-"all" agree instead of the history keeping one extra day.
+a setting the user lowered on purpose. The file records the window it was written
+under (`retentionDays`), and a day still on disk *outside that window* means the
+clock moved — the file's own prune would already have dropped it. So:
+
+- a prune that would leave fewer than two recorded days is refused and reported
+  as a note, whether or not a shrink is also in play. A shrink is honoured for
+  the *size* of what it drops, never for dropping everything, and one live call
+  recorded after the jump must not be what tips the check. A short ledger keeps
+  the plain rule: with two days recorded, dropping the one that fell out of the
+  window is the normal way a window moves.
+- a *partial* jump — a forward step that leaves some days inside the window —
+  cannot be refused without wedging the file forever (an older build that kept
+  more days than the window would never shrink again), so it prunes and says so:
+  one pass that drops more than 30 % of at least four recorded days is reported
+  as "pruned N of M recorded days at once — the clock may have jumped". That
+  warning rides along with a shrink instead of being hidden behind it.
+- a shrink is honoured, once, and the threshold applies again afterwards — the
+  file's recorded window is what a restart compares against, so the user's own
+  change is never read as a jumped clock. A shrink that deletes days says how
+  many it dropped, because the panel then simply shows less history — and that
+  note is not cleared by the first flush (it would be gone three seconds after
+  the user asked for the shrink): it stays until a start finds the file's
+  recorded window equal to the setting, i.e. until the shrink is actually on
+  disk. Keeping `retainDays` days also means dropping anything older than
+  `today-(retainDays-1)`, so the widest window and "all" agree instead of the
+  history keeping one extra day.
 
 Two more things the ledger file must survive, because both end in a silent wipe:
 
@@ -368,6 +377,25 @@ The rules, all of them visible in the UI rather than in the console:
   and the window ends at "—" rather than spinning forever.
 - A **window with nothing to fetch** (a ledger that only holds today, so 全部
   spans today alone) reports its total instead of an idle spinner.
+- A **partly loaded window** says so in the chart's accessible name
+  (`usage.trend.labelPartial`) instead of calling the sum of the days that
+  arrived "in total" — the tile beside it shows "—" for exactly that reason.
+- The **retry ladder is walked, not starved**: the timer effect deliberately does
+  not depend on `snapshot.updatedAt`. The host stamps every overview with the
+  current time, so a dependency on it re-armed the first rung on every poll and
+  the count never rose; the budget refill is a separate effect that also bumps
+  the tick so a recovered host resumes the chain.
+- The **export button names what it is doing** ("正在生成…" / "Rendering…") and is
+  disabled while the canvas encodes, so a second click cannot queue a second
+  download.
+- The **day picker lists only days this machine recorded** (`availableDays` is
+  read from the local ledger, not the merged one): a peer-only day would open an
+  empty tile.
+- **Importing this device's own export** is answered in the panel's own words
+  (`usage.device.importSame`) instead of the host's English refusal, and the
+  device card's **Rescan** posts to `/refresh` — the route that actually rescans
+  the persist directory — rather than re-reading an overview that returns the
+  ledger the process already holds.
 - The **role="img"** label describes the plot only: the x labels and the legend
   are siblings of the image role, so screen readers hear a description of the
   bars and can still read the legend.
@@ -427,7 +455,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   sidebar card translated with the wire text in `title` and its figures no
   longer behind an `aria-label`, and the collapse toggle measured 24×24 at
   opacity 0.72.
-- `node --experimental-strip-types harness/host-test.mjs` — 186 checks: range
+- `node --experimental-strip-types harness/host-test.mjs` — 198 checks: range
   aggregate + per-model series, route guards, device ledger, loopback fence,
   peak clock, the record-carried route of the live fold, transcript dedupe and
   the judged repair, ledger quarantine and unreadable-file protection, the

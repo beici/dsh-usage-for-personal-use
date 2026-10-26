@@ -85,6 +85,17 @@ export declare class UsageService {
      */
     private retentionSeen;
     /**
+     * The window the file on disk was last pruned to, as recorded in the file.
+     *
+     * `retentionSeen` cannot answer "was this day written under a clock that was
+     * behind this one?" after the first prune, because it is lowered to the
+     * current setting; the file's own window can, and it is what tells a clock
+     * that jumped from a retention the user lowered.
+     */
+    private fileRetention;
+    /** The window a shrink in this session asked for, so later prunes still read as one. */
+    private shrankTo;
+    /**
      * This machine's identity as recorded in every file it writes.
      *
      * Pinned in `machine-id.json` on first run rather than derived from the host

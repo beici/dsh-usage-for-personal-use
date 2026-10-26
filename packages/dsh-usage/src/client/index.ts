@@ -99,10 +99,12 @@ const usageApi: UsageHttpApi = {
     return { deviceId: payload.deviceId }
   },
   rescan: async () => {
-    // A rescan is just a fresh overview read: the host re-reads the persist
-    // directory on every load, and the overview carries the resulting device
-    // list, so there is no separate route to keep in sync.
-    const snapshot = await usageFetch<UsageOverviewView>('api/dsh-usage/overview', 'GET')
+    // A rescan has to reach the host's peer scan: a plain overview read returns
+    // the ledger as this process already holds it, so a file dropped into the
+    // persist directory stayed invisible until the next restart — which is the
+    // one thing the button exists to avoid. `refresh` is the route that rescans
+    // the directory (and replays the transcripts) before answering.
+    const snapshot = await usageFetch<UsageOverviewView>('api/dsh-usage/refresh', 'POST')
     return snapshot.usage.devices ?? []
   },
 }

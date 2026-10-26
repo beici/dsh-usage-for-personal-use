@@ -527,11 +527,18 @@
 }
 
 /* 统计窗口条：八个窗口四列两行，每块直接标出窗口总量和调用次数，切换前就能
-   横向比较；自定义窗口激活时在其下方展开两个日期输入。 */
+   横向比较；自定义窗口激活时在其下方展开两个日期输入。窄面板里四列会把
+   「近 6 个月」挤成两行，所以在 420px 以下改成两列。 */
 .rangeGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
+}
+
+@media (max-width: 420px) {
+  .rangeGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .rangeTile {
@@ -547,6 +554,7 @@
   flex-direction: column;
   gap: 2px;
   cursor: pointer;
+  min-width: 0;
   transition: background-color 120ms ease, border-color 120ms ease;
 }
 
@@ -567,6 +575,11 @@
 .rangeTileLabel {
   font-size: 11px;
   opacity: 0.65;
+  /* A narrow tile truncates the label instead of wrapping it into the value's
+     line; the full text is still in the tile's aria-label. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .rangeTileValue {

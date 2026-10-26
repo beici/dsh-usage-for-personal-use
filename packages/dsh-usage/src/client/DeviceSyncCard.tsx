@@ -92,6 +92,20 @@ export function DeviceSyncCard(props: {
     if (file === undefined) return
     void run('import', async () => {
       const text = await file.text()
+      // The host refuses this device's own export with an English sentence of
+      // its own; the card says it in the panel's language before asking. A file
+      // that does not parse is left to the host, which has the real error text.
+      const claimed = ((): string | undefined => {
+        try {
+          const parsed: unknown = JSON.parse(text)
+          if (typeof parsed !== 'object' || parsed === null) return undefined
+          const id = (parsed as { deviceId?: unknown }).deviceId
+          return typeof id === 'string' ? id : undefined
+        } catch {
+          return undefined
+        }
+      })()
+      if (claimed !== undefined && claimed === deviceId) return { text: t('usage.device.importSame'), tone: 'ok' }
       const result = await api.importLedger(text)
       onChanged()
       return { text: t('usage.device.imported', { deviceId: result.deviceId }), tone: 'ok' }

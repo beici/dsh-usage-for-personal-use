@@ -47,6 +47,7 @@ export declare const zh: {
     'usage.trend': string;
     'usage.trend.label': string;
     'usage.trend.labelFailed': string;
+    'usage.trend.labelPartial': string;
     'usage.trend.loadFailed': string;
     'usage.range.title': string;
     'usage.range.today': string;
@@ -102,6 +103,7 @@ export declare const zh: {
     'usage.bank.window': string;
     'usage.bank.windowAll': string;
     'usage.bank.save': string;
+    'usage.bank.saving': string;
     'usage.bank.share': string;
     'usage.bank.drawError': string;
     'usage.foot.cost': string;

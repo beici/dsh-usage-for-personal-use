@@ -44,4 +44,9 @@ export declare function TrendChart(props: {
     labels?: Map<string, string>;
     /** The window's own request failed, so the plot has no bars to draw. */
     allFailed?: boolean;
+    /**
+     * The window is incomplete: some of its days never loaded, so the bars sum to
+     * less than the window. The label must not call that sum the total.
+     */
+    partial?: boolean;
 }): ReactNode;

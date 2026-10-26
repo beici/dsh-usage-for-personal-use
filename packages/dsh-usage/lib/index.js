@@ -2109,8 +2109,15 @@ const LOAD_RETRY_MAX = 5;
 const LOCK_ATTEMPTS = 12;
 /** How long one flush waits between lock attempts. */
 const LOCK_RETRY_MS = 25;
-/** Age after which a lock file is assumed to be left behind by a crash. */
-const LOCK_STALE_MS = 1e3;
+/**
+* Age after which a lock file is assumed to be left behind by a crash.
+*
+* A flush takes milliseconds, so a second is far too short to tell a crashed
+* holder from a live one: measured on Windows a second process could delete the
+* lock while the first was still inside the critical section. Fifteen seconds
+* is longer than any write, and a crash still clears after that.
+*/
+const LOCK_STALE_MS = 15e3;
 /** How many distinct note kinds the panel's line keeps in memory. */
 const NOTE_MAX = 24;
 /** `schema` tag carried by an export envelope, so an import can tell it apart from a bare ledger. */
@@ -2316,6 +2323,17 @@ var UsageService = class {
 	*/
 	retentionSeen;
 	/**
+	* The window the file on disk was last pruned to, as recorded in the file.
+	*
+	* `retentionSeen` cannot answer "was this day written under a clock that was
+	* behind this one?" after the first prune, because it is lowered to the
+	* current setting; the file's own window can, and it is what tells a clock
+	* that jumped from a retention the user lowered.
+	*/
+	fileRetention;
+	/** The window a shrink in this session asked for, so later prunes still read as one. */
+	shrankTo;
+	/**
 	* This machine's identity as recorded in every file it writes.
 	*
 	* Pinned in `machine-id.json` on first run rather than derived from the host
@@ -2458,13 +2476,27 @@ var UsageService = class {
 		const doc = parsePeerLedger(parsed);
 		if (doc === void 0) throw new UsageImportError("unreadable ledger payload");
 		await mkdir(this.persistDir, { recursive: true });
-		await writeJsonAtomic(join(this.persistDir, ledgerFileName(claimedId)), {
+		const target = join(this.persistDir, ledgerFileName(claimedId));
+		const existing = await readFile(target, "utf8").then((text) => {
+			try {
+				return parsePeerLedger(JSON.parse(text));
+			} catch {
+				return;
+			}
+		}, () => void 0);
+		const merged = existing === void 0 ? doc.doc : structuredClone(existing.doc);
+		if (existing !== void 0) mergeLedgerMax(merged, doc.doc);
+		if (existing !== void 0) {
+			const kept = ledgerDayKeys(existing.doc).filter((key) => doc.doc.days[key] === void 0);
+			if (kept.length > 0) this.note(`import:${claimedId}`, `import merged into the peer file; ${kept.length} day(s) it already held were kept`);
+		}
+		await writeJsonAtomic(target, {
 			schema: LEDGER_EXPORT_SCHEMA,
 			version: 1,
 			deviceId: claimedId,
 			...doc.machine === void 0 ? {} : { machine: doc.machine },
 			exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
-			ledger: doc.doc
+			ledger: merged
 		});
 		await this.refreshPeers();
 		return { deviceId: claimedId };
@@ -2522,7 +2554,7 @@ var UsageService = class {
 					totals: range.totals,
 					providers: range.providers
 				},
-				availableDays: allKeys,
+				availableDays: ledgerDayKeys(this.ledger),
 				all: {
 					from: allKeys[0] ?? todayKey,
 					to: allKeys[allKeys.length - 1] ?? todayKey,
@@ -2879,6 +2911,7 @@ var UsageService = class {
 			}
 			this.ledgerError = `ledger unreadable (${read.error}); kept as ${basename(kept)}`;
 			this.note("ledger-unreadable", `ledger unreadable (${read.error}); kept as ${basename(kept)}, counting into a fresh file`);
+			lostHistory = true;
 			read = { kind: "missing" };
 		}
 		if (read.kind === "corrupt") {
@@ -2908,15 +2941,18 @@ var UsageService = class {
 				this.loadAbsorbed = true;
 			}
 			this.seenRepairedAt = read.repairedAt ?? 0;
-			this.rememberMachine(read.machine);
-			if (read.retentionDays !== void 0) this.retentionSeen = Math.max(this.retentionSeen, read.retentionDays);
+			await this.rememberMachine(read.machine);
+			if (read.retentionDays !== void 0) {
+				this.retentionSeen = Math.max(this.retentionSeen, read.retentionDays);
+				this.fileRetention = read.retentionDays;
+			}
 			if (read.retentionDays !== void 0 && read.retentionDays === this.options.retainDays) this.clearNote("retention");
 		} else if (read.kind === "missing") await this.adoptLegacyLedger();
 		if (lostHistory) await this.restoreMigratedHistory();
-		await this.refreshPeers();
 		await this.loadSnapshots();
 		const replay = await this.replaySessionLogs();
 		this.replayDoc = replay.doc;
+		await this.refreshPeers();
 		if (replay.skipped > 0) this.note("replay-cap", `${replay.skipped} older transcripts beyond the replay cap of ${SESSION_LOG_MAX_FILES} were not replayed`);
 		const prior = await this.readRepairRecord();
 		const repaired = await this.repairDuplicatedReplay(replay, prior);
@@ -2982,10 +3018,10 @@ var UsageService = class {
 		return id === localMachineId();
 	}
 	/** Remember an id this profile has written under, so its old files fold in. */
-	rememberMachine(id) {
+	async rememberMachine(id) {
 		if (id === void 0 || id === this.machine) return;
 		this.machineAliases.add(id);
-		rememberMachineAlias(this.persistDir, id).catch(() => {});
+		await rememberMachineAlias(this.persistDir, id).catch(() => {});
 	}
 	/** The notes as one line, oldest first, capped so the panel stays readable. */
 	ledgerNoteText() {
@@ -3370,9 +3406,11 @@ var UsageService = class {
 	*/
 	async withLedgerLock(work) {
 		const lockPath = `${this.ledgerPath}.lock`;
+		const token = `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
 		let handle;
 		for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt += 1) try {
 			handle = await open(lockPath, "wx");
+			await handle.writeFile(token).catch(() => {});
 			break;
 		} catch (error) {
 			if (error.code !== "EEXIST") break;
@@ -3386,7 +3424,9 @@ var UsageService = class {
 			await work();
 		} finally {
 			await handle?.close().catch(() => {});
-			if (handle !== void 0) await rm(lockPath, { force: true }).catch(() => {});
+			if (handle !== void 0) {
+				if (await readFile(lockPath, "utf8").catch(() => void 0) === token) await rm(lockPath, { force: true }).catch(() => {});
+			}
 		}
 	}
 	async writeLedgerLocked() {
@@ -3398,7 +3438,7 @@ var UsageService = class {
 		if (disk.kind === "ok") {
 			const target = disk.doc;
 			const stamp = disk.repairedAt ?? 0;
-			this.rememberMachine(disk.machine);
+			await this.rememberMachine(disk.machine);
 			if (stamp > this.seenRepairedAt) {
 				this.seenRepairedAt = stamp;
 				if (this.ledgerWritten !== void 0) mergeLedgerDelta(target, this.ledger, this.ledgerWritten);
@@ -3420,6 +3460,8 @@ var UsageService = class {
 				await writeJsonAtomic(this.ledgerPath, this.ledgerFileDocument());
 				this.ledgerWritten = structuredClone(this.ledger);
 				this.ledgerError = void 0;
+				this.fileRetention = this.options.retainDays;
+				this.shrankTo = void 0;
 				return;
 			} else {
 				if (this.ledgerWritten !== void 0) mergeLedgerDelta(target, this.ledger, this.ledgerWritten);
@@ -3431,8 +3473,9 @@ var UsageService = class {
 		await writeJsonAtomic(this.ledgerPath, this.ledgerFileDocument());
 		this.ledgerWritten = structuredClone(this.ledger);
 		this.ledgerError = void 0;
+		this.fileRetention = this.options.retainDays;
+		this.shrankTo = void 0;
 		this.clearNote("stale-writer");
-		this.clearNote("ledger-unreadable");
 	}
 	/** This process's ledger as a file document: the identity travels with it. */
 	ledgerFileDocument() {
@@ -3455,16 +3498,20 @@ var UsageService = class {
 		const todayKey = localDateKey(Date.now());
 		const days = Object.keys(doc.days).length;
 		const prunable = countPrunable(doc, todayKey, this.options.retainDays);
-		const shrank = this.options.retainDays < this.retentionSeen;
+		const seenBefore = this.retentionSeen;
+		const shrank = this.options.retainDays < seenBefore || this.shrankTo === this.options.retainDays;
+		if (shrank) this.shrankTo = this.options.retainDays;
 		this.retentionSeen = Math.min(this.retentionSeen, this.options.retainDays);
-		if (!shrank && days > 0 && prunable === days) {
-			this.note("retention", `retention skipped: the clock would drop all ${days} recorded days`);
+		const stale = countPrunable(doc, todayKey, Math.max(this.fileRetention ?? this.options.retainDays, this.options.retainDays));
+		const survivors = days - prunable;
+		if (days > 0 && (stale > 0 && days >= 4 && survivors < 2 || prunable === days && !shrank)) {
+			this.note("retention", `retention skipped: the clock would drop ${prunable} of ${days} recorded days`);
 			return 0;
 		}
 		const pruned = pruneLedger(doc, todayKey, this.options.retainDays);
+		const jumped = days >= 4 && pruned > days * .3;
 		if (pruned > 0 && shrank) this.note("retention", `pruned ${pruned} of ${days} recorded days to honour the ${this.options.retainDays}-day window`);
-		else if (pruned > 0 && days >= 4 && pruned > days * .3) this.note("retention", `pruned ${pruned} of ${days} recorded days at once — the clock may have jumped`);
-		else if (pruned > 0) this.clearNote("retention");
+		else if (pruned > 0 && jumped) this.note("retention", `pruned ${pruned} of ${days} recorded days at once — the clock may have jumped`);
 		return pruned;
 	}
 	/** The ledger file as another writer left it: absent, parsed, or unreadable. */

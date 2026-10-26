@@ -191,8 +191,15 @@ const LOCK_ATTEMPTS = 12
 /** How long one flush waits between lock attempts. */
 const LOCK_RETRY_MS = 25
 
-/** Age after which a lock file is assumed to be left behind by a crash. */
-const LOCK_STALE_MS = 1_000
+/**
+ * Age after which a lock file is assumed to be left behind by a crash.
+ *
+ * A flush takes milliseconds, so a second is far too short to tell a crashed
+ * holder from a live one: measured on Windows a second process could delete the
+ * lock while the first was still inside the critical section. Fifteen seconds
+ * is longer than any write, and a crash still clears after that.
+ */
+const LOCK_STALE_MS = 15_000
 
 /** How many trend days the overview serves. */
 const TREND_DAYS = 30
@@ -466,6 +473,20 @@ export class UsageService {
    * closed is still recognised as a shrink instead of looking like a jump.
    */
   private retentionSeen: number
+
+  /**
+   * The window the file on disk was last pruned to, as recorded in the file.
+   *
+   * `retentionSeen` cannot answer "was this day written under a clock that was
+   * behind this one?" after the first prune, because it is lowered to the
+   * current setting; the file's own window can, and it is what tells a clock
+   * that jumped from a retention the user lowered.
+   */
+  private fileRetention: number | undefined
+
+  /** The window a shrink in this session asked for, so later prunes still read as one. */
+  private shrankTo: number | undefined
+
   /**
    * This machine's identity as recorded in every file it writes.
    *
@@ -628,7 +649,30 @@ export class UsageService {
     const doc = parsePeerLedger(parsed)
     if (doc === undefined) throw new UsageImportError('unreadable ledger payload')
     await mkdir(this.persistDir, { recursive: true })
-    await writeJsonAtomic(join(this.persistDir, ledgerFileName(claimedId)), {
+    const target = join(this.persistDir, ledgerFileName(claimedId))
+    // Re-importing is normally the same file twice, but an *older* export of a
+    // device that kept counting would otherwise drop the days the peer file
+    // already holds — and the receiving machine has no way to fetch them again.
+    // So the file is merged, not replaced, and the merge never lowers a bucket.
+    const existing = await readFile(target, 'utf8').then(
+      (text) => {
+        try {
+          return parsePeerLedger(JSON.parse(text) as unknown)
+        } catch {
+          return undefined
+        }
+      },
+      () => undefined,
+    )
+    const merged = existing === undefined ? doc.doc : structuredClone(existing.doc)
+    if (existing !== undefined) mergeLedgerMax(merged, doc.doc)
+    if (existing !== undefined) {
+      const kept = ledgerDayKeys(existing.doc).filter((key) => doc.doc.days[key] === undefined)
+      if (kept.length > 0) {
+        this.note(`import:${claimedId}`, `import merged into the peer file; ${kept.length} day(s) it already held were kept`)
+      }
+    }
+    await writeJsonAtomic(target, {
       schema: LEDGER_EXPORT_SCHEMA,
       version: 1,
       deviceId: claimedId,
@@ -637,7 +681,7 @@ export class UsageService {
       // to count a document it cannot attribute.
       ...(doc.machine === undefined ? {} : { machine: doc.machine }),
       exportedAt: new Date().toISOString(),
-      ledger: doc.doc,
+      ledger: merged,
     })
     await this.refreshPeers()
     return { deviceId: claimedId }
@@ -707,9 +751,11 @@ export class UsageService {
           totals: range.totals,
           providers: range.providers,
         },
-        // Every retained day, not just the trend window: the day picker's
-        // option list reaches back to the oldest day retention still keeps.
-        availableDays: allKeys,
+        // Every retained day *this machine* recorded, not just the trend window:
+        // the day picker's option list reaches back to the oldest day retention
+        // keeps. Peer-only days are left out on purpose — picking one would show
+        // an empty tile, since the picker opens this machine's ledger.
+        availableDays: ledgerDayKeys(this.ledger),
         all: {
           from: allKeys[0] ?? todayKey,
           to: allKeys[allKeys.length - 1] ?? todayKey,
@@ -1081,6 +1127,11 @@ export class UsageService {
       }
       this.ledgerError = `ledger unreadable (${read.error}); kept as ${basename(kept)}`
       this.note('ledger-unreadable', `ledger unreadable (${read.error}); kept as ${basename(kept)}, counting into a fresh file`)
+      // The bytes that just moved aside held this machine's oldest days, and
+      // those have no transcripts to rebuild from — exactly the corrupt path's
+      // loss. Without this the pre-migration file is never folded back in and
+      // the history is gone with only a "kept as" note to show for it.
+      lostHistory = true
       read = { kind: 'missing' }
     }
     if (read.kind === 'corrupt') {
@@ -1126,11 +1177,14 @@ export class UsageService {
       // Remember which correction this file already carries, so a flush from
       // another process can be recognised as newer than what we loaded.
       this.seenRepairedAt = read.repairedAt ?? 0
-      this.rememberMachine(read.machine)
+      await this.rememberMachine(read.machine)
       // The window the file was last pruned to is the only record of the setting
       // behind it: without it a restart reads "the user lowered retention while
       // we were down" as "the clock jumped" and refuses the prune forever.
-      if (read.retentionDays !== undefined) this.retentionSeen = Math.max(this.retentionSeen, read.retentionDays)
+      if (read.retentionDays !== undefined) {
+        this.retentionSeen = Math.max(this.retentionSeen, read.retentionDays)
+        this.fileRetention = read.retentionDays
+      }
       if (read.retentionDays !== undefined && read.retentionDays === this.options.retainDays) {
         // The file already sits at the window this session asks for, so whatever a
         // shrink note reported has been written down: the note has done its job.
@@ -1141,11 +1195,15 @@ export class UsageService {
     // corrupt file takes them with it. The pre-migration file still holds them,
     // so a boot that just lost its ledger folds that history back in.
     if (lostHistory) await this.restoreMigratedHistory()
-    await this.refreshPeers()
     await this.loadSnapshots()
     // One replay pass serves both the backfill and the repair.
     const replay = await this.replaySessionLogs()
     this.replayDoc = replay.doc
+    // Peers are scanned *after* the replay. Whether a peer file's days are
+    // already recorded here is judged against this ledger, and a ledger that has
+    // not been replayed yet is missing exactly the days the transcripts rebuild
+    // — so the peer's copy of them would be counted a second time.
+    await this.refreshPeers()
     if (replay.skipped > 0) {
       // Say it out loud: a replay cut short by the per-start cap would otherwise
       // read as "the transcripts hold nothing older", i.e. as lost history.
@@ -1255,14 +1313,17 @@ export class UsageService {
   }
 
   /** Remember an id this profile has written under, so its old files fold in. */
-  private rememberMachine(id: string | undefined): void {
+  private async rememberMachine(id: string | undefined): Promise<void> {
     if (id === undefined || id === this.machine) return
     this.machineAliases.add(id)
     // …and record it on disk. The set above only lasts this session, while the
     // next boot reads the alias list from the pin file — and that list is empty
     // after a fresh mint, which is exactly the case where the old id has to be
-    // remembered (a lost pin, a host rename).
-    void rememberMachineAlias(this.persistDir, id).catch(() => {})
+    // remembered (a lost pin, a host rename). Awaited rather than fired and
+    // forgotten: a process that exits right after loading would otherwise lose
+    // the only durable record of the old id, which is what makes a lost pin
+    // double-count.
+    await rememberMachineAlias(this.persistDir, id).catch(() => {})
   }
 
   /** The notes as one line, oldest first, capped so the panel stays readable. */
@@ -1727,10 +1788,14 @@ export class UsageService {
    */
   private async withLedgerLock(work: () => Promise<void>): Promise<void> {
     const lockPath = `${this.ledgerPath}.lock`
+    // The token says which process holds the lock, so the release below can tell
+    // its own lock from one another process broke and took over.
+    const token = `${process.pid}-${Math.random().toString(36).slice(2, 10)}`
     let handle: FileHandle | undefined
     for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt += 1) {
       try {
         handle = await open(lockPath, 'wx')
+        await handle.writeFile(token).catch(() => {})
         break
       } catch (error) {
         if ((error as { code?: string }).code !== 'EEXIST') break
@@ -1746,7 +1811,13 @@ export class UsageService {
       await work()
     } finally {
       await handle?.close().catch(() => {})
-      if (handle !== undefined) await rm(lockPath, { force: true }).catch(() => {})
+      if (handle !== undefined) {
+        // Only the lock this run created is removed: if it went stale and another
+        // process broke and re-took it, deleting the file would hand a third
+        // writer the same section.
+        const held = await readFile(lockPath, 'utf8').catch(() => undefined)
+        if (held === token) await rm(lockPath, { force: true }).catch(() => {})
+      }
     }
   }
 
@@ -1764,7 +1835,7 @@ export class UsageService {
       const stamp = disk.repairedAt ?? 0
       // Any machine id this file carries is a name this profile has written
       // under, so its older files stay recognisable as this machine.
-      this.rememberMachine(disk.machine)
+      await this.rememberMachine(disk.machine)
       if (stamp > this.seenRepairedAt) {
         // The file was corrected after we loaded it. Our copy still holds the
         // inflated buckets, so the max merge below would raise them right back
@@ -1809,6 +1880,8 @@ export class UsageService {
         await writeJsonAtomic(this.ledgerPath, this.ledgerFileDocument())
         this.ledgerWritten = structuredClone(this.ledger)
         this.ledgerError = undefined
+        this.fileRetention = this.options.retainDays
+        this.shrankTo = undefined
         // The note stays for the rest of this flush cycle on purpose: it says what
         // happened to the file, and a note that vanished inside the same write
         // would never reach the panel. The next successful flush clears it.
@@ -1829,12 +1902,16 @@ export class UsageService {
     await writeJsonAtomic(this.ledgerPath, this.ledgerFileDocument())
     this.ledgerWritten = structuredClone(this.ledger)
     this.ledgerError = undefined
+    // The file now records this window; the next prune compares against it.
+    this.fileRetention = this.options.retainDays
+    this.shrankTo = undefined
     // The file now carries our identity again, so the warning about a build
     // that stripped it no longer applies.
     this.clearNote('stale-writer')
-    // A file that could not be read at boot was moved aside and a fresh one
-    // written: the warning about not writing is spent.
-    this.clearNote('ledger-unreadable')
+    // The `ledger-unreadable` note is deliberately *not* cleared here: the file
+    // it talks about was moved aside with history inside it, and a note that
+    // lives three seconds — one flush — is a note nobody reads. It stands for
+    // the rest of the session; the next boot reads the fresh file.
   }
 
   /** This process's ledger as a file document: the identity travels with it. */
@@ -1864,34 +1941,48 @@ export class UsageService {
     const prunable = countPrunable(doc, todayKey, this.options.retainDays)
     // A user who lowers retention is asking for exactly this prune, so one shrink
     // is honoured (the threshold exists for a clock that jumped, not for a
-    // settings change). A jump looks different from a shrink: it makes *every*
-    // recorded day fall outside the window at once, while a shrink keeps the
-    // recent days and drops the rest.
-    const shrank = this.options.retainDays < this.retentionSeen
+    // settings change). A jump looks different from a shrink: the file's own
+    // window would already have dropped those days, so a day still on disk
+    // *outside* that window means the clock moved, not the setting.
+    const seenBefore = this.retentionSeen
+    const shrank = this.options.retainDays < seenBefore || this.shrankTo === this.options.retainDays
+    if (shrank) this.shrankTo = this.options.retainDays
     this.retentionSeen = Math.min(this.retentionSeen, this.options.retainDays)
-    if (!shrank && days > 0 && prunable === days) {
-      this.note('retention', `retention skipped: the clock would drop all ${days} recorded days`)
+    // Days even the wider of the two windows calls stale: they can only be here
+    // because the clock they were written under was behind this one. The wider
+    // window is the file's own, so a setting the user lowered does not make its
+    // still-recent days look like a jump.
+    const stale = countPrunable(doc, todayKey, Math.max(this.fileRetention ?? this.options.retainDays, this.options.retainDays))
+    // A clock that jumped leaves almost nothing inside the window, and that is
+    // the one prune to refuse — whether or not a shrink is also in play. A
+    // shrink is honoured for the *size* of what it drops, never for dropping
+    // everything, and a single live call recorded after the jump must not be
+    // what tips the check. A short ledger keeps the plain rule: with two days
+    // recorded, dropping the one that fell out of the window is the normal way
+    // a window moves, and only a prune of both is a jump.
+    const survivors = days - prunable
+    const jump = (stale > 0 && days >= 4 && survivors < 2) || (prunable === days && !shrank)
+    if (days > 0 && jump) {
+      this.note('retention', `retention skipped: the clock would drop ${prunable} of ${days} recorded days`)
       return 0
     }
     const pruned = pruneLedger(doc, todayKey, this.options.retainDays)
-    // A shrink is the user's own doing, so it is honoured — but deleting days is
-    // still worth saying out loud, because the panel simply shows fewer of them.
+    // A jump drops a whole slab in one pass, where a steady clock drops one a
+    // day; a shrink can do the same, so the warning rides along with it rather
+    // than being hidden behind it.
+    const jumped = days >= 4 && pruned > days * 0.3
     if (pruned > 0 && shrank) {
+      // A shrink is the user's own doing, so it is honoured — but deleting days
+      // is still worth saying out loud, because the panel simply shows fewer.
       this.note('retention', `pruned ${pruned} of ${days} recorded days to honour the ${this.options.retainDays}-day window`)
-    } else if (pruned > 0 && days >= 4 && pruned > days * 0.3) {
-      // A clock that jumped forward drops a whole slab of days in one pass, where
-      // a steady clock drops one a day. The days are gone either way; the note is
-      // what keeps that from happening without a word.
+    } else if (pruned > 0 && jumped) {
       this.note('retention', `pruned ${pruned} of ${days} recorded days at once — the clock may have jumped`)
-    } else if (pruned > 0) {
-      // One day fell out of the window: that is the normal way a window moves, and
-      // there is nothing to report.
-      this.clearNote('retention')
     }
-    // With nothing pruned the note is left alone: a prune that already happened is
-    // cleared by the next load that finds the file's window (`retentionDays`)
-    // matching the setting — otherwise the first flush would wipe the note three
-    // seconds after the user asked for the shrink and never read it.
+    // One day falling out of the window is the normal way a window moves, and
+    // there is nothing to report; a standing note is left alone here, because
+    // the first flush after a load-time prune would otherwise wipe the note
+    // seconds after the user asked for the shrink. The load path clears it once
+    // the file's `retentionDays` matches the setting.
     return pruned
   }
 

@@ -112,11 +112,16 @@ non-JSON, missing `deviceId`, a `deviceId` unusable as a filename (`../etc`), a
 payload that is not a ledger, and an attempt to import *this* machine's own
 export. A `403` means the request did not come from loopback.
 
-Because the import replaces `usage-ledger.<peerId>.json` wholesale, importing
-the same file again, or an older export from the same peer, converges instead
-of accumulating. Note the consequence: importing a *stale* export from a peer
-rolls that peer's row back. The peer's own file is authoritative; export it
-from the peer again rather than hand-editing anything here.
+An import **merges into** `usage-ledger.<peerId>.json` instead of replacing it,
+and the merge never lowers a bucket: importing the same file twice converges,
+and importing an *older* export from a peer that kept counting keeps the days
+the file already held (the panel notes how many) rather than dropping them. The
+receiving machine has no way to fetch those days again, so the file on disk is
+the authority and the import only ever adds.
+
+**重新扫描** posts to `/refresh`, not `/overview`: the overview route answers with
+the ledger the process already holds, while `/refresh` is the one that rescans
+the persist directory and replays the transcripts before answering.
 
 ## Never merged into your own ledger
 
@@ -128,6 +133,13 @@ never folded into `svc.ledger`. So:
   merged totals" checks in `harness/host-test.mjs`;
 - a peer un-imported (file deleted) instantly stops contributing;
 - retention pruning applies to the local ledger only.
+
+Peer files are scanned **after** the transcript replay, not before: whether a
+peer's day is already recorded here is judged against this machine's ledger, and
+a ledger that has not been replayed yet is missing exactly the days the
+transcripts rebuild — so scanning first counted the peer's copy of them twice.
+A peer file with no `machine` stamp contributes only the days this machine has
+never recorded, because it cannot be told apart from a copy of our own history.
 
 ## Workflow across machines
 
@@ -145,8 +157,10 @@ peer, delete its `usage-ledger.<id>.json` and press 重新扫描.
 - **No automatic sync.** No network calls, no shared folder watching, no
   credentials. The design brief was manual import/export only; a sync service
   would need its own auth story and conflict policy.
-- **No merge-on-import.** See the table above: a merge cannot be both exact and
-  repeatable, and repeatability matters more for a backup story.
+- **No merge-on-import that lowers a bucket.** The import merges day by day and
+  never lowers a number, so re-importing is safe and an older export cannot roll
+  a peer back; the trade-off is that a peer that genuinely deleted usage keeps
+  its old figure here.
 
 ## Verification
 
@@ -154,7 +168,8 @@ peer, delete its `usage-ledger.<id>.json` and press 重新扫描.
 node --experimental-strip-types harness/host-test.mjs
 ```
 
-74 checks, covering device id hygiene, export envelope shape, import of valid
-and invalid payloads, summing, re-import idempotence, the local-ledger
-invariant, legacy migration (including that it persists before renaming the old
-file away), transcript backfill, the loopback fence and the DeepSeek peak clock.
+198 checks, covering device id hygiene, the export envelope shape, import of
+valid and invalid payloads, merging rather than replacing a peer file, summing,
+re-import idempotence, the local-ledger invariant, legacy migration (including
+that it persists before renaming the old file away), transcript backfill, the
+loopback fence and the DeepSeek peak clock.

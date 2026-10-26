@@ -1079,6 +1079,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   // to one retained day instead.
   const [bankDay, setBankDay] = useState<string | undefined>(undefined)
   const [refreshing, setRefreshing] = useState(false)
+  const refreshTimer = useRef<number | undefined>(undefined)
   // The usage tab's window: a fixed range, or a custom date pair whose ends are
   // remembered separately so picking one end never loses the other.
   const [rangeKey, setRangeKey] = useState<RangeKey>('today')
@@ -1240,7 +1241,13 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   useEffect(() => {
     if (progressStamp === budgetStamp.current) return
     budgetStamp.current = progressStamp
-    if (loadsFailed && retryAttempts.current >= RETRY_MAX_ATTEMPTS) retryAttempts.current = 0
+    if (loadsFailed && retryAttempts.current >= RETRY_MAX_ATTEMPTS) {
+      retryAttempts.current = 0
+      // A refilled budget is only worth anything if something walks the ladder
+      // again: the retry effect watches the tick, not this stamp (the stamp moves
+      // on every poll, which is exactly what used to starve the ladder).
+      setRetryTick((tick) => tick + 1)
+    }
   }, [progressStamp, loadsFailed])
   useEffect(() => {
     if (!loadsFailed) {
@@ -1254,7 +1261,12 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
       setRetryTick((tick) => tick + 1)
     }, delay)
     return () => window.clearTimeout(timer)
-  }, [loadsFailed, pollIntervalMs, retryTick, progressStamp])
+    // `progressStamp` is deliberately not a dependency: the host stamps every
+    // overview with the current time, so a poll lands at about the first rung's
+    // delay and re-armed the timer before it could fire — the count never rose
+    // and the ladder never walked. The budget refill above is where a poll gets
+    // to act on a recovery.
+  }, [loadsFailed, pollIntervalMs, retryTick])
 
   const dayOptions = snapshot === null
     ? []
@@ -1286,9 +1298,22 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
       refresh()
     } finally {
       // The POST resolves through the next poll tick; unlock shortly either way.
-      window.setTimeout(() => setRefreshing(false), 3000)
+      // The timer is tracked so an unmount does not leave a state update behind,
+      // and a second click replaces the first deadline instead of stacking one.
+      if (refreshTimer.current !== undefined) window.clearTimeout(refreshTimer.current)
+      refreshTimer.current = window.setTimeout(() => {
+        refreshTimer.current = undefined
+        setRefreshing(false)
+      }, 3000)
     }
   }
+
+  // The unlock deadline dies with the panel; a timer left running would call
+  // setState on a component that is no longer mounted.
+  useEffect(() => () => {
+    if (refreshTimer.current !== undefined) window.clearTimeout(refreshTimer.current)
+    refreshTimer.current = undefined
+  }, [])
 
   // Disabled and still-loading states keep the settings row mounted: it owns
   // the enable checkbox, so replacing the whole panel would leave the user no
@@ -1575,7 +1600,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
                         <span className={styles.providerTokens}>{formatCost(summary.totals.cost)}</span>
                       </div>
                     )}
-                    {trendRows.length >= TREND_CHART_MIN_DAYS && <TrendChart rows={trendRows} colors={modelColors} labels={modelLabels} />}
+                    {trendRows.length >= TREND_CHART_MIN_DAYS && <TrendChart rows={trendRows} colors={modelColors} labels={modelLabels} partial={activePartial} />}
                     <span className={styles.cardTitle}>{t('usage.range.channels')}</span>
                     <ChannelBreakdown summary={summary} providers={snapshot.providers} currentProvider={current.provider} modelColors={modelColors} modelLabels={modelLabels} />
                   </>}
@@ -1597,8 +1622,14 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
             ))
           })()}
           {snapshot.providers.some((provider) => isConfigured(provider) && provider.error !== undefined) && (
-            <span className={styles.errorLine}>
-              {snapshot.providers.filter((provider) => isConfigured(provider) && provider.error !== undefined).map((provider) => `${provider.displayName}: ${t('usage.provider.error', { error: provider.error ?? '' })}`).join(t('usage.errorListSeparator'))}
+            <span
+              className={styles.errorLine}
+              // The raw provider text stays reachable as a tooltip: it is what a
+              // bug report needs, and what the panel must not show in a locale
+              // it does not own.
+              title={snapshot.providers.filter((provider) => isConfigured(provider) && provider.error !== undefined).map((provider) => `${provider.displayName}: ${provider.error ?? ''}`).join('\n')}
+            >
+              {snapshot.providers.filter((provider) => isConfigured(provider) && provider.error !== undefined).map((provider) => `${provider.displayName}: ${t('usage.provider.error', { error: describeError(provider.error ?? '') })}`).join(t('usage.errorListSeparator'))}
             </span>
           )}
         </div>
@@ -1670,6 +1701,9 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
   const data = voucherData(ledger)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [drawError, setDrawError] = useState<string | undefined>(undefined)
+  // Encoding a full-size PNG takes long enough to be worth a label change: a
+  // button that looks idle invites a second click and a second download.
+  const [saving, setSaving] = useState(false)
   const dataKey = data === undefined ? '' : `${data.from}|${data.to}|${data.tokens}|${data.calls}|${data.cost}`
 
   useEffect(() => {
@@ -1701,8 +1735,10 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
 
   const onSave = (): void => {
     const canvas = canvasRef.current
-    if (canvas === null || data === undefined) return
+    if (canvas === null || data === undefined || saving) return
+    setSaving(true)
     canvas.toBlob((blob) => {
+      setSaving(false)
       if (blob === null) return
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
@@ -1757,8 +1793,10 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
             </span>
             <span className={styles.muted}>{t('usage.bank.window', { from: data.from, to: data.to })}</span>
             <div className={styles.buttonRow}>
-              <button type="button" className={styles.refreshBtn} onClick={onSave}>{t('usage.bank.save')}</button>
-              {shareSupported && <button type="button" className={styles.refreshBtn} onClick={onShare}>{t('usage.bank.share')}</button>}
+              <button type="button" className={styles.refreshBtn} onClick={onSave} disabled={saving}>
+                {saving ? t('usage.bank.saving') : t('usage.bank.save')}
+              </button>
+              {shareSupported && <button type="button" className={styles.refreshBtn} onClick={onShare} disabled={saving}>{t('usage.bank.share')}</button>}
             </div>
           </>}
     </div>

@@ -226,8 +226,13 @@ export function TrendChart(props: {
   labels?: Map<string, string>
   /** The window's own request failed, so the plot has no bars to draw. */
   allFailed?: boolean
+  /**
+   * The window is incomplete: some of its days never loaded, so the bars sum to
+   * less than the window. The label must not call that sum the total.
+   */
+  partial?: boolean
 }): ReactNode {
-  const { rows, colors, labels, allFailed } = props
+  const { rows, colors, labels, allFailed, partial } = props
   const [hovered, setHovered] = useState<number | undefined>(undefined)
   // A window that failed whole has nothing to chart: painting each of its buckets
   // as a failed stripe drew a wall of full-height hatch marks — 27 of them across
@@ -287,7 +292,11 @@ export function TrendChart(props: {
         role="img"
         aria-label={anyFailed
           ? t('usage.trend.labelFailed', { from: chartFrom, to: chartTo })
-          : t('usage.trend.label', { from: chartFrom, to: chartTo, tokens: formatTokens(chartTotal) })}
+          : partial === true
+            // The bars only cover the days that arrived: saying "in total" here
+            // would state a number the tile beside it refuses to state.
+            ? t('usage.trend.labelPartial', { from: chartFrom, to: chartTo, tokens: formatTokens(chartTotal) })
+            : t('usage.trend.label', { from: chartFrom, to: chartTo, tokens: formatTokens(chartTotal) })}
       >
         <div className={styles.trendYLabels} aria-hidden="true">
           {GRIDLINE_FRACTIONS.map((fraction) => (

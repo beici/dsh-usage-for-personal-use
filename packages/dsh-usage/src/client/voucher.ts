@@ -30,9 +30,14 @@ export interface VoucherData {
 /** Anti-inflation exchange rate: 1,000,000 tokens mint one whale yuan. */
 export const TOKENS_PER_WHALE_YUAN = 1_000_000
 
-/** The note's face value in whale yuan; the smallest denomination is 1. */
+/**
+ * The note's face value in whale yuan: one per full 1,000,000 tokens, never
+ * rounded up — 1.5M mints 1, not 2, or the note would claim tokens nobody
+ * spent. The smallest denomination is 1 (a note worth 0 is not a note), which
+ * is why the panel's hint says the first million is what mints it.
+ */
 export function faceValue(tokens: number): number {
-  return Math.max(1, Math.round(tokens / TOKENS_PER_WHALE_YUAN))
+  return Math.max(1, Math.floor(tokens / TOKENS_PER_WHALE_YUAN))
 }
 
 /** Local calendar day (`YYYY-MM-DD`) for an epoch ms timestamp. */
