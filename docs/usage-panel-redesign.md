@@ -604,7 +604,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   once, a clipboard that throws synchronously still releasing the button and
   saying the copy failed, a local draw failure told apart from a request failure,
   and an inverted custom pair keeping each typed value in its own box.
-- `node --experimental-strip-types harness/host-test.mjs` — 262 checks: range
+- `node --experimental-strip-types harness/host-test.mjs` — 267 checks: range
   aggregate + per-model series, route guards, device ledger, loopback fence,
   peak clock, the record-carried route of the live fold, transcript dedupe and
   the judged repair, ledger quarantine and unreadable-file protection, the
@@ -666,7 +666,23 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   well as tokens (a repriced bucket or a moved day no longer keeps serving the
   old split and the old ¥), and a range aggregate bound to the span it was
   fetched for (a window change is not a retry, so the previous window's total
-  can no longer be labelled with the new dates).
+  can no longer be labelled with the new dates). Round 17 adds: a repair note
+  that names what it could not finish (a bucket already equal to the clean value
+  is no longer reported as "may still be inflated", so a healthy ledger boots
+  without a warning and without rewriting its marker), a peer document merged
+  only inside the retained window, a renamed file of this machine not
+  re-inflating a bucket the repair had just corrected (its buckets are clamped
+  to the recorded floors when the file predates the repair), a snapshot file
+  read through the same BOM-tolerant parser as the ledger, a slab prune judged
+  against the last write rather than the clock, and a short bucket (the ledger
+  holds *fewer* calls than the duplicate-free replay) described as short instead
+  of inflated. The client side adds a history stamp built from the per-day split
+  (a bucket moved between days no longer keeps serving the old split), a save
+  button released by a watchdog when the encoder never answers, a share that
+  reports a failure instead of returning in silence, a whole-window failure
+  saying the whole window failed (a partial answer keeps the partial sentence),
+  a save failure cleared when the voucher's date changes, a draw failure stated
+  once instead of twice, and the window-loading row announced as a status.
 - Live bundle serving was proven against the running host:
   `GET /plugins/events` (loopback-exempt) lists the plugin row's `rev`, and
   `GET /plugins/??@linxin666/dsh-usage/client.js&rev=<rev>` returns the new

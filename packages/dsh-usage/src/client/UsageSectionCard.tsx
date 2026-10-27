@@ -24,7 +24,7 @@ import { useEffect, useId, useRef, useState, useSyncExternalStore, type Keyboard
 import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { UsageStoreInstance } from './usage-store.ts'
 import { t } from './locales.ts'
-import { describeError } from './error-text.ts'
+import { describeError, drawErrorText } from './error-text.ts'
 import styles from './usage.module.css'
 import { PeakBadge } from './PeakBadge.tsx'
 import { TrendChart, type TrendRow } from './TrendChart.tsx'
@@ -314,21 +314,21 @@ const RANGE_FETCH_MAX_DAYS = 45
  */
 function historyStampOf(usage: UsageOverviewView['usage']): string {
   const recorded = usage.availableDays?.length ?? usage.days.length
-  const rows = usage.all === undefined ? usage.days.map((row) => row.totals) : [usage.all.totals]
-  // Tokens alone are not the history: a peer import that moves a bucket to
-  // another day, a corrected call count, or a bucket repriced by a new price book
-  // all leave the token total untouched. A stamp built from tokens only kept
-  // serving the old per-day split (and the old ¥) until a manual refresh.
+  // The stamp has to see the per-day split, not just the ledger total: a peer
+  // import that moves a whole bucket from one day to another leaves the total
+  // untouched, and a stamp built from the total kept serving the old split until
+  // a manual refresh. Cost is carried in ten-thousandths — at hundredths a
+  // repricing of a sub-cent bucket was invisible.
   let tokens = 0
   let calls = 0
   let cost = 0
-  for (const totals of rows) {
-    tokens += totalOf(totals)
-    calls += totals.calls
-    cost += totals.cost
+  for (const row of usage.days) {
+    tokens += totalOf(row.totals)
+    calls += row.totals.calls
+    cost += row.totals.cost
   }
   const today = usage.today.totals
-  return `${recorded}:${tokens - totalOf(today)}:${calls - today.calls}:${Math.round((cost - today.cost) * 100)}`
+  return `${recorded}:${tokens - totalOf(today)}:${calls - today.calls}:${Math.round((cost - today.cost) * 10_000)}`
 }
 
 /**
@@ -1764,7 +1764,9 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
                 title={activeError}
                 aria-describedby={rangeDetailId}
               >
-                {t('usage.range.error', { error: describeError(activeError) })}
+                {rangeFailed
+                  ? t('usage.range.errorAll', { error: describeError(activeError) })
+                  : t('usage.range.error', { error: describeError(activeError) })}
               </span>
               {/* A title is mouse-only, so the raw text rides along where a
                   screen reader can reach it without being printed twice. */}
@@ -1774,7 +1776,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
           {rangeKey === 'custom' && !customPicked
             ? <span className={styles.muted} data-dsh-part="custom-prompt">{t('usage.range.customPrompt')}</span>
             : slicePending(activeSlice, rangeKey)
-              ? <span className={styles.muted}>{t('usage.range.loading')}</span>
+              ? <span className={styles.muted} role="status">{t('usage.range.loading')}</span>
               : activeError !== undefined && !rangeStale
                 // The days that did arrive are a WRONG total, not a small one,
                 // so a failed window states the failure and the per-day trend
@@ -1929,12 +1931,16 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
   // and the mounted flag have to outlive the handler: an unmount used to leave
   // the timer armed and a state update queued on a dead component.
   const revokeTimer = useRef<number | undefined>(undefined)
+  // A `toBlob` that never calls back (a stalled encoder) used to leave both
+  // buttons disabled for the rest of the session; the watchdog releases them.
+  const saveWatchdog = useRef<number | undefined>(undefined)
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
     return () => {
       mounted.current = false
       if (revokeTimer.current !== undefined) window.clearTimeout(revokeTimer.current)
+      if (saveWatchdog.current !== undefined) window.clearTimeout(saveWatchdog.current)
     }
   }, [])
   const dataKey = data === undefined ? '' : `${data.from}|${data.to}|${data.tokens}|${data.calls}|${data.cost}`
@@ -1946,6 +1952,9 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
     if (data === undefined || hidden) return
     const voucher = data
     let cancelled = false
+    // The save failure belongs to the voucher that was on screen: picking
+    // another date used to keep "failed to save" next to a fresh note.
+    setSaveError(undefined)
     loadVoucherArt().then((art) => {
       if (cancelled) return
       const canvas = canvasRef.current
@@ -1975,13 +1984,27 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
     if (canvas === null || data === undefined || saving) return
     setSaving(true)
     setSaveError(undefined)
-    // `toBlob` and the object URL can both throw. The button is released on
-    // every path — including a throw, which is why the release sits in a
-    // `finally` — because the old code only cleared it inside the callback and
-    // one synchronous throw left the button disabled for the rest of the
-    // session.
+    // `toBlob` and the object URL can both throw, and a `toBlob` can also never
+    // call back at all: the button is released on every path, including the
+    // silent one, which is why the release sits in a `finally` plus a watchdog.
+    const armWatchdog = (): void => {
+      if (saveWatchdog.current !== undefined) window.clearTimeout(saveWatchdog.current)
+      saveWatchdog.current = window.setTimeout(() => {
+        saveWatchdog.current = undefined
+        if (!mounted.current) return
+        setSaveError(t('usage.bank.drawFailed'))
+        setSaving(false)
+      }, 15_000)
+    }
+    const disarmWatchdog = (): void => {
+      if (saveWatchdog.current === undefined) return
+      window.clearTimeout(saveWatchdog.current)
+      saveWatchdog.current = undefined
+    }
     try {
+      armWatchdog()
       canvas.toBlob((blob) => {
+        disarmWatchdog()
         try {
           // A null blob is a failed draw too (a canvas too large for the encoder,
           // no encoder at all): the click used to release the button and say
@@ -2010,6 +2033,7 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
         }
       }, 'image/png')
     } catch (error) {
+      disarmWatchdog()
       setSaveError(error instanceof Error ? error.message : String(error))
       setSaving(false)
     }
@@ -2018,17 +2042,40 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
   const shareSupported = typeof navigator !== 'undefined' && typeof navigator.canShare === 'function'
   const onShare = (): void => {
     const canvas = canvasRef.current
-    if (canvas === null || data === undefined || !shareSupported) return
-    canvas.toBlob(async (blob) => {
-      if (blob === null) return
-      const file = new File([blob], `dsh-whale-voucher-${data.to}.png`, { type: 'image/png' })
-      if (!navigator.canShare({ files: [file] })) return
-      try {
-        await navigator.share({ files: [file], title: t('usage.bank.title') })
-      } catch {
-        // A user-cancelled share sheet rejects; nothing to report.
-      }
-    }, 'image/png')
+    if (canvas === null || data === undefined || !shareSupported || saving) return
+    // The share used to have no busy state and no failure path at all: a null
+    // blob, a `canShare` refusal and a throw all ended in silence, which reads as
+    // a click that did nothing. Every one of them now says so.
+    setSaving(true)
+    setSaveError(undefined)
+    try {
+      canvas.toBlob((blob) => {
+        void (async () => {
+          try {
+            if (blob === null) {
+              if (mounted.current) setSaveError(t('usage.bank.drawFailed'))
+              return
+            }
+            const file = new File([blob], `dsh-whale-voucher-${data.to}.png`, { type: 'image/png' })
+            if (!navigator.canShare({ files: [file] })) {
+              if (mounted.current) setSaveError(t('usage.bank.shareError'))
+              return
+            }
+            await navigator.share({ files: [file], title: t('usage.bank.title') })
+          } catch (error) {
+            // A cancelled share sheet rejects with AbortError and needs no
+            // sentence; anything else is a failure worth reporting.
+            const cancelled = error instanceof DOMException && error.name === 'AbortError'
+            if (!cancelled && mounted.current) setSaveError(t('usage.bank.shareError'))
+          } finally {
+            if (mounted.current) setSaving(false)
+          }
+        })()
+      }, 'image/png')
+    } catch {
+      setSaveError(t('usage.bank.shareError'))
+      setSaving(false)
+    }
   }
 
   return (
@@ -2054,7 +2101,7 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
             {drawError !== undefined && (
             <>
               <span className={styles.errorLine} title={drawError} aria-describedby={drawDetailId}>
-                {t('usage.bank.drawError', { error: describeError(drawError, 'usage.bank.drawFailed') })}
+                {drawErrorText(drawError)}
               </span>
               <span id={drawDetailId} className={styles.srOnly}>{drawError}</span>
             </>

@@ -2215,11 +2215,13 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await svc.stop()
 }
 
-// ---- a repair record without floors does not subtract again --------------
+// ---- a repair record without floors is re-judged, not obeyed ------------
 // The record is what says which buckets were already corrected. A record that
 // exists but yields no floors (the shape builds before c8d5b7e wrote, or a
-// hand-damaged one) made every bucket look untouched, so the copies were taken
-// out a second time — and a wrong subtraction cannot be merged back.
+// hand-damaged one) cannot answer that — but refusing to repair kept the
+// inflation for good. The exact-growth test is what keeps a subtraction safe: a
+// bucket already on the deduped value matches it and is passed over, so the
+// record is re-judged from the replay and rebuilt.
 {
   const home = await freshHome()
   const at = new Date('2026-10-16T09:00:00').getTime()
@@ -2250,9 +2252,9 @@ async function writeTranscript(home, lines, session = 'sess1') {
   const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
   await svc.loadPersisted()
   const day = svc.overview().usage.days.find((row) => row.date === '2026-10-16')
-  check('a record without floors does not subtract again', day?.totals.calls === 3 && day?.totals.inputTokens === 500, `${day?.totals.calls}/${day?.totals.inputTokens}`)
+  check('a record without floors is re-judged from the replay', day?.totals.calls === 2 && day?.totals.inputTokens === 400, `${day?.totals.calls}/${day?.totals.inputTokens}`)
   const note = String(svc.overview().usage.ledgerNote ?? '')
-  check('an unusable record is reported', note.includes('repair record could not be read'), note)
+  check('an unusable record is reported', note.includes('re-judged from the replay'), note)
   await svc.stop()
 
   // The same record with a BOM is read, so its floors apply and the gate keeps
@@ -2486,6 +2488,102 @@ async function writeTranscript(home, lines, session = 'sess1') {
   check('an import refuses a file that holds another device', answer.includes('another device'), answer)
   const kept = JSON.parse(await readFile(target, 'utf8'))
   check('the mismatched peer file is left untouched', kept.deviceId === 'someone-else', kept.deviceId)
+  await svc.stop()
+}
+
+// ---- a peer day outside the window is not served -------------------------
+// Peers were summed with no window at all, so a day that fell out of this
+// device's window came back from the peer copy on every start — and once the
+// local copy was gone, the whole peer bucket read as "not recorded here" and the
+// same calls were counted a second time.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDateKey } = await load('core/ledger.ts')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const today = localDateKey(Date.now())
+  const old = localDateKey(Date.now() - 40 * 86_400_000)
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  await writeFile(join(dir, `usage-ledger.${localDeviceId()}.json`), JSON.stringify({
+    version: 1,
+    days: { [today]: { buddy: { m1: bucket(100, 1) } } },
+  }))
+  await writeFile(join(dir, 'usage-ledger.peerold.json'), JSON.stringify({
+    version: 1,
+    deviceId: 'peerold',
+    days: { [old]: { buddy: { m1: bucket(9_000, 90) } } },
+  }))
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 7 })
+  await svc.loadPersisted()
+  const rows = svc.overview().usage.days.map((row) => row.date)
+  check('a peer day older than the window is not served', !rows.includes(old), rows.join(','))
+  check('the window keeps the days inside it', svc.overview().usage.all?.totals.calls === 1, String(svc.overview().usage.all?.totals.calls))
+  await svc.stop()
+}
+
+// ---- a bucket the replay says holds more is not called inflated ----------
+// The note used to assert "the ledger holds more there than the duplicate set
+// explains" whatever the direction: a bucket holding *fewer* calls than the
+// duplicate-free replay was told it might still be inflated, on every start.
+// The day sits outside the replay window on purpose — inside it the fold raises
+// the bucket to the replay's value before the repair ever looks at it.
+{
+  const home = await freshHome()
+  const { localDateKey } = await load('core/ledger.ts')
+  const dayKey = localDateKey(Date.now() - 200 * 86_400_000)
+  const at = new Date(dayKey + 'T09:00:00').getTime()
+  const call = (id, input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { id, source: { provider: 'buddy', model: 'm1' } },
+    },
+  })
+  await writeTranscript(home, [call('msg-1', 100)], 'parent')
+  await writeTranscript(home, [call('msg-1', 100), call('msg-2', 300)], 'child')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  await writeFile(join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`), JSON.stringify({
+    version: 1,
+    days: { [dayKey]: { buddy: { m1: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 1, cost: 0 } } } },
+  }))
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const note = String(svc.overview().usage.ledgerNote ?? '')
+  check('a short bucket is described as short', note.includes('fewer calls'), note)
+  check('a short bucket is not called inflated', !note.includes('may still be inflated'), note)
+  await svc.stop()
+}
+
+// ---- a healthy ledger is not told it may still be inflated ---------------
+// The exact-growth gate skips a bucket that already sits on the deduped value,
+// which is the ordinary outcome for a seeded subagent — and the old sentence
+// turned that into a warning repeated on every boot, with no marker written.
+{
+  const home = await freshHome()
+  const at = new Date('2026-10-16T09:00:00').getTime()
+  const call = (id, input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { id, source: { provider: 'buddy', model: 'm1' } },
+    },
+  })
+  await writeTranscript(home, [call('msg-1', 100)], 'parent')
+  await writeTranscript(home, [call('msg-1', 100), call('msg-2', 300)], 'child')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  await writeFile(join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`), JSON.stringify({
+    version: 1,
+    days: { '2026-10-16': { buddy: { m1: { inputTokens: 400, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 2, cost: 0 } } } },
+  }))
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const note = String(svc.overview().usage.ledgerNote ?? '')
+  check('a healthy ledger raises no repair note', note === '', note)
   await svc.stop()
 }
 

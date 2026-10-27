@@ -107,6 +107,7 @@ window.__ModuleLoader__.load({
 			"usage.range.loadFailed": "加载失败",
 			"usage.range.loading": "正在加载该时间范围的用量…",
 			"usage.range.error": "部分日期加载失败：{error}",
+			"usage.range.errorAll": "该时间段加载失败：{error}",
 			"usage.noData": "暂无用量数据（统计自插件启用起）",
 			"usage.balance": "余额",
 			"usage.balance.unsupported": "暂不支持余额查询",
@@ -144,6 +145,7 @@ window.__ModuleLoader__.load({
 			"usage.bank.drawError": "票券生成失败：{error}",
 			"usage.bank.drawFailed": "票券生成失败（本机绘制出错）",
 			"usage.bank.saveError": "票券保存失败：{error}",
+			"usage.bank.shareError": "票券分享失败，请稍后再试",
 			"usage.foot.cost": "今日消费",
 			"usage.foot.noData": "今日暂无用量",
 			"usage.foot.open": "打开使用统计设置",
@@ -241,6 +243,7 @@ window.__ModuleLoader__.load({
 			"usage.range.loadFailed": "Failed to load",
 			"usage.range.loading": "Loading this window…",
 			"usage.range.error": "Some days failed to load: {error}",
+			"usage.range.errorAll": "This window failed to load: {error}",
 			"usage.noData": "No usage data yet (counting starts when the plugin is enabled)",
 			"usage.balance": "Balance",
 			"usage.balance.unsupported": "Balance query not supported",
@@ -278,6 +281,7 @@ window.__ModuleLoader__.load({
 			"usage.bank.drawError": "Failed to render the voucher: {error}",
 			"usage.bank.drawFailed": "Failed to render the voucher on this device",
 			"usage.bank.saveError": "Failed to save the voucher: {error}",
+			"usage.bank.shareError": "Failed to share the voucher. Try again in a moment.",
 			"usage.foot.cost": "Today spend",
 			"usage.foot.noData": "No usage yet today",
 			"usage.foot.open": "Open usage statistics settings",
@@ -360,6 +364,15 @@ window.__ModuleLoader__.load({
 			if (NETWORK_ERROR.test(error)) return t("usage.error.network");
 			const status = STATUS_ERROR.exec(error);
 			return status === null ? t(fallback) : t("usage.error.status", { status: status[1] });
+		}
+		/**
+		* The voucher's own draw failure already *is* the sentence: wrapping it in
+		* "failed to render the voucher: …" printed it twice. Anything else keeps the
+		* wrapper, so a real cause still reads as a cause.
+		*/
+		function drawErrorText(error) {
+			const detail = describeError(error, "usage.bank.drawFailed");
+			return detail === t("usage.bank.drawFailed") ? detail : t("usage.bank.drawError", { error: detail });
 		}
 		//#endregion
 		//#region \0dsh-css:packages/dsh-usage/src/client/usage.module.css.mjs
@@ -2578,17 +2591,16 @@ window.__ModuleLoader__.load({
 		*/
 		function historyStampOf(usage) {
 			const recorded = usage.availableDays?.length ?? usage.days.length;
-			const rows = usage.all === void 0 ? usage.days.map((row) => row.totals) : [usage.all.totals];
 			let tokens = 0;
 			let calls = 0;
 			let cost = 0;
-			for (const totals of rows) {
-				tokens += totalOf(totals);
-				calls += totals.calls;
-				cost += totals.cost;
+			for (const row of usage.days) {
+				tokens += totalOf(row.totals);
+				calls += row.totals.calls;
+				cost += row.totals.cost;
 			}
 			const today = usage.today.totals;
-			return `${recorded}:${tokens - totalOf(today)}:${calls - today.calls}:${Math.round((cost - today.cost) * 100)}`;
+			return `${recorded}:${tokens - totalOf(today)}:${calls - today.calls}:${Math.round((cost - today.cost) * 1e4)}`;
 		}
 		/**
 		* A picked day key, held inside the calendar's own bounds. The picker's `min`
@@ -3959,7 +3971,7 @@ window.__ModuleLoader__.load({
 										role: "status",
 										title: activeError,
 										"aria-describedby": rangeDetailId,
-										children: t("usage.range.error", { error: describeError(activeError) })
+										children: rangeFailed ? t("usage.range.errorAll", { error: describeError(activeError) }) : t("usage.range.error", { error: describeError(activeError) })
 									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										id: rangeDetailId,
 										className: usage_module_css_default.srOnly,
@@ -3971,6 +3983,7 @@ window.__ModuleLoader__.load({
 										children: t("usage.range.customPrompt")
 									}) : slicePending(activeSlice, rangeKey) ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: usage_module_css_default.muted,
+										role: "status",
 										children: t("usage.range.loading")
 									}) : activeError !== void 0 && !rangeStale ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TrendChart, {
 										rows: trendRows,
@@ -4128,12 +4141,14 @@ window.__ModuleLoader__.load({
 			const [saveError, setSaveError] = (0, react.useState)(void 0);
 			const [saving, setSaving] = (0, react.useState)(false);
 			const revokeTimer = (0, react.useRef)(void 0);
+			const saveWatchdog = (0, react.useRef)(void 0);
 			const mounted = (0, react.useRef)(true);
 			(0, react.useEffect)(() => {
 				mounted.current = true;
 				return () => {
 					mounted.current = false;
 					if (revokeTimer.current !== void 0) window.clearTimeout(revokeTimer.current);
+					if (saveWatchdog.current !== void 0) window.clearTimeout(saveWatchdog.current);
 				};
 			}, []);
 			const dataKey = data === void 0 ? "" : `${data.from}|${data.to}|${data.tokens}|${data.calls}|${data.cost}`;
@@ -4141,6 +4156,7 @@ window.__ModuleLoader__.load({
 				if (data === void 0 || hidden) return;
 				const voucher = data;
 				let cancelled = false;
+				setSaveError(void 0);
 				loadVoucherArt().then((art) => {
 					if (cancelled) return;
 					const canvas = canvasRef.current;
@@ -4162,8 +4178,24 @@ window.__ModuleLoader__.load({
 				if (canvas === null || data === void 0 || saving) return;
 				setSaving(true);
 				setSaveError(void 0);
+				const armWatchdog = () => {
+					if (saveWatchdog.current !== void 0) window.clearTimeout(saveWatchdog.current);
+					saveWatchdog.current = window.setTimeout(() => {
+						saveWatchdog.current = void 0;
+						if (!mounted.current) return;
+						setSaveError(t("usage.bank.drawFailed"));
+						setSaving(false);
+					}, 15e3);
+				};
+				const disarmWatchdog = () => {
+					if (saveWatchdog.current === void 0) return;
+					window.clearTimeout(saveWatchdog.current);
+					saveWatchdog.current = void 0;
+				};
 				try {
+					armWatchdog();
 					canvas.toBlob((blob) => {
+						disarmWatchdog();
 						try {
 							if (blob === null) {
 								if (mounted.current) setSaveError("canvas produced no image");
@@ -4186,6 +4218,7 @@ window.__ModuleLoader__.load({
 						}
 					}, "image/png");
 				} catch (error) {
+					disarmWatchdog();
 					setSaveError(error instanceof Error ? error.message : String(error));
 					setSaving(false);
 				}
@@ -4193,18 +4226,37 @@ window.__ModuleLoader__.load({
 			const shareSupported = typeof navigator !== "undefined" && typeof navigator.canShare === "function";
 			const onShare = () => {
 				const canvas = canvasRef.current;
-				if (canvas === null || data === void 0 || !shareSupported) return;
-				canvas.toBlob(async (blob) => {
-					if (blob === null) return;
-					const file = new File([blob], `dsh-whale-voucher-${data.to}.png`, { type: "image/png" });
-					if (!navigator.canShare({ files: [file] })) return;
-					try {
-						await navigator.share({
-							files: [file],
-							title: t("usage.bank.title")
-						});
-					} catch {}
-				}, "image/png");
+				if (canvas === null || data === void 0 || !shareSupported || saving) return;
+				setSaving(true);
+				setSaveError(void 0);
+				try {
+					canvas.toBlob((blob) => {
+						(async () => {
+							try {
+								if (blob === null) {
+									if (mounted.current) setSaveError(t("usage.bank.drawFailed"));
+									return;
+								}
+								const file = new File([blob], `dsh-whale-voucher-${data.to}.png`, { type: "image/png" });
+								if (!navigator.canShare({ files: [file] })) {
+									if (mounted.current) setSaveError(t("usage.bank.shareError"));
+									return;
+								}
+								await navigator.share({
+									files: [file],
+									title: t("usage.bank.title")
+								});
+							} catch (error) {
+								if (!(error instanceof DOMException && error.name === "AbortError") && mounted.current) setSaveError(t("usage.bank.shareError"));
+							} finally {
+								if (mounted.current) setSaving(false);
+							}
+						})();
+					}, "image/png");
+				} catch {
+					setSaveError(t("usage.bank.shareError"));
+					setSaving(false);
+				}
 			};
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: usage_module_css_default.card,
@@ -4245,7 +4297,7 @@ window.__ModuleLoader__.load({
 						className: usage_module_css_default.errorLine,
 						title: drawError,
 						"aria-describedby": drawDetailId,
-						children: t("usage.bank.drawError", { error: describeError(drawError, "usage.bank.drawFailed") })
+						children: drawErrorText(drawError)
 					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 						id: drawDetailId,
 						className: usage_module_css_default.srOnly,

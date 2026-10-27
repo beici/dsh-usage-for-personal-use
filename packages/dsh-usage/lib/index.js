@@ -2376,6 +2376,27 @@ var UsageService = class {
 	/** The window a shrink in this session asked for, so later prunes still read as one. */
 	shrankTo;
 	/**
+	* What the last repair left in each bucket, and when it ran.
+	*
+	* Kept in memory for the whole session because a *later* fold can undo the
+	* repair: a same-machine file under an older name is max-merged in, and an
+	* older copy of this ledger still holds the duplicate copies the repair took
+	* out. Folding that above the floor would put the inflated total back, and the
+	* marker (whose floor no longer matches) would then stop the next start from
+	* correcting it — a permanent inflation out of a file that was only a rename.
+	*/
+	repairFloors = /* @__PURE__ */ new Map();
+	repairAt;
+	/**
+	* When the ledger file was last written (by this process or before it).
+	*
+	* A prune that drops two days is not evidence of anything by itself: a run
+	* that was merely idle for two days drops exactly the days that aged out. What
+	* the clock did is measured against this instant, so only a slab larger than
+	* the elapsed days is reported as one.
+	*/
+	ledgerWrittenAt;
+	/**
 	* Whether the write in progress holds the ledger lock. A write that could not
 	* take it goes ahead anyway (losing every later call is worse), but it must not
 	* retire the `lock-busy` note that its own wait just raised.
@@ -2546,7 +2567,9 @@ var UsageService = class {
 			const merged = existing === void 0 ? doc.doc : structuredClone(existing.doc);
 			if (existing !== void 0) mergeLedgerMax(merged, doc.doc);
 			const machine = doc.machine ?? existing?.machine;
-			const peerWindow = doc.retentionDays ?? existing?.retentionDays;
+			const dayCount = ledgerDayKeys(merged).length;
+			const declaredWindow = doc.retentionDays ?? existing?.retentionDays ?? 0;
+			const peerWindow = Math.max(declaredWindow, dayCount) || void 0;
 			if (existing !== void 0) {
 				const kept = ledgerDayKeys(existing.doc).filter((key) => doc.doc.days[key] === void 0);
 				if (kept.length > 0) this.note(`import:${claimedId}`, `import merged into the peer file; ${kept.length} day(s) it already held were kept`);
@@ -2661,7 +2684,12 @@ var UsageService = class {
 		if (this.peers.length === 0) return this.ledger;
 		const merged = createLedgerDocument();
 		mergeLedgerSum(merged, this.ledger);
-		for (const peer of this.peers) mergeLedgerSum(merged, peer.doc);
+		const oldest = localDateKey(Date.now() - (Math.max(1, this.options.retainDays) - 1) * 864e5);
+		for (const peer of this.peers) {
+			const windowed = createLedgerDocument();
+			for (const [dayKey, day] of Object.entries(peer.doc.days)) if (dayKey >= oldest) windowed.days[dayKey] = day;
+			mergeLedgerSum(merged, windowed);
+		}
 		return merged;
 	}
 	/**
@@ -3030,7 +3058,10 @@ var UsageService = class {
 		this.replayDoc = replay.doc;
 		if (replay.skipped > 0) this.note("replay-cap", `${replay.skipped} older transcripts beyond the replay cap of ${SESSION_LOG_MAX_FILES} were not replayed`);
 		const prior = await this.readRepairRecord();
+		this.repairFloors = prior.floors;
+		this.repairAt = prior.appliedAt;
 		const fileWrittenAt = await stat(this.ledgerPath).then((info) => info.mtimeMs).catch(() => void 0);
+		if (fileWrittenAt !== void 0) this.ledgerWrittenAt = fileWrittenAt;
 		const repaired = await this.repairDuplicatedReplay(replay, prior.floors, prior.appliedAt, fileWrittenAt, prior.present && prior.floors.size === 0);
 		await this.refreshPeers(true);
 		this.lastPrune = void 0;
@@ -3056,7 +3087,13 @@ var UsageService = class {
 				}
 			}).catch(() => void 0);
 		}
-		if (repaired.skipped > 0) this.note("repair-skipped", `${repaired.skipped} bucket(s) could not be corrected — the ledger holds more there than the duplicate set explains, so they are left as recorded and may still be inflated`);
+		if (repaired.skipped > 0) {
+			const reasons = [];
+			if (repaired.skippedBecause.blocked > 0) reasons.push(`${repaired.skippedBecause.blocked} grew after the repair and were left as recorded, so they may still be inflated`);
+			if (repaired.skippedBecause.excess > 0) reasons.push(`${repaired.skippedBecause.excess} hold more than the duplicate set explains, so they are left as recorded and may still be inflated`);
+			if (repaired.skippedBecause.short > 0) reasons.push(`${repaired.skippedBecause.short} hold fewer calls than the duplicate-free replay, so nothing was taken out there`);
+			if (reasons.length > 0) this.note("repair-skipped", `${repaired.skipped} bucket(s) could not be corrected: ${reasons.join("; ")}`);
+		} else this.clearNote("repair-skipped");
 		this.scheduleFlush();
 	}
 	/**
@@ -3257,6 +3294,31 @@ var UsageService = class {
 		return maxTotals(next, after);
 	}
 	/**
+	* Holds a document folded in from an older copy of this ledger to what the
+	* repair left in each bucket.
+	*
+	* Only for files written before the last repair: their buckets still carry the
+	* duplicate copies the repair took out, and max-merging them would put the
+	* inflated total back on top of the corrected one. A bucket the repair does
+	* not know is left alone — there is no floor to hold it to.
+	*/
+	clampToRepairFloors(doc) {
+		const keep = (value, floor) => value > floor ? floor : value;
+		for (const [dayKey, day] of Object.entries(doc.days)) for (const [provider, models] of Object.entries(day)) for (const [model, totals] of Object.entries(models)) {
+			const floor = this.repairFloors.get(repairKey(dayKey, provider, model));
+			if (floor === void 0) continue;
+			models[model] = {
+				inputTokens: keep(totals.inputTokens, floor.inputTokens),
+				outputTokens: keep(totals.outputTokens, floor.outputTokens),
+				cacheReadTokens: keep(totals.cacheReadTokens, floor.cacheReadTokens),
+				cacheWriteTokens: keep(totals.cacheWriteTokens, floor.cacheWriteTokens),
+				reasoningTokens: keep(totals.reasoningTokens, floor.reasoningTokens),
+				calls: keep(totals.calls, floor.calls),
+				cost: keep(totals.cost, floor.cost)
+			};
+		}
+	}
+	/**
 	* Correction for the seeded-subagent duplicate.
 	*
 	* A seeded subagent's transcript opens with a verbatim copy of its parent's
@@ -3282,36 +3344,41 @@ var UsageService = class {
 		let buckets = 0;
 		let removedTokens = 0;
 		let skipped = 0;
-		if (recordUnusable) {
-			this.note("repair-record", "the repair record could not be read, so no bucket was corrected again — delete it to let the repair re-judge from the replay");
-			return {
-				buckets: 0,
-				removedTokens: 0,
-				skipped: 0,
-				repaired
-			};
-		}
+		const skippedBecause = {
+			blocked: 0,
+			excess: 0,
+			short: 0
+		};
+		if (recordUnusable) this.note("repair-record", "the repair record could not be read, so every bucket was re-judged from the replay and the record rebuilt");
 		for (const [key, duplicate] of replay.duplicates) {
 			const target = findLedgerBucket(this.ledger.days[duplicate.dayKey], duplicate.provider, duplicate.model);
-			if (target === void 0) {
-				skipped += 1;
-				continue;
-			}
+			if (target === void 0) continue;
 			const bucket = target.totals;
 			const clean = findLedgerBucket(replay.fullDoc.days[duplicate.dayKey], duplicate.provider, duplicate.model)?.totals ?? emptyTotals();
 			const floor = prior.get(key);
 			if (floor !== void 0 && repairedAt !== void 0 && fileWrittenAt !== void 0 && fileWrittenAt >= repairedAt) {
-				if (bucket.calls !== floor.calls || totalTokens(bucket) !== totalTokens(floor)) skipped += 1;
+				if (bucket.calls !== floor.calls || totalTokens(bucket) !== totalTokens(floor)) {
+					skipped += 1;
+					skippedBecause.blocked += 1;
+				}
+				continue;
+			}
+			if (bucket.calls === clean.calls) continue;
+			if (bucket.calls < clean.calls) {
+				skipped += 1;
+				skippedBecause.short += 1;
 				continue;
 			}
 			const next = this.repairCopies(bucket, clean, duplicate.totals);
 			if (next === void 0) {
 				skipped += 1;
+				skippedBecause.excess += 1;
 				continue;
 			}
 			const dropped = totalTokens(bucket) - totalTokens(next);
 			if (dropped <= 0) {
 				skipped += 1;
+				skippedBecause.excess += 1;
 				continue;
 			}
 			const repriced = this.priceBucket(duplicate.dayKey, target.provider, target.model, next);
@@ -3330,7 +3397,8 @@ var UsageService = class {
 			buckets,
 			removedTokens,
 			repaired,
-			skipped
+			skipped,
+			skippedBecause
 		};
 	}
 	/**
@@ -3632,7 +3700,9 @@ var UsageService = class {
 					continue;
 				}
 				if (parsed.machine !== void 0 && this.sameMachine(parsed.machine)) {
-					mergeLedgerMax(this.ledger, this.windowedDocument(parsed.doc));
+					const doc = this.windowedDocument(parsed.doc);
+					if (this.repairAt !== void 0 && info.mtimeMs < this.repairAt) this.clampToRepairFloors(doc);
+					mergeLedgerMax(this.ledger, doc);
 					this.note(`renamed:${deviceId}`, `${name}: this machine under an older name, folded in rather than summed`);
 					continue;
 				}
@@ -3785,6 +3855,7 @@ var UsageService = class {
 				this.ledgerError = void 0;
 				this.fileRetention = this.recordedWindow();
 				this.shrankTo = void 0;
+				this.ledgerWrittenAt = Date.now();
 				return;
 			} else {
 				if (this.ledgerWritten !== void 0) mergeLedgerDelta(target, this.ledger, this.ledgerWritten);
@@ -3810,6 +3881,7 @@ var UsageService = class {
 		this.ledgerError = void 0;
 		this.fileRetention = this.recordedWindow();
 		this.shrankTo = void 0;
+		this.ledgerWrittenAt = Date.now();
 		this.clearNote("stale-writer");
 		if (this.lockHeld) this.clearNote("lock-busy");
 	}
@@ -3885,7 +3957,8 @@ var UsageService = class {
 		this.retentionSeen = Math.min(this.retentionSeen, this.options.retainDays);
 		const pruned = pruneLedger(doc, todayKey, this.options.retainDays);
 		const jumped = !shrank && days >= 4 && pruned > days * .3;
-		if (pruned > 0 && (shrank || !shrank && pruned > 1)) {
+		const idleDays = this.ledgerWrittenAt === void 0 ? 0 : Math.floor((Date.now() - this.ledgerWrittenAt) / 864e5);
+		if (pruned > 0 && (shrank || !shrank && pruned > Math.max(1, idleDays))) {
 			const base = shrank ? `pruned ${pruned} of ${days} recorded days to honour the ${this.options.retainDays}-day window` : `pruned ${pruned} of ${days} recorded days at once`;
 			this.note("retention", jumped ? `${base} — the clock may have jumped` : base);
 		}
@@ -4017,7 +4090,7 @@ var UsageService = class {
 		if (!this.loaded) return;
 		try {
 			await mkdir(dirname(this.snapshotsPath), { recursive: true });
-			const theirs = readSpendWatch((await readFile(this.snapshotsPath, "utf8").then((raw) => JSON.parse(raw), () => void 0))?.spendWatch);
+			const theirs = readSpendWatch((await readFile(this.snapshotsPath, "utf8").then((raw) => parseJsonText(raw), () => void 0))?.spendWatch);
 			const ours = this.spendWatch;
 			const watch = ours === void 0 ? theirs : theirs === void 0 || ours.accruedCny >= theirs.accruedCny ? ours : theirs;
 			await writeJsonAtomic(this.snapshotsPath, {

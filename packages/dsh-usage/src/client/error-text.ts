@@ -35,3 +35,13 @@ export function describeError(error: string, fallback: UsageKey = 'usage.error.u
   const status = STATUS_ERROR.exec(error)
   return status === null ? t(fallback) : t('usage.error.status', { status: status[1] })
 }
+
+/**
+ * The voucher's own draw failure already *is* the sentence: wrapping it in
+ * "failed to render the voucher: …" printed it twice. Anything else keeps the
+ * wrapper, so a real cause still reads as a cause.
+ */
+export function drawErrorText(error: string): string {
+  const detail = describeError(error, 'usage.bank.drawFailed')
+  return detail === t('usage.bank.drawFailed') ? detail : t('usage.bank.drawError', { error: detail })
+}

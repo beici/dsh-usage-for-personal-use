@@ -67,6 +67,7 @@ export declare const zh: {
     'usage.range.loadFailed': string;
     'usage.range.loading': string;
     'usage.range.error': string;
+    'usage.range.errorAll': string;
     'usage.noData': string;
     'usage.balance': string;
     'usage.balance.unsupported': string;
@@ -104,6 +105,7 @@ export declare const zh: {
     'usage.bank.drawError': string;
     'usage.bank.drawFailed': string;
     'usage.bank.saveError': string;
+    'usage.bank.shareError': string;
     'usage.foot.cost': string;
     'usage.foot.noData': string;
     'usage.foot.open': string;

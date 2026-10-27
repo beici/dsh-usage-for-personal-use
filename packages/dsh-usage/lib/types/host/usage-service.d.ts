@@ -105,6 +105,27 @@ export declare class UsageService {
     /** The window a shrink in this session asked for, so later prunes still read as one. */
     private shrankTo;
     /**
+     * What the last repair left in each bucket, and when it ran.
+     *
+     * Kept in memory for the whole session because a *later* fold can undo the
+     * repair: a same-machine file under an older name is max-merged in, and an
+     * older copy of this ledger still holds the duplicate copies the repair took
+     * out. Folding that above the floor would put the inflated total back, and the
+     * marker (whose floor no longer matches) would then stop the next start from
+     * correcting it — a permanent inflation out of a file that was only a rename.
+     */
+    private repairFloors;
+    private repairAt;
+    /**
+     * When the ledger file was last written (by this process or before it).
+     *
+     * A prune that drops two days is not evidence of anything by itself: a run
+     * that was merely idle for two days drops exactly the days that aged out. What
+     * the clock did is measured against this instant, so only a slab larger than
+     * the elapsed days is reported as one.
+     */
+    private ledgerWrittenAt;
+    /**
      * Whether the write in progress holds the ledger lock. A write that could not
      * take it goes ahead anyway (losing every later call is worse), but it must not
      * retire the `lock-busy` note that its own wait just raised.
@@ -384,6 +405,16 @@ export declare class UsageService {
      * the file kept the inflated total.
      */
     private repairCopies;
+    /**
+     * Holds a document folded in from an older copy of this ledger to what the
+     * repair left in each bucket.
+     *
+     * Only for files written before the last repair: their buckets still carry the
+     * duplicate copies the repair took out, and max-merging them would put the
+     * inflated total back on top of the corrected one. A bucket the repair does
+     * not know is left alone — there is no floor to hold it to.
+     */
+    private clampToRepairFloors;
     /**
      * Correction for the seeded-subagent duplicate.
      *

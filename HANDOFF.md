@@ -1,6 +1,6 @@
 # HANDOFF — DSH usage plugin (`@linxin666/dsh-usage`)
 
-Last updated: 2026-10-27 (round 16 delivered).
+Last updated: 2026-10-27 (round 17 delivered).
 
 ## What this is
 
@@ -24,7 +24,7 @@ cd packages/dsh-usage
 ../../node_modules/.bin/tsdown                              # bundles, exit 0
 cd ../..
 node harness/build-test-bundle.cjs                          # derives harness/client.test.cjs
-node --experimental-strip-types harness/host-test.mjs       # 262 checks
+node --experimental-strip-types harness/host-test.mjs       # 267 checks
 node harness/render-test.mjs                                # 225 checks (jsdom)
 bash patches/install-patches.sh                             # deploy + verify markers
 ```
@@ -36,11 +36,11 @@ Artifacts of the current tree (verified 2026-10-27):
 
 | file | bytes | md5 |
 | --- | --- | --- |
-| `lib/index.js` | 179,284 | `bb1518048d95a3e3a97d12974d6656b9` |
-| `lib/client.js` | 528,487 | `7f953820bc4bcb499fb0e2c0274d302b` |
-| `lib/client.js.map` | 709,158 | `f89f3374637620f938f16d92084ca00a` |
+| `lib/index.js` | 183,123 | `bee3fdf9317bd9cff190bdfc5b27f978` |
+| `lib/client.js` | 530,518 | `732f41a7dbd54d37c4b2d1e6d3426059` |
+| `lib/client.js.map` | 712,984 | `a0924748c72631a805758b5807ece6ca` |
 
-## Live data (as of 2026-10-27 ~09:44, old build still running)
+## Live data (as of 2026-10-27 ~10:20, old build still running)
 
 - `C:\Users\scrip\.dsh\dsh-usage\usage-ledger.p15-22893b.json` — still bare
   `{version, days}`, 11 days / 32 buckets / 58,838 calls / 6,922,973,827 tokens,
@@ -56,24 +56,30 @@ Artifacts of the current tree (verified 2026-10-27):
   `usage-ledger.izuf6gqghj119maddgtu7yz-2c08fa.json` is a peer file with no
   `machine` stamp (counted only for buckets this machine never recorded).
 
-## Round 16 (this commit)
+## Round 17 (this commit)
 
-Host: an unverified peer whose residual has no calls left contributes no bucket
-(no more "zero-call, pure-token" rows spliced out of two machines); the
-duplicate replay uses the ledger's own window for its clean base, so a day the
-ledger still keeps is repaired even when it sits outside the replay window; the
-`repair-skipped` note no longer claims the ledger "holds more than the duplicate
-set" when the skip was really "no such bucket" or "already clean"; a shrink is
-recognised on the very first load (`retentionSeen` starts from the file's own
-`retentionDays`, not the setting); a partial slab prune says so.
+Host: a repair note that names what it could not finish — a bucket already equal
+to the duplicate-free value is no longer reported as "may still be inflated", so
+a healthy ledger boots without a warning and without rewriting its marker; a
+peer document is merged only inside the retained window; a renamed file of this
+machine no longer re-inflates a bucket the repair had just corrected (its buckets
+are clamped to the recorded floors when the file predates the repair); a
+`provider-snapshots.json` written with a BOM is read through the same tolerant
+parser as the ledger; a slab prune is judged against the last write rather than
+the clock; and a bucket holding *fewer* calls than the duplicate-free replay is
+described as short instead of inflated.
 
-Client: the history stamp covers calls and cost as well as tokens (a repriced
-bucket or a moved day no longer keeps serving the old split and the old ¥), and
-a range aggregate is bound to the span it was fetched for.
+Client: the history stamp is built from the per-day split (a bucket moved between
+days no longer keeps serving the old split) and carries cost in ten-thousandths;
+the save button is released by a watchdog when the encoder never answers; a share
+reports a failure instead of returning in silence; a whole-window failure says the
+whole window failed (a partial answer keeps the partial sentence); a save failure
+is cleared when the voucher's date changes; a draw failure is stated once instead
+of twice; and the window-loading row is announced as a status.
 
 ## Open work
 
-- Round 17 read-only audits (host / client / data) are running; fold their
+- Round 18 read-only audits (host / client / data) are running; fold their
   findings into the next round. The loop is the user's standing request: audit →
   fix → test → deploy → commit → audit again.
 - The user must fully restart DSH for host changes to take effect (client half

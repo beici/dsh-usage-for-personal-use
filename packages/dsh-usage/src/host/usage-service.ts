@@ -110,6 +110,15 @@ interface RepairResult {
   repaired: Map<string, RepairBucket>
   /** Buckets the exact-growth gate skipped: they still hold the copies. */
   skipped: number
+  /**
+   * Why each skip happened.
+   *
+   * One sentence for every cause used to claim an unexplained excess even when
+   * the bucket already sat on the deduped value — the ordinary outcome for a
+   * seeded subagent whose ledger is simply correct — so the panel warned about
+   * an inflation that did not exist and repeated it on every boot.
+   */
+  skippedBecause: { blocked: number; excess: number; short: number }
 }
 
 /** What the repair actually wrote: only the buckets it really corrected. */
@@ -560,6 +569,29 @@ export class UsageService {
   private shrankTo: number | undefined
 
   /**
+   * What the last repair left in each bucket, and when it ran.
+   *
+   * Kept in memory for the whole session because a *later* fold can undo the
+   * repair: a same-machine file under an older name is max-merged in, and an
+   * older copy of this ledger still holds the duplicate copies the repair took
+   * out. Folding that above the floor would put the inflated total back, and the
+   * marker (whose floor no longer matches) would then stop the next start from
+   * correcting it — a permanent inflation out of a file that was only a rename.
+   */
+  private repairFloors = new Map<string, UsageTokenTotals>()
+  private repairAt: number | undefined
+
+  /**
+   * When the ledger file was last written (by this process or before it).
+   *
+   * A prune that drops two days is not evidence of anything by itself: a run
+   * that was merely idle for two days drops exactly the days that aged out. What
+   * the clock did is measured against this instant, so only a slab larger than
+   * the elapsed days is reported as one.
+   */
+  private ledgerWrittenAt: number | undefined
+
+  /**
    * Whether the write in progress holds the ledger lock. A write that could not
    * take it goes ahead anyway (losing every later call is worse), but it must not
    * retire the `lock-busy` note that its own wait just raised.
@@ -787,7 +819,12 @@ export class UsageService {
       // The window the peer recorded, from the export or the file it lands in.
       // Neither means unknown, and this machine's window must not be written in
       // its place: a later reader would trust a number the peer never used.
-      const peerWindow = doc.retentionDays ?? existing?.retentionDays
+      // It must also be able to hold the days the file carries: a refused prune
+      // leaves a file declaring 7 days while it holds 36, and the next reader
+      // would trust the 7 and treat those days as outside the window.
+      const dayCount = ledgerDayKeys(merged).length
+      const declaredWindow = doc.retentionDays ?? existing?.retentionDays ?? 0
+      const peerWindow = Math.max(declaredWindow, dayCount) || undefined
       if (existing !== undefined) {
         const kept = ledgerDayKeys(existing.doc).filter((key) => doc.doc.days[key] === undefined)
         if (kept.length > 0) {
@@ -925,7 +962,19 @@ export class UsageService {
     if (this.peers.length === 0) return this.ledger
     const merged = createLedgerDocument()
     mergeLedgerSum(merged, this.ledger)
-    for (const peer of this.peers) mergeLedgerSum(merged, peer.doc)
+    // A peer's days are clamped to the same window this device's own history is
+    // pruned to. Without that, a day that fell out of the local window comes back
+    // from the peer copy on every start — and once the local copy is gone, the
+    // whole peer bucket reads as "not recorded here" and the same calls are
+    // counted a second time.
+    const oldest = localDateKey(Date.now() - (Math.max(1, this.options.retainDays) - 1) * 86_400_000)
+    for (const peer of this.peers) {
+      const windowed = createLedgerDocument()
+      for (const [dayKey, day] of Object.entries(peer.doc.days)) {
+        if (dayKey >= oldest) windowed.days[dayKey] = day
+      }
+      mergeLedgerSum(merged, windowed)
+    }
     return merged
   }
 
@@ -1361,10 +1410,16 @@ export class UsageService {
     // left behind: a bucket that matches either was never inflated (or has
     // already been corrected), so real calls are never taken away.
     const prior = await this.readRepairRecord()
+    // The floors stay in memory: a fold later in this session (a same-machine
+    // file under an older name) must not lift a corrected bucket back above the
+    // value the repair left there.
+    this.repairFloors = prior.floors
+    this.repairAt = prior.appliedAt
     // When the file was last written decides whether a bucket the marker knows
     // about can still hold the copies: a file older than the repair is one a
     // backup put back, a newer one has taken calls since.
     const fileWrittenAt = await stat(this.ledgerPath).then((info) => info.mtimeMs).catch(() => undefined)
+    if (fileWrittenAt !== undefined) this.ledgerWrittenAt = fileWrittenAt
     const repaired = await this.repairDuplicatedReplay(replay, prior.floors, prior.appliedAt, fileWrittenAt, prior.present && prior.floors.size === 0)
     // Peers are scanned after the replay *and* after the repair. Whether an
     // unverified peer's day is already recorded here is judged bucket by bucket
@@ -1428,14 +1483,27 @@ export class UsageService {
       // that grew after the duplication (one more call, or the copies landed
       // twice) is left inflated on purpose, and without this the panel would
       // show a total it can never explain.
-      // The note names what is true of every skip, not just the one that is
-      // common: a bucket can also be skipped because the day is gone or because
-      // it already sits on the deduped value, and the old sentence asserted a
-      // growth that never happened.
-      this.note(
-        'repair-skipped',
-        `${repaired.skipped} bucket(s) could not be corrected — the ledger holds more there than the duplicate set explains, so they are left as recorded and may still be inflated`,
-      )
+      // Each cause says only what it is. The old single sentence asserted an
+      // excess even when the bucket already sat on the deduped value — the
+      // ordinary outcome for a seeded subagent whose ledger is simply correct —
+      // so a healthy ledger was told it might still be inflated, on every boot.
+      const reasons: string[] = []
+      if (repaired.skippedBecause.blocked > 0) {
+        reasons.push(`${repaired.skippedBecause.blocked} grew after the repair and were left as recorded, so they may still be inflated`)
+      }
+      if (repaired.skippedBecause.excess > 0) {
+        reasons.push(`${repaired.skippedBecause.excess} hold more than the duplicate set explains, so they are left as recorded and may still be inflated`)
+      }
+      if (repaired.skippedBecause.short > 0) {
+        reasons.push(`${repaired.skippedBecause.short} hold fewer calls than the duplicate-free replay, so nothing was taken out there`)
+      }
+      if (reasons.length > 0) {
+        this.note('repair-skipped', `${repaired.skipped} bucket(s) could not be corrected: ${reasons.join('; ')}`)
+      }
+    } else {
+      // Nothing was skipped this time, so a note left by an earlier start would
+      // keep claiming an inflation this repair no longer sees.
+      this.clearNote('repair-skipped')
     }
     this.scheduleFlush()
   }
@@ -1686,6 +1754,36 @@ export class UsageService {
   }
 
   /**
+   * Holds a document folded in from an older copy of this ledger to what the
+   * repair left in each bucket.
+   *
+   * Only for files written before the last repair: their buckets still carry the
+   * duplicate copies the repair took out, and max-merging them would put the
+   * inflated total back on top of the corrected one. A bucket the repair does
+   * not know is left alone — there is no floor to hold it to.
+   */
+  private clampToRepairFloors(doc: UsageLedgerDocument): void {
+    const keep = (value: number, floor: number): number => (value > floor ? floor : value)
+    for (const [dayKey, day] of Object.entries(doc.days)) {
+      for (const [provider, models] of Object.entries(day)) {
+        for (const [model, totals] of Object.entries(models)) {
+          const floor = this.repairFloors.get(repairKey(dayKey, provider, model))
+          if (floor === undefined) continue
+          models[model] = {
+            inputTokens: keep(totals.inputTokens, floor.inputTokens),
+            outputTokens: keep(totals.outputTokens, floor.outputTokens),
+            cacheReadTokens: keep(totals.cacheReadTokens, floor.cacheReadTokens),
+            cacheWriteTokens: keep(totals.cacheWriteTokens, floor.cacheWriteTokens),
+            reasoningTokens: keep(totals.reasoningTokens, floor.reasoningTokens),
+            calls: keep(totals.calls, floor.calls),
+            cost: keep(totals.cost, floor.cost),
+          }
+        }
+      }
+    }
+  }
+
+  /**
    * Correction for the seeded-subagent duplicate.
    *
    * A seeded subagent's transcript opens with a verbatim copy of its parent's
@@ -1717,15 +1815,16 @@ export class UsageService {
     let buckets = 0
     let removedTokens = 0
     let skipped = 0
-    // A record that exists but yields no floors (a BOM'd or hand-damaged
-    // marker, or one written by a build that predates the floors) cannot say
-    // which buckets were already corrected, so every bucket looks untouched and
-    // the copies get subtracted a second time. Without a floor there is no
-    // proof, and a wrong subtraction cannot be merged back: leave the ledger as
-    // it is and say so.
+    const skippedBecause = { blocked: 0, excess: 0, short: 0 }
+    // A record that exists but yields no floors (a hand-damaged marker) cannot
+    // say which buckets were already corrected. Refusing to repair then kept the
+    // inflation for good — the audit measured 1,458 calls that no later start
+    // could take out — while the exact-growth test below is what actually keeps a
+    // subtraction safe: a bucket already on the deduped value matches it exactly
+    // and is passed over. So the record is re-judged from the replay, and the
+    // note says the marker will be rebuilt.
     if (recordUnusable) {
-      this.note('repair-record', 'the repair record could not be read, so no bucket was corrected again — delete it to let the repair re-judge from the replay')
-      return { buckets: 0, removedTokens: 0, skipped: 0, repaired }
+      this.note('repair-record', 'the repair record could not be read, so every bucket was re-judged from the replay and the record rebuilt')
     }
     for (const [key, duplicate] of replay.duplicates) {
       // The ledger may spell the route differently than the transcript does
@@ -1734,7 +1833,10 @@ export class UsageService {
       // skip it while the replay adds a second bucket beside it.
       const target = findLedgerBucket(this.ledger.days[duplicate.dayKey], duplicate.provider, duplicate.model)
       if (target === undefined) {
-        skipped += 1
+        // The day is no longer recorded here (pruned, or this is a first start
+        // folding the replay in): there is nothing to correct, and saying the
+        // ledger "holds more" would be false. Silent on purpose — a fresh install
+        // has no buckets at all, and a note about that is noise, not a defect.
         continue
       }
       const bucket = target.totals
@@ -1754,13 +1856,29 @@ export class UsageService {
         // say. Anything above it is left as recorded — the file grew after the
         // correction, or an older build inflated it again — and silence there is
         // what makes an inflated total unexplainable in the panel.
-        if (bucket.calls !== floor.calls || totalTokens(bucket) !== totalTokens(floor)) skipped += 1
+        if (bucket.calls !== floor.calls || totalTokens(bucket) !== totalTokens(floor)) {
+          skipped += 1
+          skippedBecause.blocked += 1
+        }
         continue
       }
       // Where the bucket stood before this repair: what the deduped replay bills.
+      // A bucket at or below it holds no copy at all — the ordinary case for a
+      // seeded subagent whose ledger is already right — so it is passed over in
+      // silence rather than reported as an unexplained excess.
+      if (bucket.calls === clean.calls) continue
+      if (bucket.calls < clean.calls) {
+        // The ledger holds *fewer* calls than the duplicate-free replay: nothing
+        // can be taken out here, and calling that an inflation is backwards — the
+        // old sentence did exactly that and repeated it on every start.
+        skipped += 1
+        skippedBecause.short += 1
+        continue
+      }
       const next = this.repairCopies(bucket, clean, duplicate.totals)
       if (next === undefined) {
         skipped += 1
+        skippedBecause.excess += 1
         continue
       }
       const dropped = totalTokens(bucket) - totalTokens(next)
@@ -1768,6 +1886,7 @@ export class UsageService {
         // Calls moved but no token did: nothing to take away, and staying silent
         // about it would leave the panel inflated with no explanation.
         skipped += 1
+        skippedBecause.excess += 1
         continue
       }
       // Reprice: a stored cost cannot be split, and the replay priced the
@@ -1778,7 +1897,7 @@ export class UsageService {
       buckets += 1
       removedTokens += dropped
     }
-    return { buckets, removedTokens, repaired, skipped }
+    return { buckets, removedTokens, repaired, skipped, skippedBecause }
   }
 
   /**
@@ -2184,7 +2303,14 @@ export class UsageService {
           // ... and only as far as the window still reaches: the file may hold
           // history this profile already let go, and folding it back would leave
           // the prune with days it never wrote.
-          mergeLedgerMax(this.ledger, this.windowedDocument(parsed.doc))
+          const doc = this.windowedDocument(parsed.doc)
+          // A copy written before the repair still holds the duplicate copies the
+          // repair took out. Max-merging it would put the inflated total back on
+          // top of the corrected one, and because the marker floor no longer
+          // matches, the next start would skip the bucket instead of correcting
+          // it again — a permanent inflation produced by nothing but a rename.
+          if (this.repairAt !== undefined && info.mtimeMs < this.repairAt) this.clampToRepairFloors(doc)
+          mergeLedgerMax(this.ledger, doc)
           this.note(`renamed:${deviceId}`, `${name}: this machine under an older name, folded in rather than summed`)
           continue
         }
@@ -2439,6 +2565,9 @@ export class UsageService {
         this.ledgerError = undefined
         this.fileRetention = this.recordedWindow()
         this.shrankTo = undefined
+        // The clock the next slab test measures against: days that fall out of
+        // the window while the file sits still are the window moving, not a jump.
+        this.ledgerWrittenAt = Date.now()
         // The note stays for the rest of this flush cycle on purpose: it says what
         // happened to the file, and a note that vanished inside the same write
         // would never reach the panel. The next successful flush clears it.
@@ -2481,6 +2610,7 @@ export class UsageService {
     // The file now records this window; the next prune compares against it.
     this.fileRetention = this.recordedWindow()
     this.shrankTo = undefined
+    this.ledgerWrittenAt = Date.now()
     // The file now carries our identity again, so the warning about a build
     // that stripped it no longer applies.
     this.clearNote('stale-writer')
@@ -2627,7 +2757,12 @@ export class UsageService {
     // slab, and a slab nobody asked for is worth saying out loud even when it is
     // a minority of the history — 3 of 11 days went silently because the share
     // test needs 30%, and the days are gone either way.
-    const slab = !shrank && pruned > 1
+    // A run that was merely idle drops exactly the days that aged out while it
+    // was closed, so the size of the drop is measured against the elapsed days:
+    // two days falling out after two days away is the window moving, not a slab.
+    const idleDays =
+      this.ledgerWrittenAt === undefined ? 0 : Math.floor((Date.now() - this.ledgerWrittenAt) / 86_400_000)
+    const slab = !shrank && pruned > Math.max(1, idleDays)
     if (pruned > 0 && (shrank || slab)) {
       // A shrink is the user's own doing, so it is honoured — but deleting days
       // is still worth saying out loud, because the panel simply shows fewer.
@@ -2796,7 +2931,10 @@ export class UsageService {
     try {
       await mkdir(dirname(this.snapshotsPath), { recursive: true })
       const disk = await readFile(this.snapshotsPath, 'utf8').then(
-        (raw) => JSON.parse(raw) as { spendWatch?: unknown },
+        // Same BOM handling as the ledger: this file is rewritten on every
+        // snapshot tick, so a parse that throws here silently stops persisting
+        // the spend watch — the one number nothing else can reconstruct.
+        (raw) => parseJsonText(raw) as { spendWatch?: unknown },
         () => undefined,
       )
       const theirs = readSpendWatch(disk?.spendWatch)
