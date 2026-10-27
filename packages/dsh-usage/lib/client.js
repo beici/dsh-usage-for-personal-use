@@ -2577,7 +2577,18 @@ window.__ModuleLoader__.load({
 		* invalidate it on every poll.
 		*/
 		function historyStampOf(usage) {
-			return `${usage.availableDays?.length ?? usage.days.length}:${(usage.all === void 0 ? usage.days.reduce((sum, row) => sum + totalOf(row.totals), 0) : totalOf(usage.all.totals)) - totalOf(usage.today.totals)}`;
+			const recorded = usage.availableDays?.length ?? usage.days.length;
+			const rows = usage.all === void 0 ? usage.days.map((row) => row.totals) : [usage.all.totals];
+			let tokens = 0;
+			let calls = 0;
+			let cost = 0;
+			for (const totals of rows) {
+				tokens += totalOf(totals);
+				calls += totals.calls;
+				cost += totals.cost;
+			}
+			const today = usage.today.totals;
+			return `${recorded}:${tokens - totalOf(today)}:${calls - today.calls}:${Math.round((cost - today.cost) * 100)}`;
 		}
 		/**
 		* A picked day key, held inside the calendar's own bounds. The picker's `min`
@@ -2803,6 +2814,7 @@ window.__ModuleLoader__.load({
 				if (empty) {
 					setLoad((previous) => previous.status === "ready" && previous.series?.length === 0 ? previous : {
 						status: "ready",
+						span: "",
 						series: []
 					});
 					return;
@@ -2815,6 +2827,7 @@ window.__ModuleLoader__.load({
 				if (cached !== void 0 && cached.stamp === stamp) {
 					setLoad({
 						status: "ready",
+						span: key,
 						summary: cached.summary,
 						series: cached.series
 					});
@@ -2823,12 +2836,19 @@ window.__ModuleLoader__.load({
 				let cancelled = false;
 				const moved = lastStamp.current !== void 0 && lastStamp.current !== stamp;
 				lastStamp.current = stamp;
-				setLoad((previous) => moved ? { status: "loading" } : previous.status === "ready" || previous.status === "error" ? previous : { status: "loading" });
+				setLoad((previous) => moved || previous.span !== key ? {
+					status: "loading",
+					span: key
+				} : previous.status === "ready" || previous.status === "error" ? previous : {
+					status: "loading",
+					span: key
+				});
 				requestRange(loadRange, key.slice(0, 10), key.slice(11), stamp).then((response) => {
 					if (cancelled) return;
 					const stored = rangeResults.get(key);
 					setLoad({
 						status: "ready",
+						span: key,
 						summary: stored !== void 0 && stored.stamp === stamp ? stored.summary : {
 							totals: response.totals,
 							providers: response.providers
@@ -2839,9 +2859,10 @@ window.__ModuleLoader__.load({
 					if (cancelled) return;
 					setLoad((previous) => ({
 						status: "error",
+						span: key,
 						error: error instanceof Error ? error.message : String(error),
-						...previous.summary !== void 0 ? { summary: previous.summary } : {},
-						...previous.series !== void 0 ? { series: previous.series } : {}
+						...previous.span === key && previous.summary !== void 0 ? { summary: previous.summary } : {},
+						...previous.span === key && previous.series !== void 0 ? { series: previous.series } : {}
 					}));
 				});
 				return () => {
@@ -3573,14 +3594,19 @@ window.__ModuleLoader__.load({
 			const allLoad = useRangeData(loadRange, allWindow, todayDate, cacheEpoch, retryTick, historyStamp);
 			const customRangeLoad = useRangeData(loadRange, customPicked && customIsRange ? customWindow : void 0, todayDate, cacheEpoch, retryTick, historyStamp);
 			/** One range-kind window as the panel states it: the fetched aggregate plus the live day. */
-			const rangeSummaryOf = (window, load) => withLiveToday({
-				from: window.from,
-				to: window.to,
-				...load.summary ?? {
-					totals: emptyTotals(),
-					providers: []
-				}
-			}, window, todayView);
+			const rangeSummaryOf = (window, load) => {
+				const span = fetchSpanOf(window, todayDate);
+				const key = span === void 0 ? "" : `${span.from}:${span.to}`;
+				const summary = load.span === key ? load.summary : void 0;
+				return withLiveToday({
+					from: window.from,
+					to: window.to,
+					...summary ?? {
+						totals: emptyTotals(),
+						providers: []
+					}
+				}, window, todayView);
+			};
 			const loadsFailed = last30Days.error !== void 0 || customDays.error !== void 0 || last180Load.status === "error" || allLoad.status === "error" || customRangeLoad.status === "error";
 			const retryAttempts = (0, react.useRef)(0);
 			const budgetStamp = (0, react.useRef)(historyStamp);

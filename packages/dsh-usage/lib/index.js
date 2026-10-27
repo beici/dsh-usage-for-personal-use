@@ -2237,6 +2237,20 @@ function unwrapVolatiles(value) {
 function isPlainObject(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+/**
+* The ledger document a pre-migration file carries, or `undefined` when the file
+* is not one.
+*
+* `deserializeLedger` never throws: a file whose `days` is an array, a string, or
+* an export envelope around the real document all come back as an empty ledger.
+* Adopting that would write an empty device file and then retire the only copy of
+* the history as `.migrated`, so the shape is checked before the read is trusted.
+*/
+function legacyDocumentOf(value) {
+	if (!isPlainObject(value)) return void 0;
+	if (isPlainObject(value.days)) return value;
+	if (isPlainObject(value.ledger)) return legacyDocumentOf(value.ledger);
+}
 function deepMerge(base, patch) {
 	if (!isPlainObject(base) || !isPlainObject(patch)) return patch !== void 0 ? patch : base;
 	const result = { ...base };
@@ -2421,6 +2435,8 @@ var UsageService = class {
 	/** Retry bookkeeping for a ledger file that could not be read this boot. */
 	loadRetries = 0;
 	loadRetryTimer;
+	/** The first load, so a stop inside its window can wait for it before flushing. */
+	loadDone;
 	disposed = false;
 	/** Last prune guard: once per local day, and whenever retention shrinks. */
 	lastPrune;
@@ -2437,7 +2453,7 @@ var UsageService = class {
 	start() {
 		this.disposed = false;
 		this.sessionListenerDisposer = this.ctx.on("session/event", (session, event) => this.onSessionEvent(session, event));
-		this.loadPersisted();
+		this.loadDone = this.loadPersisted();
 		this.rearmPoll(2e3);
 	}
 	/**
@@ -2452,7 +2468,7 @@ var UsageService = class {
 		if (this.flushTimer !== void 0) clearTimeout(this.flushTimer);
 		if (this.loadRetryTimer !== void 0) clearTimeout(this.loadRetryTimer);
 		this.sessionListenerDisposer?.();
-		return this.flushLedger();
+		return (this.loadDone ?? Promise.resolve()).then(() => this.flushLedger(), () => this.flushLedger());
 	}
 	/** Re-apply options to this running instance; retention shrink prunes now. */
 	applyOptions(options) {
@@ -2526,6 +2542,7 @@ var UsageService = class {
 					return;
 				}
 			}, () => void 0);
+			if (existing !== void 0 && existing.deviceId !== claimedId) throw new UsageImportError(`${claimedId}: the file named for this device already holds another device's ledger — move it away before importing`);
 			const merged = existing === void 0 ? doc.doc : structuredClone(existing.doc);
 			if (existing !== void 0) mergeLedgerMax(merged, doc.doc);
 			const machine = doc.machine ?? existing?.machine;
@@ -3003,7 +3020,7 @@ var UsageService = class {
 			this.seenRepairedAt = read.repairedAt ?? 0;
 			await this.rememberMachine(read.machine);
 			if (read.retentionDays !== void 0) {
-				this.retentionSeen = Math.max(this.retentionSeen, read.retentionDays);
+				this.retentionSeen = read.retentionDays;
 				this.fileRetention = read.retentionDays;
 			}
 		} else if (read.kind === "missing") await this.adoptLegacyLedger();
@@ -3039,7 +3056,7 @@ var UsageService = class {
 				}
 			}).catch(() => void 0);
 		}
-		if (repaired.skipped > 0) this.note("repair-skipped", `${repaired.skipped} bucket(s) hold more than the duplicate set — left as recorded, so they may still be inflated`);
+		if (repaired.skipped > 0) this.note("repair-skipped", `${repaired.skipped} bucket(s) could not be corrected — the ledger holds more there than the duplicate set explains, so they are left as recorded and may still be inflated`);
 		this.scheduleFlush();
 	}
 	/**
@@ -3137,9 +3154,32 @@ var UsageService = class {
 	* The pass also reports the duplicate copies it dropped, so the repair below
 	* can use them without walking the transcripts (287 MB, ~18 s) again.
 	*/
+	/**
+	* The days of `doc` that the retention window still holds.
+	*
+	* Applied wherever a document is merged into this process's ledger outside the
+	* load itself — the replay, a same-machine file under an older name: both
+	* carry history the window has already dropped, and merging it back makes the
+	* next prune meet a history it never wrote. The guard then refuses (correctly,
+	* it cannot tell that case from a jumped clock), so the window would be
+	* unappliable for as long as those documents keep arriving.
+	*/
+	windowedDocument(doc) {
+		const oldest = localDateKey(Date.now() - (Math.max(1, this.options.retainDays) - 1) * 864e5);
+		const days = {};
+		for (const [dayKey, providers] of Object.entries(doc.days)) {
+			if (dayKey < oldest) continue;
+			days[dayKey] = providers;
+		}
+		return {
+			...doc,
+			days
+		};
+	}
 	async replaySessionLogs() {
 		const pass = {
 			doc: createLedgerDocument(),
+			fullDoc: createLedgerDocument(),
 			duplicates: /* @__PURE__ */ new Map(),
 			files: 0,
 			replayed: 0,
@@ -3148,7 +3188,8 @@ var UsageService = class {
 		const oldest = localDateKey(Date.now() - (Math.max(1, this.options.retainDays) - 1) * 864e5);
 		try {
 			const counts = await collectSessionLogUsage(join(dshHome(), "sessions"), (replay) => {
-				pass.doc = replay;
+				pass.fullDoc = replay;
+				pass.doc = this.windowedDocument(replay);
 				for (const [dayKey, providers] of Object.entries(replay.days)) {
 					if (dayKey < oldest) continue;
 					const atMs = (/* @__PURE__ */ new Date(dayKey + "T12:00:00")).getTime();
@@ -3169,7 +3210,7 @@ var UsageService = class {
 					}
 				}
 			}, (dayKey, provider, model, totals) => {
-				if (dayKey < oldest) return;
+				if (dayKey < oldest && this.ledger.days[dayKey] === void 0) return;
 				const key = repairKey(dayKey, provider, model);
 				const entry = pass.duplicates.get(key);
 				if (entry === void 0) pass.duplicates.set(key, {
@@ -3257,10 +3298,10 @@ var UsageService = class {
 				continue;
 			}
 			const bucket = target.totals;
-			const clean = findLedgerBucket(replay.doc.days[duplicate.dayKey], duplicate.provider, duplicate.model)?.totals ?? emptyTotals();
+			const clean = findLedgerBucket(replay.fullDoc.days[duplicate.dayKey], duplicate.provider, duplicate.model)?.totals ?? emptyTotals();
 			const floor = prior.get(key);
 			if (floor !== void 0 && repairedAt !== void 0 && fileWrittenAt !== void 0 && fileWrittenAt >= repairedAt) {
-				if (bucket.calls - floor.calls === duplicate.totals.calls && totalTokens(bucket) - totalTokens(floor) === totalTokens(duplicate.totals)) skipped += 1;
+				if (bucket.calls !== floor.calls || totalTokens(bucket) !== totalTokens(floor)) skipped += 1;
 				continue;
 			}
 			const next = this.repairCopies(bucket, clean, duplicate.totals);
@@ -3415,7 +3456,16 @@ var UsageService = class {
 		}), () => void 0));
 		if (source === void 0) return;
 		try {
-			let doc = deserializeLedger(parseJsonText(source.raw));
+			const shaped = legacyDocumentOf(parseJsonText(source.raw));
+			if (shaped === void 0) {
+				this.note("legacy-unreadable", "the pre-migration ledger is not a ledger document, so its history was not imported — inspect it beside this device's file");
+				return;
+			}
+			let doc = deserializeLedger(shaped);
+			if (ledgerDayKeys(doc).length === 0 && Object.keys(shaped.days).length > 0) {
+				this.note("legacy-unreadable", "the pre-migration ledger holds no readable day, so its history was not imported — inspect it beside this device's file");
+				return;
+			}
 			if (source.path === legacyPath) {
 				const previous = await this.readLedgerDocument(migratedPath);
 				if (previous !== void 0) {
@@ -3560,7 +3610,7 @@ var UsageService = class {
 						for (const [provider, models] of Object.entries(buckets)) for (const [model, totals] of Object.entries(models)) {
 							const mine = findLedgerBucket(local, provider, model)?.totals;
 							const extra = mine === void 0 ? totals : subtractTotals(totals, mine);
-							if (extra.calls === 0 && totalTokens(extra) === 0) continue;
+							if (extra.calls <= 0) continue;
 							kept[provider] = {
 								...kept[provider] ?? {},
 								[model]: extra
@@ -3582,7 +3632,7 @@ var UsageService = class {
 					continue;
 				}
 				if (parsed.machine !== void 0 && this.sameMachine(parsed.machine)) {
-					mergeLedgerMax(this.ledger, parsed.doc);
+					mergeLedgerMax(this.ledger, this.windowedDocument(parsed.doc));
 					this.note(`renamed:${deviceId}`, `${name}: this machine under an older name, folded in rather than summed`);
 					continue;
 				}
@@ -3835,7 +3885,7 @@ var UsageService = class {
 		this.retentionSeen = Math.min(this.retentionSeen, this.options.retainDays);
 		const pruned = pruneLedger(doc, todayKey, this.options.retainDays);
 		const jumped = !shrank && days >= 4 && pruned > days * .3;
-		if (pruned > 0 && (shrank || jumped)) {
+		if (pruned > 0 && (shrank || !shrank && pruned > 1)) {
 			const base = shrank ? `pruned ${pruned} of ${days} recorded days to honour the ${this.options.retainDays}-day window` : `pruned ${pruned} of ${days} recorded days at once`;
 			this.note("retention", jumped ? `${base} — the clock may have jumped` : base);
 		}

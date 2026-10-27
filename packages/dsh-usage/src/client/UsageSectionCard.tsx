@@ -314,10 +314,21 @@ const RANGE_FETCH_MAX_DAYS = 45
  */
 function historyStampOf(usage: UsageOverviewView['usage']): string {
   const recorded = usage.availableDays?.length ?? usage.days.length
-  const whole = usage.all === undefined
-    ? usage.days.reduce((sum, row) => sum + totalOf(row.totals), 0)
-    : totalOf(usage.all.totals)
-  return `${recorded}:${whole - totalOf(usage.today.totals)}`
+  const rows = usage.all === undefined ? usage.days.map((row) => row.totals) : [usage.all.totals]
+  // Tokens alone are not the history: a peer import that moves a bucket to
+  // another day, a corrected call count, or a bucket repriced by a new price book
+  // all leave the token total untouched. A stamp built from tokens only kept
+  // serving the old per-day split (and the old ¥) until a manual refresh.
+  let tokens = 0
+  let calls = 0
+  let cost = 0
+  for (const totals of rows) {
+    tokens += totalOf(totals)
+    calls += totals.calls
+    cost += totals.cost
+  }
+  const today = usage.today.totals
+  return `${recorded}:${tokens - totalOf(today)}:${calls - today.calls}:${Math.round((cost - today.cost) * 100)}`
 }
 
 /**
@@ -558,6 +569,13 @@ function clearUsageCaches(): void {
 /** How one window's range aggregate fetch is going. */
 interface RangeLoad {
   status: 'idle' | 'loading' | 'ready' | 'error'
+  /**
+   * The span this answer describes (`from:to`, empty for a window with nothing to
+   * fetch). A window change is not a retry: without this the previous window's
+   * aggregate was reused for the new dates and the tile stated one window's
+   * total under another window's label.
+   */
+  span?: string
   summary?: { totals: UsageTokenTotals; providers: UsageProviderSummary[] }
   series?: Array<{ date: string; totals: UsageTokenTotals; models?: Record<string, UsageTokenTotals> }>
   /** Transport error message, on a failed load. */
@@ -594,7 +612,7 @@ function useRangeData(
   const lastStamp = useRef<string | undefined>(undefined)
   useEffect(() => {
     if (empty) {
-      setLoad((previous) => (previous.status === 'ready' && previous.series?.length === 0 ? previous : { status: 'ready', series: [] }))
+      setLoad((previous) => (previous.status === 'ready' && previous.series?.length === 0 ? previous : { status: 'ready', span: '', series: [] }))
       return undefined
     }
     if (key === '') {
@@ -606,7 +624,7 @@ function useRangeData(
     // drop it or a wide window stays on its old total forever.
     const cached = rangeResults.get(key)
     if (cached !== undefined && cached.stamp === stamp) {
-      setLoad({ status: 'ready', summary: cached.summary, series: cached.series })
+      setLoad({ status: 'ready', span: key, summary: cached.summary, series: cached.series })
       return undefined
     }
     let cancelled = false
@@ -618,13 +636,16 @@ function useRangeData(
     // until the refetch lands.
     const moved = lastStamp.current !== undefined && lastStamp.current !== stamp
     lastStamp.current = stamp
-    setLoad((previous) => (moved ? { status: 'loading' } : previous.status === 'ready' || previous.status === 'error' ? previous : { status: 'loading' }))
+    setLoad((previous) => (moved || previous.span !== key
+      ? { status: 'loading', span: key }
+      : previous.status === 'ready' || previous.status === 'error' ? previous : { status: 'loading', span: key }))
     requestRange(loadRange, key.slice(0, 10), key.slice(11), stamp).then(
       (response) => {
         if (cancelled) return
         const stored = rangeResults.get(key)
         setLoad({
           status: 'ready',
+          span: key,
           summary: stored !== undefined && stored.stamp === stamp ? stored.summary : { totals: response.totals, providers: response.providers },
           series: response.series,
         })
@@ -634,12 +655,15 @@ function useRangeData(
         // The failure replaces the status, not the answer: the window keeps its
         // last settled summary and series so the numbers stay on screen next to
         // the failure line, exactly as the per-day path keeps its days. Dropping
-        // them made one failed refetch look like the window had been emptied.
+        // them made one failed refetch look like the window had been emptied —
+        // but only for the span they describe: another window's aggregate is not
+        // an answer about this one.
         setLoad((previous) => ({
           status: 'error',
+          span: key,
           error: error instanceof Error ? error.message : String(error),
-          ...(previous.summary !== undefined ? { summary: previous.summary } : {}),
-          ...(previous.series !== undefined ? { series: previous.series } : {}),
+          ...(previous.span === key && previous.summary !== undefined ? { summary: previous.summary } : {}),
+          ...(previous.span === key && previous.series !== undefined ? { series: previous.series } : {}),
         }))
       },
     )
@@ -1272,15 +1296,16 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   const snapshot = ui.snapshot
   const todayView = snapshot?.usage.today
   const todayDate = todayView?.date ?? ''
-  // Every retained day THIS machine recorded. The overview serves it as
-  // `availableDays`; the trend's day rows carry the same keys on an older host.
+  // Every day the totals count: the overview serves it as `availableDays`,
+  // which the host fills from the merged ledger (this machine's days and any
+  // peer file it adopted); the trend's day rows carry the same keys on an older
+  // host.
   const recorded = snapshot === null ? [] : snapshot.usage.availableDays ?? snapshot.usage.days.map((row) => row.date)
-  // The window floor is the merged ledger's first day, not this machine's:
-  // `availableDays` lists only the days the local host recorded, while
-  // `usage.all` and the range totals also cover peer files it adopted. A peer
-  // export whose history starts earlier used to leave 全部 understating the
-  // total — and the picker unable to reach those days at all. A host that serves
-  // no `all` falls back to the local list.
+  // The window floor is the merged ledger's first day: `usage.all` spans every
+  // day the totals cover, peer history included. A peer export whose history
+  // starts earlier used to leave 全部 understating the total — and the picker
+  // unable to reach those days at all. A host that serves no `all` falls back to
+  // the recorded list.
   const ledgerFrom = snapshot?.usage.all?.from
   const oldestDay = ledgerFrom !== undefined && ledgerFrom !== '' ? ledgerFrom : recorded[0]
   // The history fingerprint every cached answer carries. A poll that only moved
@@ -1331,8 +1356,15 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   const allLoad = useRangeData(loadRange, allWindow, todayDate, cacheEpoch, retryTick, historyStamp)
   const customRangeLoad = useRangeData(loadRange, customPicked && customIsRange ? customWindow : undefined, todayDate, cacheEpoch, retryTick, historyStamp)
   /** One range-kind window as the panel states it: the fetched aggregate plus the live day. */
-  const rangeSummaryOf = (window: RangeWindow, load: RangeLoad): UsageWindowSummary =>
-    withLiveToday({ from: window.from, to: window.to, ...(load.summary ?? { totals: emptyTotals(), providers: [] }) }, window, todayView)
+  const rangeSummaryOf = (window: RangeWindow, load: RangeLoad): UsageWindowSummary => {
+    // Only the aggregate fetched for THIS span may be labelled with this window's
+    // dates: a window that changed and then failed used to keep the previous
+    // window's total under the new label.
+    const span = fetchSpanOf(window, todayDate)
+    const key = span === undefined ? '' : `${span.from}:${span.to}`
+    const summary = load.span === key ? load.summary : undefined
+    return withLiveToday({ from: window.from, to: window.to, ...(summary ?? { totals: emptyTotals(), providers: [] }) }, window, todayView)
+  }
   // A failed day or window retries on an exponential backoff and then stops.
   // The loaders only re-run when their inputs change and a dropped request is
   // not an input, so without this tick a tile stayed at "—" until the user

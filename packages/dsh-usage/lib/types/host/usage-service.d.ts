@@ -164,6 +164,8 @@ export declare class UsageService {
     /** Retry bookkeeping for a ledger file that could not be read this boot. */
     private loadRetries;
     private loadRetryTimer;
+    /** The first load, so a stop inside its window can wait for it before flushing. */
+    private loadDone;
     private disposed;
     /** Last prune guard: once per local day, and whenever retention shrinks. */
     private lastPrune;
@@ -351,6 +353,17 @@ export declare class UsageService {
      * The pass also reports the duplicate copies it dropped, so the repair below
      * can use them without walking the transcripts (287 MB, ~18 s) again.
      */
+    /**
+     * The days of `doc` that the retention window still holds.
+     *
+     * Applied wherever a document is merged into this process's ledger outside the
+     * load itself — the replay, a same-machine file under an older name: both
+     * carry history the window has already dropped, and merging it back makes the
+     * next prune meet a history it never wrote. The guard then refuses (correctly,
+     * it cannot tell that case from a jumped clock), so the window would be
+     * unappliable for as long as those documents keep arriving.
+     */
+    private windowedDocument;
     private replaySessionLogs;
     /**
      * Take the duplicate copies out of one bucket, or return `undefined` to leave

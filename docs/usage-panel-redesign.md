@@ -604,7 +604,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   once, a clipboard that throws synchronously still releasing the button and
   saying the copy failed, a local draw failure told apart from a request failure,
   and an inverted custom pair keeping each typed value in its own box.
-- `node --experimental-strip-types harness/host-test.mjs` — 254 checks: range
+- `node --experimental-strip-types harness/host-test.mjs` — 262 checks: range
   aggregate + per-model series, route guards, device ledger, loopback fence,
   peak clock, the record-carried route of the live fold, transcript dedupe and
   the judged repair, ledger quarantine and unreadable-file protection, the
@@ -652,7 +652,21 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   kept by write instant (ties broken by size, then name), an export carrying the
   window it was pruned to, two or more identical copies taken out in memory and
   in the file (the marker recording how many), and a transcript replayed only
-  inside the retained window.
+  inside the retained window. Round 16 adds: an unverified peer whose residual
+  has no calls left contributing no bucket at all (a "zero-call, pure-token" row
+  used to be spliced out of two different machines), a duplicate replay that
+  uses the ledger's own window for its clean base (a day the ledger still keeps
+  is repaired even when it sits outside the replay window), a `repair-skipped`
+  note that no longer claims the ledger "holds more than the duplicate set"
+  when the skip was really "no such bucket" or "already clean", a shrink
+  recognised on the very first load (`retentionSeen` starts from the file's own
+  `retentionDays`, not from the setting, so a 365→7 change is no longer blamed
+  on the clock), and a partial slab prune saying so instead of passing as a
+  normal one. The client side adds a history stamp built from calls and cost as
+  well as tokens (a repriced bucket or a moved day no longer keeps serving the
+  old split and the old ¥), and a range aggregate bound to the span it was
+  fetched for (a window change is not a retry, so the previous window's total
+  can no longer be labelled with the new dates).
 - Live bundle serving was proven against the running host:
   `GET /plugins/events` (loopback-exempt) lists the plugin row's `rev`, and
   `GET /plugins/??@linxin666/dsh-usage/client.js&rev=<rev>` returns the new

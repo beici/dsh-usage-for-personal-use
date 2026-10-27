@@ -1,6 +1,6 @@
 # HANDOFF — DSH usage plugin (`@linxin666/dsh-usage`)
 
-Last updated: 2026-10-27 (round 15 delivered).
+Last updated: 2026-10-27 (round 16 delivered).
 
 ## What this is
 
@@ -24,7 +24,7 @@ cd packages/dsh-usage
 ../../node_modules/.bin/tsdown                              # bundles, exit 0
 cd ../..
 node harness/build-test-bundle.cjs                          # derives harness/client.test.cjs
-node --experimental-strip-types harness/host-test.mjs       # 254 checks
+node --experimental-strip-types harness/host-test.mjs       # 262 checks
 node harness/render-test.mjs                                # 225 checks (jsdom)
 bash patches/install-patches.sh                             # deploy + verify markers
 ```
@@ -36,53 +36,44 @@ Artifacts of the current tree (verified 2026-10-27):
 
 | file | bytes | md5 |
 | --- | --- | --- |
-| `lib/index.js` | 176,807 | `0a8bb71f7eec537be4aab6499c21321e` |
-| `lib/client.js` | 527,815 | `cf5844ba0b3b3b5c31b01506d1bb78b9` |
-| `lib/client.js.map` | 707,139 | `04890d5fb3c19eaa586ff25af44045e5` |
+| `lib/index.js` | 179,284 | `bb1518048d95a3e3a97d12974d6656b9` |
+| `lib/client.js` | 528,487 | `7f953820bc4bcb499fb0e2c0274d302b` |
+| `lib/client.js.map` | 709,158 | `f89f3374637620f938f16d92084ca00a` |
 
-## Live data (as of 2026-10-27 ~09:30, old build still running)
+## Live data (as of 2026-10-27 ~09:44, old build still running)
 
 - `C:\Users\scrip\.dsh\dsh-usage\usage-ledger.p15-22893b.json` — still bare
-  `{version, days}` with 11 days and no `machine` / `repairedAt` /
-  `retentionDays`: the running host predates the repair, so the panel keeps
-  over-reporting until DSH is fully restarted. The file was last written at
-  01:23 UTC.
+  `{version, days}`, 11 days / 32 buckets / 58,838 calls / 6,922,973,827 tokens,
+  no `machine` / `repairedAt` / `retentionDays`: the running host predates the
+  repair, so the panel keeps over-reporting until DSH is fully restarted.
+- Driven through the current code the same file repairs to 57,367 calls /
+  6,766,453,008 tokens (3 buckets, marker `removedTokens: 168,550,944`) and is
+  idempotent across starts; an independent recount of the transcripts gives
+  55,800 unique calls / 6,604,279,098 tokens, and the remaining difference is
+  fully accounted for (ledger-only history from `.migrated`, a provider rename,
+  and a peer residue).
 - `usage-ledger.json.migrated` holds the pre-migration history;
   `usage-ledger.izuf6gqghj119maddgtu7yz-2c08fa.json` is a peer file with no
   `machine` stamp (counted only for buckets this machine never recorded).
-- Honest totals measured on the live file (08:55 sample, old build still
-  writing): 58,112 calls / 6,833,370,365 tokens over 32 buckets and 11 days;
-  replaying 373 transcripts (410 MB) through the current code repairs 3 buckets
-  by −1,565 calls / −169,011,947 tokens.
-- A copy of the live ledger driven through the current code gains
-  `deviceId` / `machine` / `retentionDays`, keeps its days, and is idempotent
-  across starts; the old build keeps inflating as new sessions land.
 
-## Round 15 (this commit)
+## Round 16 (this commit)
 
-Host: a transcript replayed only inside the retained window (a lowered
-`retainDays` no longer refolds transcripts it is about to prune); the repair
-takes out `k` identical copies instead of exactly one (the marker records the
-copy count, so a bucket duplicated twice converges instead of drifting); a
-repair record without floors is treated as unusable rather than subtracting
-everything twice; a BOM-prefixed repair record still guards its buckets and a
-BOM-prefixed pre-migration ledger is adopted; the peer scan runs after the
-repair (the repair's note no longer says a peer is unverified because it was
-scanned first); the `unstampedWipe` heuristic is gone, so a shrink cannot wipe
-history through the "clock jumped" path; an export carries the window it was
-pruned to; quarantine copies are kept by write instant (ties broken by size,
-then name); one machine under two file names counts once; a stale writer whose
-peer lost calls in the interval reports `skipped` instead of `dropped 0`.
+Host: an unverified peer whose residual has no calls left contributes no bucket
+(no more "zero-call, pure-token" rows spliced out of two machines); the
+duplicate replay uses the ledger's own window for its clean base, so a day the
+ledger still keeps is repaired even when it sits outside the replay window; the
+`repair-skipped` note no longer claims the ledger "holds more than the duplicate
+set" when the skip was really "no such bucket" or "already clean"; a shrink is
+recognised on the very first load (`retentionSeen` starts from the file's own
+`retentionDays`, not the setting); a partial slab prune says so.
 
-Client: a range total steps aside (`…`) while its history moves and comes back
-grown; a single-day voucher states its date once; a clipboard that throws
-synchronously still releases the button and says 复制失败; a local draw failure
-is told apart from a request failure; an inverted custom pair keeps each typed
-value in its own box.
+Client: the history stamp covers calls and cost as well as tokens (a repriced
+bucket or a moved day no longer keeps serving the old split and the old ¥), and
+a range aggregate is bound to the span it was fetched for.
 
 ## Open work
 
-- Round 16 read-only audits (host / client / data) are running; fold their
+- Round 17 read-only audits (host / client / data) are running; fold their
   findings into the next round. The loop is the user's standing request: audit →
   fix → test → deploy → commit → audit again.
 - The user must fully restart DSH for host changes to take effect (client half
