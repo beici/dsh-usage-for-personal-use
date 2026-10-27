@@ -2201,6 +2201,27 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
     !/@media\s*\(max-width:\s*420px\)/.test(css), 'found a 420px media query')
 }
 
+// ---- the trend plot folds inside a narrow card ---------------------------
+// The tooltip is anchored by percentage and its lines are nowrap, so a card
+// narrower than ~320px pushed both outside its own edge (round-21 audit L5).
+// The plot is its own container now: a media query would read the viewport and
+// keep full-size labels while the card sits in a 300px panel.
+{
+  const css = readClient('usage.module.css')
+  const wrapRule = /\.trendWrap\s*\{([^}]*)\}/.exec(css)
+  check('the trend plot is measured as its own container',
+    wrapRule !== null && /container-type:\s*inline-size/.test(wrapRule[1]),
+    wrapRule === null ? 'no .trendWrap rule' : wrapRule[1].replace(/\s+/g, ' ').trim())
+  const narrowAt = css.indexOf('@container (max-width: 320px)')
+  const narrow = narrowAt === -1 ? '' : css.slice(narrowAt, narrowAt + 700)
+  check('a narrow card lets the tooltip wrap instead of hanging out of the card',
+    narrow.includes('max-width: 100%') && narrow.includes('white-space: normal'),
+    narrowAt === -1 ? 'no 320px container query' : narrow.slice(0, 90).replace(/\s+/g, ' '))
+  check('a narrow card thins the x-axis labels instead of overlapping them',
+    narrow.includes('.trendXLabel:nth-child(2n)') && narrow.includes('display: none'),
+    narrowAt === -1 ? 'no 320px container query' : 'x-label rule ' + String(narrow.includes('.trendXLabel:nth-child(2n)')))
+}
+
 // ---- the dictionaries carry only live sentences -------------------------
 // Five keys were left behind by earlier layouts; a dead entry is a sentence a
 // translator keeps paying for. The two new sentences have to exist in BOTH
@@ -2392,6 +2413,114 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
   }
 }
 
+// ---- a refused share is not a failed draw, and a saved blob is released ----
+// Two round-21 audit findings in one card. M6: `canShare` refusing image files
+// means the picture EXISTS and this browser will not share it — the card said
+// "the voucher could not be rendered", blaming the encoder for a policy call.
+// L2: the download's deferred revoke was cancelled on unmount but the URL was
+// never released, leaking one blob per save-then-close.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const mint = JSON.parse(JSON.stringify(overview))
+  const mintTotals = { inputTokens: 900000, outputTokens: 300000, cacheReadTokens: 600000, cacheWriteTokens: 0, reasoningTokens: 0, calls: 9, cost: 1.2 }
+  mint.usage.all.providers = [...mint.usage.all.providers, { provider: 'deepseek', totals: mintTotals, models: [{ model: 'deepseek-v4.1-flash', totals: mintTotals }] }]
+  const state = { snapshot: mint, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const realImage = globalThis.Image
+  const realGetContext = window.HTMLCanvasElement.prototype.getContext
+  const realToBlob = window.HTMLCanvasElement.prototype.toBlob
+  const realCreateUrl = URL.createObjectURL
+  const realRevokeUrl = URL.revokeObjectURL
+  class FakeImage {
+    constructor() {
+      this.naturalWidth = 512
+      this.naturalHeight = 512
+      this.onload = null
+      this.onerror = null
+    }
+    set src(value) {
+      this._src = value
+      setTimeout(() => { if (typeof this.onload === 'function') this.onload() }, 0)
+    }
+    get src() { return this._src }
+  }
+  globalThis.Image = FakeImage
+  window.Image = FakeImage
+  window.HTMLCanvasElement.prototype.getContext = () => ({
+    drawImage: () => {},
+    measureText: (value) => ({ width: String(value).length * 10 }),
+    fillText: () => {},
+  })
+  window.HTMLCanvasElement.prototype.toBlob = (callback) => callback(new window.Blob([new Uint8Array([1])], { type: 'image/png' }))
+  const madeUrls = []
+  const revokedUrls = []
+  URL.createObjectURL = (blob) => { const url = 'blob:test-voucher-' + (madeUrls.length + 1); madeUrls.push(url); return url }
+  URL.revokeObjectURL = (url) => { revokedUrls.push(url) }
+  const realCanShare = Object.getOwnPropertyDescriptor(window.navigator, 'canShare')
+  const realShare = Object.getOwnPropertyDescriptor(window.navigator, 'share')
+  Object.defineProperty(window.navigator, 'canShare', { configurable: true, value: () => false })
+  Object.defineProperty(window.navigator, 'share', { configurable: true, value: () => Promise.resolve() })
+  const localRoot = ReactDOMClient.createRoot(host)
+  const buttonWith = (label) => [...host.querySelectorAll('[data-dsh-part="bank-card"] button')]
+    .find((button) => text(button).includes(label))
+  try {
+    await act(async () => {
+      localRoot.render(React.createElement(UsageSectionCard, {
+        store: localStore,
+        poll: () => {},
+        refresh: () => {},
+        loadDay,
+        loadRange,
+        settings,
+        deviceSync,
+        close: () => {},
+      }))
+    })
+    await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+    const tabButtons = [...host.querySelectorAll('[data-dsh-part="tabs"] button')]
+    await act(async () => {
+      tabButtons[2]?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+      await new Promise((r) => setTimeout(r, 300))
+    })
+    check('a supported share sheet offers the share button', buttonWith('分享') !== undefined, text(host).slice(-60))
+    await act(async () => {
+      buttonWith('分享')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+      await new Promise((r) => setTimeout(r, 200))
+    })
+    // The blob existed and this browser refused to share it: that is a refusal,
+    // not a stalled encoder — the old sentence for both blamed the renderer.
+    check('a share that canShare refuses says the browser cannot share files',
+      text(host).includes('这个浏览器不能分享图片文件') && !text(host).includes('票券生成失败'),
+      text(host).slice(-100))
+    // The delay keeps the URL alive for the download; the unmount has to release
+    // it, or every save-then-close leaked a blob for the life of the page.
+    await act(async () => {
+      buttonWith('保存图片')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+      await new Promise((r) => setTimeout(r, 150))
+    })
+    check('a save makes the object URL it needs', madeUrls.length === 1, JSON.stringify(madeUrls))
+    check('a pending object URL is not released while the download runs',
+      revokedUrls.length === 0, JSON.stringify(revokedUrls))
+    await act(async () => { localRoot.unmount() })
+    check('closing the card releases the object URL still waiting on its timer',
+      revokedUrls.length === 1 && revokedUrls[0] === madeUrls[0],
+      JSON.stringify({ madeUrls, revokedUrls }))
+  } finally {
+    URL.createObjectURL = realCreateUrl
+    URL.revokeObjectURL = realRevokeUrl
+    window.HTMLCanvasElement.prototype.getContext = realGetContext
+    window.HTMLCanvasElement.prototype.toBlob = realToBlob
+    globalThis.Image = realImage
+    window.Image = realImage
+    if (realCanShare === undefined) delete window.navigator.canShare
+    else Object.defineProperty(window.navigator, 'canShare', realCanShare)
+    if (realShare === undefined) delete window.navigator.share
+    else Object.defineProperty(window.navigator, 'share', realShare)
+  }
+  if (host.parentNode !== null) host.remove()
+}
+
 // ---- a one-day failure still says so ------------------------------------
 // The chart returned null before the failure notice whenever it had fewer than
 // two rows, so a wholesale failure on a one-day window rendered nothing at all.
@@ -2445,6 +2574,45 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
     bars.length === 3 && segments.length === 1 && (segments[0].getAttribute('style') ?? '').includes('height'),
     'bars=' + bars.length + ' segments=' + segments.length + ' ' + (segments[0]?.getAttribute('style') ?? ''))
   check('the legend names the unclassified remainder', text(host).includes('未分类'), text(host).slice(-60))
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- the legend says how many models it cut ----------------------------
+// The table stops at twelve names while the bars keep stacking every model, so a
+// window with thirteen drew a colour no legend explained (round-21 audit L6). The
+// tail is counted now, and the names it dropped are still reachable in a title.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const localRoot = ReactDOMClient.createRoot(host)
+  const dayTotals = { inputTokens: 100, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 1, cost: 0 }
+  const modelNames = Array.from({ length: 15 }, (_, index) => 'model-' + String(index).padStart(2, '0'))
+  const splitOf = (keep) => Object.fromEntries(modelNames.slice(0, keep).map((model) => [model, { ...dayTotals }]))
+  const rows = [
+    { date: '2026-10-18', totals: { ...dayTotals }, models: splitOf(15) },
+    { date: '2026-10-19', totals: { ...dayTotals }, models: splitOf(15) },
+    { date: '2026-10-20', totals: { ...dayTotals }, models: splitOf(15) },
+  ]
+  const colors = new Map(modelNames.map((model, index) => [model, '#' + (0x111111 * (index + 1) % 0xffffff).toString(16).padStart(6, '0')]))
+  await act(async () => { localRoot.render(React.createElement(TrendChart, { rows, colors })) })
+  const items = [...host.querySelectorAll('[data-dsh-part="trend-legend"] [class*="trendLegendItem"]')]
+  const more = host.querySelector('[data-dsh-part="trend-legend-more"]')
+  check('a cut legend counts the models it left out',
+    items.length === 13 && more !== null && text(more).includes('3'),
+    'items=' + items.length + ' more=' + (more === null ? 'missing' : text(more)))
+  check('the cut legend still names the dropped models',
+    more !== null && (more.getAttribute('title') ?? '').includes('model-14'),
+    more === null ? 'no marker' : String(more.getAttribute('title')))
+  // A window that fits keeps no marker: a "+0 more" would read as an omission.
+  const fewRows = [
+    { date: '2026-10-18', totals: { ...dayTotals }, models: splitOf(3) },
+    { date: '2026-10-19', totals: { ...dayTotals }, models: splitOf(3) },
+    { date: '2026-10-20', totals: { ...dayTotals }, models: splitOf(3) },
+  ]
+  await act(async () => { localRoot.render(React.createElement(TrendChart, { rows: fewRows, colors })) })
+  check('a legend that fits prints no leftover marker',
+    host.querySelector('[data-dsh-part="trend-legend-more"]') === null, text(host).slice(-60))
   await act(async () => { localRoot.unmount() })
   host.remove()
 }

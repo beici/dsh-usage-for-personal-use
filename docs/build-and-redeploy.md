@@ -74,7 +74,7 @@ cd packages/dsh-usage && ../../node_modules/.bin/tsc --noEmit -p tsconfig.json
 ```bash
 cd "$(git rev-parse --show-toplevel)"
 node harness/build-test-bundle.cjs    # derives harness/client.test.cjs from lib/client.js
-node harness/render-test.mjs          # must end: === 232/232 checks passed ===
+node harness/render-test.mjs          # must end: === 243/243 checks passed ===
 node --experimental-strip-types harness/host-test.mjs   # 288/288 checks passed
 ```
 

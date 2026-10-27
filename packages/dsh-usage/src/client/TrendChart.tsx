@@ -309,6 +309,10 @@ export function TrendChart(props: {
         { key: 'input', className: styles.trendSegInput, label: t('usage.tokens.input') },
         { key: 'output', className: styles.trendSegOutput, label: t('usage.tokens.output') },
       ]
+  // The table stops at twelve names, but the bars keep stacking every model: a
+  // silent cut left colours on the chart that no legend explained (round-21
+  // audit L6). The marker counts the rest and names them in its title.
+  const hiddenLegendKeys = modelMode ? segmentKeys.filter((model) => !legendKeys.includes(model)) : []
 
   // A failed bucket makes the sum meaningless: the label states the span and the
   // failure instead of a total nothing measured.
@@ -462,6 +466,15 @@ export function TrendChart(props: {
             {entry.label}
           </span>
         ))}
+        {hiddenLegendKeys.length > 0 && (
+          <span
+            className={styles.trendLegendItem}
+            data-dsh-part="trend-legend-more"
+            title={hiddenLegendKeys.map(labelOf).join(', ')}
+          >
+            {t('usage.trend.moreModels', { n: hiddenLegendKeys.length })}
+          </span>
+        )}
       </div>
     </div>
   )

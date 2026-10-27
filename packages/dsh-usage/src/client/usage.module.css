@@ -356,6 +356,31 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* 趋势图自己当容器:窄卡片(<320px)里百分比锚定的悬浮明细与 no-wrap 的
+     X 轴标签会顶出卡片边缘,下面的容器查询只对这张图的子树生效
+     (round-21 audit L5)。查询的是卡片自身宽度,不是视口。 */
+  container-type: inline-size;
+}
+
+@container (max-width: 320px) {
+  /* 明细改为可折行,并在图内宽度受限时压缩字号、隔一个隐一个标签:撑出卡片的
+     是绝对定位的锚点,折行与减标比裁切更不丢信息。 */
+  .trendTooltip {
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .trendXLabel {
+    font-size: 9px;
+  }
+
+  .trendXLabel:nth-child(2n) {
+    display: none;
+  }
+
+  .trendLegend {
+    gap: 8px;
+  }
 }
 
 .trendPlot {

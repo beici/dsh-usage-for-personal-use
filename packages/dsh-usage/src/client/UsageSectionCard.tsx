@@ -1952,7 +1952,12 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
   // Which button failed, not just that one did: a canvas that never encoded is a
   // draw failure and says so, while a rejected share sheet is a share failure.
   const [saveStalled, setSaveStalled] = useState(false)
-  const [shareStalled, setShareStalled] = useState(false)
+  // A share can fail for three different reasons and they are not the same
+  // sentence: a stalled or empty encoder is a draw failure, a `canShare` refusal
+  // means the image exists and this browser will not hand it to the sheet, and a
+  // throw is the share itself failing. Folding them into one sentence told a
+  // refusal "the voucher could not be rendered", which is not what happened.
+  const [shareFailure, setShareFailure] = useState<'stalled' | 'unsupported' | undefined>(undefined)
   // Encoding a full-size PNG takes long enough to be worth a label change: a
   // button that looks idle invites a second click and a second download. The two
   // buttons keep their own flag — one shared flag made the save button read
@@ -1962,7 +1967,11 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
   // The download's object URL outlives the click by design, so both the timer
   // and the mounted flag have to outlive the handler: an unmount used to leave
   // the timer armed and a state update queued on a dead component.
-  const revokeTimer = useRef<number | undefined>(undefined)
+  const revokeTimers = useRef<number[]>([])
+  // Every URL still waiting for its delayed revoke. Clearing the timer on unmount
+  // released the timer but not the URL, so a save followed by a panel close leaked
+  // one blob per save (round-21 audit L2); the unmount revokes what is left.
+  const pendingUrls = useRef<string[]>([])
   // A `toBlob` that never calls back (a stalled encoder) used to leave both
   // buttons disabled for the rest of the session; the watchdog releases them.
   const saveWatchdog = useRef<number | undefined>(undefined)
@@ -1974,7 +1983,12 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
     mounted.current = true
     return () => {
       mounted.current = false
-      if (revokeTimer.current !== undefined) window.clearTimeout(revokeTimer.current)
+      // An unmount revokes what the delayed timers would have revoked: clearing
+      // only the timers leaked the URL and its blob for the life of the page.
+      for (const url of pendingUrls.current) URL.revokeObjectURL(url)
+      pendingUrls.current = []
+      for (const timer of revokeTimers.current) window.clearTimeout(timer)
+      revokeTimers.current = []
       if (saveWatchdog.current !== undefined) window.clearTimeout(saveWatchdog.current)
       if (shareWatchdog.current !== undefined) window.clearTimeout(shareWatchdog.current)
     }
@@ -2065,13 +2079,15 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
           anchor.download = `dsh-whale-voucher-${data.to}.png`
           anchor.click()
           // The download reads the URL after the click returns, so the revoke
-          // has to wait; the timer is tracked so an unmount clears it (and the
-          // URL) instead of leaving both behind.
-          if (revokeTimer.current !== undefined) window.clearTimeout(revokeTimer.current)
-          revokeTimer.current = window.setTimeout(() => {
-            revokeTimer.current = undefined
+          // has to wait; the URL and its timer are both tracked so an unmount
+          // revokes what is still pending instead of leaking the blob.
+          pendingUrls.current.push(url)
+          const revokeTimer = window.setTimeout(() => {
+            pendingUrls.current = pendingUrls.current.filter((pending) => pending !== url)
+            revokeTimers.current = revokeTimers.current.filter((pending) => pending !== revokeTimer)
             URL.revokeObjectURL(url)
           }, 10_000)
+          revokeTimers.current.push(revokeTimer)
         } catch (error) {
           if (mounted.current) setSaveError(error instanceof Error ? error.message : String(error))
         } finally {
@@ -2096,13 +2112,13 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
     // released by the watchdog instead of disabling both buttons for the session.
     setSharing(true)
     setShareError(undefined)
-    setShareStalled(false)
+    setShareFailure(undefined)
     const armWatchdog = (): void => {
       if (shareWatchdog.current !== undefined) window.clearTimeout(shareWatchdog.current)
       shareWatchdog.current = window.setTimeout(() => {
         shareWatchdog.current = undefined
         if (!mounted.current) return
-        setShareStalled(true)
+        setShareFailure('stalled')
         setShareError(undefined)
         setSharing(false)
       }, 15_000)
@@ -2119,7 +2135,7 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
           try {
             if (blob === null) {
               if (mounted.current) {
-                setShareStalled(true)
+                setShareFailure('stalled')
                 setShareError(undefined)
               }
               return
@@ -2127,7 +2143,9 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
             const file = new File([blob], `dsh-whale-voucher-${data.to}.png`, { type: 'image/png' })
             if (!navigator.canShare({ files: [file] })) {
               if (mounted.current) {
-                setShareStalled(true)
+                // The blob exists: this browser just will not share files. Saying
+                // "the voucher could not be rendered" here blamed the encoder.
+                setShareFailure('unsupported')
                 setShareError(undefined)
               }
               return
@@ -2144,7 +2162,7 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
             const cancelled = error instanceof DOMException && error.name === 'AbortError'
             if (!cancelled && mounted.current) {
               setShareError(error instanceof Error ? error.message : String(error))
-              setShareStalled(false)
+              setShareFailure(undefined)
             }
           } finally {
             disarmWatchdog()
@@ -2155,7 +2173,7 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
     } catch (error) {
       disarmWatchdog()
       setShareError(error instanceof Error ? error.message : String(error))
-      setShareStalled(false)
+      setShareFailure(undefined)
       setSharing(false)
     }
   }
@@ -2207,10 +2225,14 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
               <span id={saveDetailId} className={styles.srOnly}>{saveError ?? ''}</span>
             </>
           )}
-            {(shareError !== undefined || shareStalled) && (
+            {(shareError !== undefined || shareFailure !== undefined) && (
             <>
               <span className={styles.errorLine} role="status" title={shareError ?? ''} aria-describedby={shareDetailId}>
-                {shareStalled ? t('usage.bank.drawFailed') : t('usage.bank.shareError')}
+                {shareFailure === 'stalled'
+                  ? t('usage.bank.drawFailed')
+                  : shareFailure === 'unsupported'
+                    ? t('usage.bank.shareUnsupported')
+                    : t('usage.bank.shareError')}
               </span>
               <span id={shareDetailId} className={styles.srOnly}>{shareError ?? ''}</span>
             </>

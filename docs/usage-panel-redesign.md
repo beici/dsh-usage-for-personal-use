@@ -436,7 +436,18 @@ where the stock `#d97706`/`#dc2626` pair fell to 2.64:1 and 2.78:1.
 The **window strip folds on the card's own width**, not the viewport's: the range
 card is an `inline-size` container and `@container (max-width: 420px)` drops the
 eight tiles to two columns, so a narrow sidebar panel folds even on a wide
-screen.
+screen. The **trend plot is a second `inline-size` container** (320 px): below it
+the hover tooltip wraps inside the plot instead of hanging past the card edge,
+the X labels shrink to 9px and drop every second one, and the legend gap
+tightens — the plot's tooltip is anchored by percentage and its lines are nowrap,
+so a card that narrow used to push both outside its own border.
+
+The **model legend stops at twelve names** but the bars keep stacking every
+model, so the tail is counted rather than dropped in silence: a
+`data-dsh-part="trend-legend-more"` item reads `+N 个模型` / `+N more` and lists
+the names it left out in its `title`. The unclassified remainder always keeps a
+slot (it is the one series a reader cannot infer from a model name), so it is
+swapped in at the end of the table rather than pushed past the cut.
 
 ## Settings opener (foot card)
 
@@ -530,7 +541,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
 ## Verification
 
 - `node harness/render-test.mjs` — jsdom, real bundle, saved live fixtures,
-  **232/232 checks**: eight tiles with correct labels/values/`aria-pressed`
+  **243/243 checks**: eight tiles with correct labels/values/`aria-pressed`
   (近 3 天 sums 今日 + 10-19; 近 6 个月 / 全部 read the range aggregate, which the
   stub answers only up to yesterday — 49.2 M / 584 calls — so their 135 M / 1251
   tiles prove the panel folded the live today in itself, and no range fetch may

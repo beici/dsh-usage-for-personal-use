@@ -108,6 +108,8 @@ export declare const zh: {
     'usage.bank.drawFailed': string;
     'usage.bank.saveError': string;
     'usage.bank.shareError': string;
+    'usage.bank.shareUnsupported': string;
+    'usage.trend.moreModels': string;
     'usage.bank.canvasLabel': string;
     'usage.foot.cost': string;
     'usage.foot.noData': string;

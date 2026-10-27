@@ -1,6 +1,6 @@
 # HANDOFF — DSH usage plugin (`@linxin666/dsh-usage`)
 
-Last updated: 2026-10-27 (round 21 delivered).
+Last updated: 2026-10-27 (round 22 delivered).
 
 ## What this is
 
@@ -24,8 +24,8 @@ cd packages/dsh-usage
 ../../node_modules/.bin/tsdown                              # bundles, exit 0
 cd ../..
 node harness/build-test-bundle.cjs                          # derives harness/client.test.cjs
-node --experimental-strip-types harness/host-test.mjs       # 280 checks
-node harness/render-test.mjs                                # 225 checks (jsdom)
+node --experimental-strip-types harness/host-test.mjs       # 288 checks
+node harness/render-test.mjs                                # 243 checks (jsdom)
 bash patches/install-patches.sh                             # deploy + verify markers
 ```
 
@@ -37,8 +37,8 @@ Artifacts of the current tree (verified 2026-10-27):
 | file | bytes | md5 |
 | --- | --- | --- |
 | `lib/index.js` | 190,628 | `3424ccbcf98bdca2d11253003653ba3c` |
-| `lib/client.js` | 536,663 | `eb35435016e27dd05d97a756e4b76df5` |
-| `lib/client.js.map` | 727,360 | `14bdabdc29059f4f6a6c63960c23d7d1` |
+| `lib/client.js` | 538,043 | `df28a9d6f395ea319b8892e007b6fc35` |
+| `lib/client.js.map` | 730,474 | `72168e643af317413a3720e7f5b462a2` |
 
 ## Live data (as of 2026-10-27 ~12:40, old build still running)
 
@@ -148,9 +148,44 @@ sheet is supported, two buttons keeping their own busy label during a share, an
 open share sheet not called a failure, a day without a model split still drawing
 its tokens, and a legend naming the unclassified remainder).
 
+## Round 22 (this commit)
+
+Client only (the host is unchanged; `lib/index.js` keeps its hash). The four
+findings round 21 deliberately left at the bottom of its list, because they are
+appearance and wording rather than arithmetic:
+
+- a share the browser refuses is no longer called a failed draw. `canShare`
+  answering false means the picture exists and the browser will not hand files to
+  the sheet, so that case has its own sentence (「这个浏览器不能分享图片文件…」,
+  `usage.bank.shareUnsupported`) instead of borrowing the encoder-failure line;
+  the failure state is now a three-way value (stalled / unsupported / thrown) so
+  the three cases cannot collapse back into one.
+- the object URL behind a download is released on unmount. The deferred revoke
+  used to be cancelled with the timer alone, so a save followed by closing the
+  card leaked one blob per save for the life of the page; the pending URLs and
+  their timers are both tracked and the unmount revokes what is left.
+- a legend that cuts its tail now says how many models it cut
+  (`+N 个模型` / `+N more`, `data-dsh-part="trend-legend-more"`) and names the
+  dropped ones in its title, instead of leaving colours on the bars that no
+  legend explained.
+- the trend plot is its own `container-type: inline-size` container with a
+  320 px rule: inside a narrow card the tooltip wraps and keeps to the card, the
+  x-axis labels thin out and shrink, and the legend gap tightens. A viewport
+  media query would have read the window and kept the full-size plot inside a
+  300 px panel.
+
+Tests: render-test 243/243 (eleven new: the refusal sentence, the refusal not
+being a draw failure, a save making its URL, a pending URL surviving the
+download, the unmount releasing it, a cut legend counting its tail, that count
+naming the dropped models, no marker when the legend fits, the plot measured as
+its own container, the narrow rule letting the tooltip wrap, and the narrow rule
+thinning the x-axis labels). host-test 288/288, unchanged.
+
 ## Open work
 
-- Round 21 is delivered; the next step in the user's standing loop (audit → fix →
-  test → deploy → commit → audit again) is round 22's three read-only audits.
-- The user must fully restart DSH for host changes to take effect (client half
-  reloads with Ctrl+R / HMR).
+- Round 22 is delivered; the next step in the user's standing loop (audit → fix →
+  test → deploy → commit → audit again) is round 23's three read-only audits.
+  The user has said this round closes the loop for now, so no round has been
+  dispatched.
+- The user must fully restart DSH for host changes to take effect (the host half
+  did not change in round 22; the client half reloads with Ctrl+R / HMR).
