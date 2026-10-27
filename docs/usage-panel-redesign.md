@@ -604,7 +604,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   once, a clipboard that throws synchronously still releasing the button and
   saying the copy failed, a local draw failure told apart from a request failure,
   and an inverted custom pair keeping each typed value in its own box.
-- `node --experimental-strip-types harness/host-test.mjs` — 271 checks: range
+- `node --experimental-strip-types harness/host-test.mjs` — 280 checks: range
   aggregate + per-model series, route guards, device ledger, loopback fence,
   peak clock, the record-carried route of the live fold, transcript dedupe and
   the judged repair, ledger quarantine and unreadable-file protection, the
@@ -683,6 +683,23 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   saying the whole window failed (a partial answer keeps the partial sentence),
   a save failure cleared when the voucher's date changes, a draw failure stated
   once instead of twice, and the window-loading row announced as a status.
+  Round 18 adds: a document whose `days` is not a plain object quarantined instead
+  of being read as an empty history (the next flush would have overwritten it), a
+  negative counter read as zero, a repair judged exactly once (the record keeps the
+  buckets it corrected, not a floor to clamp later calls to), a bucket holding
+  fewer calls than the duplicate-free replay reported as short rather than
+  inflated, and a pre-repair backup of this machine clamped only while it really
+  predates the repair. Round 19 adds: the peer scan running *after* the repair is
+  judged (the startup that repairs can no longer pull the same machine's
+  pre-repair copy back over it), the repair record keyed by
+  `(day, provider, model)` and carrying the clean totals it corrected, so a peer
+  holding the pre-repair value is refused while a bucket that really grew still
+  counts, a record whose corrected buckets are all zero never used as a clean
+  base, the rename clamp keyed on the file's own contents rather than a shared
+  timestamp, whole multiples of a copy taken out (a bucket inflated by exactly two
+  or three copies is corrected, a partial residue is not), and an entry the reader
+  had to leave out (an impossible day key, a bucket that is not an object) named
+  once in the panel instead of the history shrinking in silence.
 - Live bundle serving was proven against the running host:
   `GET /plugins/events` (loopback-exempt) lists the plugin row's `rev`, and
   `GET /plugins/??@linxin666/dsh-usage/client.js&rev=<rev>` returns the new

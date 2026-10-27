@@ -2120,6 +2120,48 @@ function repairKey(dayKey, provider, model) {
 	return `${dayKey}\u0000${provider.trim().toLowerCase()}\u0000${model.trim().toLowerCase()}`;
 }
 /**
+* How many corrected buckets the repair record carries.
+*
+* The record only has to say which buckets were already judged — a bucket it
+* does not name is judged again, which is the safe direction. A cap keeps a
+* ledger with a very wide window from writing a record that grows without
+* bound: the oldest keys are dropped first, and those are the buckets whose days
+* are about to leave the window anyway.
+*/
+const REPAIR_CORRECTED_MAX = 5e3;
+/**
+* How many entries of a written ledger the reader had to leave out.
+*
+* `deserializeLedger` is deliberately forgiving: an impossible day key, a day
+* that is not an object, a counter that is a string or a negative number — each
+* one is dropped or clamped rather than failing the whole document, because one
+* bad entry must not cost the user every other day. But a document that loses
+* entries and is then written back by the next flush loses them for good, so the
+* count is what lets the panel say it happened.
+*/
+function countUnreadableEntries(rawDays, doc) {
+	let dropped = 0;
+	for (const [dayKey, dayValue] of Object.entries(rawDays)) {
+		const parsedDay = doc.days[dayKey];
+		if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey) || parsedDay === void 0) {
+			dropped += 1;
+			continue;
+		}
+		if (!isPlainObject(dayValue)) {
+			dropped += 1;
+			continue;
+		}
+		for (const [provider, models] of Object.entries(dayValue)) {
+			if (!isPlainObject(models)) {
+				dropped += 1;
+				continue;
+			}
+			for (const model of Object.keys(models)) if (parsedDay[provider]?.[model] === void 0) dropped += 1;
+		}
+	}
+	return dropped;
+}
+/**
 * The device a ledger document claims to belong to, when that device is not
 * this machine.
 *
@@ -2943,7 +2985,8 @@ var UsageService = class {
 			doc: parsed.doc,
 			repairedAt: parsed.repairedAt,
 			machine: parsed.machine,
-			retentionDays: parsed.retentionDays
+			retentionDays: parsed.retentionDays,
+			...parsed.dropped === void 0 ? {} : { dropped: parsed.dropped }
 		} : {
 			kind: "corrupt",
 			error: parsed.error
@@ -2989,12 +3032,15 @@ var UsageService = class {
 		const machine = typeof record.machine === "string" && record.machine !== "" ? record.machine : void 0;
 		const retentionDays = typeof record.retentionDays === "number" && Number.isFinite(record.retentionDays) ? record.retentionDays : void 0;
 		try {
+			const doc = deserializeLedger(inner);
+			const dropped = countUnreadableEntries(inner.days, doc);
 			return {
 				kind: "ok",
-				doc: deserializeLedger(inner),
+				doc,
 				...repairedAt !== void 0 ? { repairedAt } : {},
 				...machine !== void 0 ? { machine } : {},
-				...retentionDays !== void 0 ? { retentionDays } : {}
+				...retentionDays !== void 0 ? { retentionDays } : {},
+				...dropped > 0 ? { dropped } : {}
 			};
 		} catch (error) {
 			return {
@@ -3082,6 +3128,7 @@ var UsageService = class {
 		const replay = await this.replaySessionLogs();
 		this.replayDoc = replay.doc;
 		if (replay.skipped > 0) this.note("replay-cap", `${replay.skipped} older transcripts beyond the replay cap of ${SESSION_LOG_MAX_FILES} were not replayed`);
+		if (read.kind === "ok" && read.dropped !== void 0) this.note("ledger-dropped", `${read.dropped} entr${read.dropped === 1 ? "y" : "ies"} in the ledger could not be read and were left out`);
 		const marker = read.kind === "ok" ? await this.readRepairCorrected() : {
 			corrected: /* @__PURE__ */ new Set(),
 			appliedAt: void 0,
@@ -3089,15 +3136,38 @@ var UsageService = class {
 		};
 		this.repairCorrected = marker.corrected;
 		if (marker.version !== void 0 && marker.version < 3) this.note("repair-record", "the repair record predates this build, so its buckets were re-judged from the replay");
+		const markerUsable = marker.appliedAt !== void 0;
+		if (marker.version !== void 0 && (!markerUsable || marker.version < 3)) await writeJsonAtomic(join(this.persistDir, DEDUPE_MARKER_FILE), {
+			version: 3,
+			appliedAt: marker.appliedAt ?? Date.now(),
+			buckets: marker.corrected.size,
+			removedTokens: 0,
+			corrected: [...marker.corrected].filter((key) => this.ledger.days[key.slice(0, 10)] !== void 0).slice(0, REPAIR_CORRECTED_MAX)
+		}).catch(() => void 0);
 		const fileWrittenAt = await stat(this.ledgerPath).then((info) => info.mtimeMs).catch(() => void 0);
 		if (fileWrittenAt !== void 0) this.ledgerWrittenAt = fileWrittenAt;
-		this.repairRejudgeAll = fileWrittenAt !== void 0 && marker.appliedAt !== void 0 && fileWrittenAt < marker.appliedAt;
+		const fileRepairedAt = read.kind === "ok" ? read.repairedAt : void 0;
+		this.repairRejudgeAll = !markerUsable || fileRepairedAt === void 0 || fileWrittenAt !== void 0 && marker.appliedAt !== void 0 && fileWrittenAt < marker.appliedAt;
 		const repaired = read.kind === "ok" ? await this.repairDuplicatedReplay(replay) : {
 			buckets: 0,
 			removedTokens: 0,
 			repaired: /* @__PURE__ */ new Map(),
 			short: 0
 		};
+		if (repaired.buckets > 0) {
+			const written = await this.persistRepair(repaired.repaired);
+			if (written !== void 0 && written.corrected.size > 0) {
+				const oldest = localDateKey(Date.now() - (Math.max(1, this.options.retainDays) - 1) * 864e5);
+				const kept = [...this.repairCorrected].filter((key) => key.slice(0, 10) >= oldest && this.ledger.days[key.slice(0, 10)] !== void 0).slice(0, REPAIR_CORRECTED_MAX);
+				await writeJsonAtomic(join(this.persistDir, DEDUPE_MARKER_FILE), {
+					version: 3,
+					appliedAt: Date.now(),
+					buckets: written.corrected.size,
+					removedTokens: written.removedTokens,
+					corrected: kept
+				}).catch(() => void 0);
+			}
+		}
 		await this.refreshPeers(true);
 		this.lastPrune = void 0;
 		this.pruneIfNeeded();
@@ -3110,20 +3180,6 @@ var UsageService = class {
 		this.ledgerWritten = structuredClone(this.ledger);
 		if (read.kind !== "corrupt") this.ledgerError = void 0;
 		if (repaired.short > 0) this.note("repair-short", `${repaired.short} bucket(s) hold fewer calls than the duplicate-free replay — the ledger may be missing calls`);
-		if (repaired.buckets > 0) {
-			const written = await this.persistRepair(repaired.repaired);
-			if (written !== void 0 && written.corrected.size > 0) {
-				const oldest = localDateKey(Date.now() - (Math.max(1, this.options.retainDays) - 1) * 864e5);
-				const kept = [...this.repairCorrected].filter((key) => key.slice(0, 10) >= oldest);
-				await writeJsonAtomic(join(this.persistDir, DEDUPE_MARKER_FILE), {
-					version: 3,
-					appliedAt: Date.now(),
-					buckets: written.corrected.size,
-					removedTokens: written.removedTokens,
-					corrected: kept
-				}).catch(() => void 0);
-			}
-		}
 		this.scheduleFlush();
 	}
 	/**
@@ -3269,7 +3325,6 @@ var UsageService = class {
 						} : totals;
 						const found = findLedgerBucket(day, provider, model);
 						if (found !== void 0) {
-							console.log("DBG fold", provider, model, JSON.stringify(found.totals), JSON.stringify(folded));
 							day[found.provider][found.model] = maxTotals(found.totals, folded);
 							continue;
 						}
@@ -3312,7 +3367,16 @@ var UsageService = class {
 			for (const [provider, models] of Object.entries(providers)) for (const [model, bucket] of Object.entries(models)) {
 				const mine = findLedgerBucket(own, provider, model)?.totals;
 				if (mine === void 0) continue;
-				if (bucket.calls > mine.calls) models[model] = structuredClone(mine);
+				if (!(bucket.calls > mine.calls || bucket.inputTokens > mine.inputTokens || bucket.outputTokens > mine.outputTokens || bucket.cacheReadTokens > mine.cacheReadTokens || bucket.cacheWriteTokens > mine.cacheWriteTokens || bucket.cost > mine.cost)) continue;
+				models[model] = {
+					calls: Math.min(bucket.calls, mine.calls),
+					inputTokens: Math.min(bucket.inputTokens, mine.inputTokens),
+					outputTokens: Math.min(bucket.outputTokens, mine.outputTokens),
+					cacheReadTokens: Math.min(bucket.cacheReadTokens, mine.cacheReadTokens),
+					cacheWriteTokens: Math.min(bucket.cacheWriteTokens, mine.cacheWriteTokens),
+					reasoningTokens: Math.min(bucket.reasoningTokens, mine.reasoningTokens),
+					cost: Math.min(bucket.cost, mine.cost)
+				};
 			}
 		}
 	}
@@ -3997,6 +4061,8 @@ var UsageService = class {
 				const key = repairKey(entry.dayKey, found.provider, found.model);
 				corrected.set(key, next);
 				removedTokens += totalTokens(bucket) - totalTokens(next);
+				const own = findLedgerBucket(this.ledger.days[entry.dayKey], found.provider, found.model);
+				if (own !== void 0) own.totals = structuredClone(next);
 			}
 			if (corrected.size === 0) return {
 				corrected,

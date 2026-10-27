@@ -1,6 +1,6 @@
 # HANDOFF — DSH usage plugin (`@linxin666/dsh-usage`)
 
-Last updated: 2026-10-27 (round 18 delivered).
+Last updated: 2026-10-27 (round 19 delivered).
 
 ## What this is
 
@@ -24,7 +24,7 @@ cd packages/dsh-usage
 ../../node_modules/.bin/tsdown                              # bundles, exit 0
 cd ../..
 node harness/build-test-bundle.cjs                          # derives harness/client.test.cjs
-node --experimental-strip-types harness/host-test.mjs       # 271 checks
+node --experimental-strip-types harness/host-test.mjs       # 280 checks
 node harness/render-test.mjs                                # 225 checks (jsdom)
 bash patches/install-patches.sh                             # deploy + verify markers
 ```
@@ -36,18 +36,18 @@ Artifacts of the current tree (verified 2026-10-27):
 
 | file | bytes | md5 |
 | --- | --- | --- |
-| `lib/index.js` | 182,010 | `703f36280926196f0bf94a612430a004` |
+| `lib/index.js` | 185,348 | `543d13ac3ea63e7a17df2b1f9e8ad7c3` |
 | `lib/client.js` | 530,518 | `732f41a7dbd54d37c4b2d1e6d3426059` |
-| `lib/client.js.map` | 712,984 | `a0924748c72631a805758b5807ece6ca` |
+| `lib/client.js.map` | 713,954 | `aa04957f16d2a973848560cea7e6baf7` |
 
-## Live data (as of 2026-10-27 ~10:20, old build still running)
+## Live data (as of 2026-10-27 ~12:40, old build still running)
 
 - `C:\Users\scrip\.dsh\dsh-usage\usage-ledger.p15-22893b.json` — still bare
-  `{version, days}`, 11 days / 32 buckets / 58,838 calls / 6,922,973,827 tokens,
+  `{version, days}`, 11 days / 32 buckets / 62,718 calls / 7,438,071,855 tokens,
   no `machine` / `repairedAt` / `retentionDays`: the running host predates the
   repair, so the panel keeps over-reporting until DSH is fully restarted.
-- Driven through the current code the same file repairs to 57,367 calls /
-  6,766,453,008 tokens (3 buckets, marker `removedTokens: 168,550,944`) and is
+- Driven through the current code the same file repairs to 61,153 calls /
+  7,269,520,911 tokens (3 buckets, marker `removedTokens: 168,550,944`) and is
   idempotent across starts; an independent recount of the transcripts gives
   55,800 unique calls / 6,604,279,098 tokens, and the remaining difference is
   fully accounted for (ledger-only history from `.migrated`, a provider rename,
@@ -71,9 +71,24 @@ re-reading its token, so a lock this process did not take is left alone.
 
 Client: no changes this round (the round-17 client fixes were already green).
 
+## Round 19 (this commit)
+
+Host: the peer scan now runs *after* the repair is judged, so the startup that
+repairs cannot pull the same machine's pre-repair copy back over its own result.
+The repair record (v3) is keyed by `(day, provider, model)` and carries the clean
+totals it corrected: a peer holding the pre-repair value is refused, a bucket
+that really grew still counts, and a record whose corrected buckets are all zero
+is never used as a clean base. The rename clamp is keyed on the file's own
+contents rather than a shared timestamp, whole multiples of a copy are taken out
+(three copies of one call are corrected, a partial residue is not), and an entry
+the reader had to leave out (an impossible day key, a bucket that is not an
+object) is named once in the panel instead of the history shrinking in silence.
+
+Client: no changes this round (round-17 client fixes remain green at 225/225).
+
 ## Open work
 
-- Round 19 read-only audits (host / client / data) are running; fold their
+- Round 20 read-only audits (host / client / data) are running; fold their
   findings into the next round. The loop is the user's standing request: audit →
   fix → test → deploy → commit → audit again.
 - The user must fully restart DSH for host changes to take effect (client half

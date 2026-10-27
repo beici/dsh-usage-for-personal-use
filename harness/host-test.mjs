@@ -1404,6 +1404,130 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await svc.stop()
 }
 
+// ---- the boot that repairs does not read the copy back in ----------------
+// A copy of this machine's file under an older name still holds the inflated
+// totals. The repair writes the corrected ledger before the peers are scanned,
+// so the copy is held to the corrected totals instead of being merged on top of
+// the repair — and the record written after it keeps the bucket from being
+// judged again on the next start.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const at = new Date('2026-10-16T09:00:00').getTime()
+  const call = (id, input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { id, source: { provider: 'buddy', model: 'm1' } },
+    },
+  })
+  const { localDeviceId, localMachineId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const dayKey = '2026-10-16'
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  await writeTranscript(home, [call('msg-1', 100)], 'parent')
+  await writeTranscript(home, [call('msg-1', 100), call('msg-2', 300)], 'child')
+  const ledgerPath = join(dir, 'usage-ledger.' + localDeviceId() + '.json')
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, deviceId: localDeviceId(), days: { [dayKey]: { buddy: { m1: { ...bucket(600, 4), outputTokens: 40 } } } } }))
+  // The same buckets under the old device name: the calls match the corrected
+  // total, the tokens are the ones the repair takes out.
+  await writeFile(join(dir, 'usage-ledger.oldname.json'), JSON.stringify({
+    version: 1, deviceId: 'oldname', machine: localMachineId(),
+    days: { [dayKey]: { buddy: { m1: bucket(600, 2) } } },
+  }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const totals = svc.overview().usage.all.totals
+  check('the repairing boot keeps the corrected total', totals.calls === 2 && totals.inputTokens === 400, `${totals.calls}/${totals.inputTokens}`)
+  await svc.flushLedger()
+  const written = JSON.parse(await readFile(ledgerPath, 'utf8'))
+  check('the corrected total reaches the file', written.days[dayKey].buddy.m1.calls === 2 && written.days[dayKey].buddy.m1.inputTokens === 400, JSON.stringify(written.days[dayKey]))
+  await svc.stop()
+  const again = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await again.loadPersisted()
+  const later = again.overview().usage.all.totals
+  check('the next start does not put the copies back', later.calls === 2 && later.inputTokens === 400, `${later.calls}/${later.inputTokens}`)
+  await again.stop()
+}
+
+// ---- a backup put back is judged again ----------------------------------
+// Copying the old file out of an archive gives it today's mtime, so the stamp
+// inside the ledger is the only witness that it was written before the repair.
+// Without one it is a pre-repair file and its buckets are judged again.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const at = new Date('2026-10-16T09:00:00').getTime()
+  const call = (id, input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { id, source: { provider: 'buddy', model: 'm1' } },
+    },
+  })
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const dayKey = '2026-10-16'
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  await writeTranscript(home, [call('msg-1', 100)], 'parent')
+  await writeTranscript(home, [call('msg-1', 100), call('msg-2', 300)], 'child')
+  await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), JSON.stringify({ version: 1, days: { [dayKey]: { buddy: { m1: { ...bucket(600, 4), outputTokens: 40 } } } } }))
+  await writeFile(join(dir, 'usage-dedupe-marker.json'), JSON.stringify({
+    version: 3, appliedAt: Date.now() - 3_600_000, buckets: 1, removedTokens: 100,
+    corrected: [dayKey + '\u0000buddy\u0000m1'],
+  }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const totals = svc.overview().usage.all.totals
+  check('a backup put back is judged again', totals.calls === 2 && totals.inputTokens === 400, `${totals.calls}/${totals.inputTokens}`)
+  await svc.stop()
+}
+
+// ---- an old record is rewritten, and its stale keys are dropped ----------
+// A record that cannot say when it was written cannot date a copy against
+// itself, so it is rewritten once instead of reporting "predates this build" on
+// every start; and a key for a day this ledger no longer holds is dropped
+// rather than kept for ever.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const at = new Date('2026-10-16T09:00:00').getTime()
+  const call = (id, input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { id, source: { provider: 'buddy', model: 'm1' } },
+    },
+  })
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const dayKey = '2026-10-16'
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  await writeTranscript(home, [call('msg-1', 100)], 'parent')
+  await writeTranscript(home, [call('msg-1', 100), call('msg-2', 300)], 'child')
+  const ledgerPath = join(dir, 'usage-ledger.' + localDeviceId() + '.json')
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, deviceId: localDeviceId(), repairedAt: Date.now() - 3_600_000, days: { [dayKey]: { buddy: { m1: { ...bucket(600, 4), outputTokens: 40 } } } } }))
+  const markerPath = join(dir, 'usage-dedupe-marker.json')
+  await writeFile(markerPath, JSON.stringify({
+    version: 2, appliedAt: Date.now() - 3_600_000, buckets: 1, removedTokens: 100,
+    corrected: ['2020-01-01\u0000buddy\u0000m1'],
+  }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const marker = JSON.parse(await readFile(markerPath, 'utf8'))
+  check('an old record is rewritten', marker.version === 3 && marker.appliedAt !== undefined, JSON.stringify(marker))
+  check('the record keeps only the buckets this ledger holds', !marker.corrected.includes('2020-01-01\u0000buddy\u0000m1') && marker.corrected.includes(dayKey + '\u0000buddy\u0000m1'), JSON.stringify(marker.corrected))
+  await svc.stop()
+  const again = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await again.loadPersisted()
+  const note = String(again.overview().usage.ledgerNote ?? '')
+  check('the rewritten record does not warn again', !note.includes('predates this build'), note)
+  await again.stop()
+}
+
 // ---- a pin lost to a read-only profile still recognises the old files ---
 // A profile that could not write machine-id.json falls back to the digest, then
 // mints a fresh id once it can write. The files written under the old pin are
@@ -2258,13 +2382,15 @@ async function writeTranscript(home, lines, session = 'sess1') {
   check('an unusable record is reported', note.includes('re-judged from the replay'), note)
   await svc.stop()
 
-  // The same record with a BOM is read, so its floors apply and the gate keeps
-  // the bucket: a record this plugin wrote is never "unreadable" because of an
-  // editor's BOM.
+  // The same record with a BOM is read, so its buckets are honoured and the gate
+  // keeps them: a record this plugin wrote is never "unreadable" because of an
+  // editor's BOM. The ledger carries the repair stamp, so it is a file a fixed
+  // build wrote rather than a backup someone put back — only then does the
+  // record's word stand.
   const bommed = await freshHome()
   await writeTranscript(bommed, [call('msg-1', 100)], 'parent')
   await writeTranscript(bommed, [call('msg-1', 100), call('msg-2', 300)], 'child')
-  await writeFile(join(bommed, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`), JSON.stringify(inflated))
+  await writeFile(join(bommed, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`), JSON.stringify({ ...inflated, repairedAt: Date.now() - 86_400_000 }))
   await writeFile(join(bommed, 'dsh-usage', 'usage-dedupe-marker.json'), '\uFEFF' + JSON.stringify({
     version: 3,
     appliedAt: Date.now() - 86_400_000,
@@ -2630,6 +2756,33 @@ async function writeTranscript(home, lines, session = 'sess1') {
   const bucket = svc.ledger.days[dayKey]?.buddy?.m1
   check('a negative counter is read as zero', bucket?.inputTokens === 0 && bucket?.calls === 0 && bucket?.cost === 0,
     `${bucket?.inputTokens}/${bucket?.calls}/${bucket?.cost}`)
+  await svc.stop()
+}
+
+// ---- an entry the reader had to leave out is reported -------------------
+// A day key that is not a date, and a bucket whose counter is a string: each one
+// is dropped rather than failing the document, and the next flush writes the
+// ledger without it. The panel says so once instead of the history shrinking in
+// silence.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const good = { inputTokens: 100, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 1, cost: 0 }
+  await writeFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), JSON.stringify({
+    version: 1,
+    deviceId: localDeviceId(),
+    days: {
+      '2026-10-16': { buddy: { m1: good, m2: { ...good, calls: 'two' } } },
+      'not-a-date': { buddy: { m1: good } },
+    },
+  }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const note = String(svc.overview().usage.ledgerNote ?? '')
+  check('an entry the reader had to leave out is reported', note.includes('could not be read and were left out'), note)
+  check('the readable entries survive', svc.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens === 100, JSON.stringify(svc.ledger.days['2026-10-16']))
   await svc.stop()
 }
 
