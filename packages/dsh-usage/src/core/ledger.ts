@@ -301,7 +301,7 @@ export function pruneLedger(doc: UsageLedgerDocument, todayKey: string, retainDa
 function reviveTotals(value: unknown): UsageTokenTotals | undefined {
   if (typeof value !== 'object' || value === null) return undefined
   const source = value as Record<string, unknown>
-  const num = (key: string): number => typeof source[key] === 'number' && Number.isFinite(source[key]) ? source[key] : 0
+  const num = (key: string): number => typeof source[key] === 'number' && Number.isFinite(source[key]) ? Math.max(0, source[key]) : 0
   return {
     inputTokens: num('inputTokens'),
     outputTokens: num('outputTokens'),
@@ -311,6 +311,24 @@ function reviveTotals(value: unknown): UsageTokenTotals | undefined {
     calls: num('calls'),
     cost: num('cost'),
   }
+}
+
+/**
+ * Parse a ledger document the strict way: a document whose `days` is not a plain
+ * object is *not* a ledger this build wrote, and reading it as "no days" would let
+ * the next flush overwrite the user's history with an empty one.
+ *
+ * `days: []`, `days: "…"` and `days: 42` are the shapes an interrupted or
+ * hand-edited write leaves behind; the caller quarantines the file instead.
+ * A document with no `days` key at all stays a fresh ledger — that is the shape
+ * an export or a first run has.
+ */
+export function deserializeLedgerStrict(value: unknown): UsageLedgerDocument | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const days = (value as Record<string, unknown>).days
+  if (days === undefined) return deserializeLedger(value)
+  if (typeof days !== 'object' || days === null || Array.isArray(days)) return undefined
+  return deserializeLedger(value)
 }
 
 /**

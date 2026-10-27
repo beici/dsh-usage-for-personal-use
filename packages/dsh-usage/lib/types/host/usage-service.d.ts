@@ -105,18 +105,6 @@ export declare class UsageService {
     /** The window a shrink in this session asked for, so later prunes still read as one. */
     private shrankTo;
     /**
-     * What the last repair left in each bucket, and when it ran.
-     *
-     * Kept in memory for the whole session because a *later* fold can undo the
-     * repair: a same-machine file under an older name is max-merged in, and an
-     * older copy of this ledger still holds the duplicate copies the repair took
-     * out. Folding that above the floor would put the inflated total back, and the
-     * marker (whose floor no longer matches) would then stop the next start from
-     * correcting it — a permanent inflation out of a file that was only a rename.
-     */
-    private repairFloors;
-    private repairAt;
-    /**
      * When the ledger file was last written (by this process or before it).
      *
      * A prune that drops two days is not evidence of anything by itself: a run
@@ -163,6 +151,19 @@ export declare class UsageService {
      * (lower) buckets must not be raised again by our stale copy.
      */
     private seenRepairedAt;
+    /**
+     * Buckets an earlier start already corrected, by marker key.
+     *
+     * The record is a set of keys and nothing else: a bucket listed here was
+     * judged and rewritten, so a later start must not judge it again. Keeping the
+     * totals written (a "floor") is what the first version did, and a bucket that
+     * was later re-inflated never matched that floor again — it was locked out of
+     * the repair for good and warned about on every start. The key alone is enough
+     * to stay out of the way, and it is dropped once its day leaves the window.
+     */
+    private repairCorrected;
+    /** The file predates the correction beside it: a backup was put back. */
+    private repairRejudgeAll;
     private readonly snapshots;
     /** The official DeepSeek family's real-spend watch (see SpendWatch). */
     private spendWatch;
@@ -387,34 +388,25 @@ export declare class UsageService {
     private windowedDocument;
     private replaySessionLogs;
     /**
-     * Take the duplicate copies out of one bucket, or return `undefined` to leave
-     * it alone.
+     * Holds a copy of this machine's own ledger to what the repair left behind.
      *
-     * `after` is where the bucket stood before the copies landed (the deduped
-     * replay, or the corrected total when re-checking a document about to be
-     * written), and `copy` is one copy's share. Copies sit on that floor in whole
-     * multiples: builds before the dedupe folded one copy per restart, so a bucket
-     * can hold two or three of them — and a repair that only accepted exactly one
-     * would refuse that ledger forever, because a bucket with two copies never
-     * again looks like a single copy. Anything that is not a whole number of
-     * copies is real calls the replay cannot see mixed in, and taking them away is
-     * the one mistake no later merge can bring back.
-     *
-     * Shared by the in-memory pass and the write-time re-check on purpose: the two
-     * drifted apart once, and the repair then corrected the ledger in memory while
-     * the file kept the inflated total.
+     * A renamed copy of this device's file, or an export of it re-imported, was
+     * written by a build that folded the duplicate copies: its buckets still carry
+     * the inflated totals the repair has just taken out. Max-merging such a copy
+     * would put them back on every boot and the flush would write them down again,
+     * which is how a correction became permanent inflation. Days the copy alone
+     * knows about are kept — those are history this file no longer has.
      */
-    private repairCopies;
+    private clampToOwnTotals;
     /**
-     * Holds a document folded in from an older copy of this ledger to what the
-     * repair left in each bucket.
+     * The buckets an earlier start already corrected, from the marker beside the
+     * ledger.
      *
-     * Only for files written before the last repair: their buckets still carry the
-     * duplicate copies the repair took out, and max-merging them would put the
-     * inflated total back on top of the corrected one. A bucket the repair does
-     * not know is left alone — there is no floor to hold it to.
+     * Missing, unreadable and corrupt all mean the same thing here: nothing is
+     * known to be done, so the pass judges every bucket it finds. The marker is a
+     * record of work, never a permission — a damaged one must not stop the repair.
      */
-    private clampToRepairFloors;
+    private readRepairCorrected;
     /**
      * Correction for the seeded-subagent duplicate.
      *
@@ -422,19 +414,19 @@ export declare class UsageService {
      * assistant messages (same id, time and usage), and the replay used to fold
      * both copies into the same bucket. Deduping the replay stops new inflation
      * but cannot undo what is already written — the merge rule keeps the larger
-     * total, so an inflated bucket would never come back down. The extra copies
-     * are therefore subtracted once, and a sidecar marker records what was done.
+     * total, so an inflated bucket would never come back down.
      *
-     * The subtraction is judged twice over, because a wrong subtraction cannot be
-     * undone by any later merge:
+     * The subtraction is exact and happens once:
      *
-     * - `clean` is the deduped replay, the truth for that day. A bucket at or
-     *   below it holds no copy at all, so it is left alone.
-     * - `prior` is what an earlier start already left in the bucket (read back
-     *   from the marker). A bucket still at that floor has already been corrected
-     *   — subtracting again on every start would slowly eat real calls, which is
-     *   exactly what a plain "big enough to subtract" guard allows once the day
-     *   holds calls the replay cannot see.
+     * - once per bucket: a bucket the marker lists was judged and rewritten by an
+     *   earlier start, and a later start must not judge it again. Growth that
+     *   arrives afterwards is indistinguishable from a copy landing again, and
+     *   subtracting it would delete a call that really happened. The key is
+     *   dropped once its day leaves the window, so no bucket stays out forever.
+     * - whole copies only: the bucket has to sit a whole number of copies of this
+     *   replay's duplicate above the duplicate-free total. Anything else — a
+     *   bucket that grew, shrank, or holds a copy of another size — is left as
+     *   recorded and not accused, because the panel cannot tell those apart.
      */
     private repairDuplicatedReplay;
     /**
@@ -445,15 +437,6 @@ export declare class UsageService {
      * the calls inside it.
      */
     private priceBucket;
-    /**
-     * What the last repair left in each bucket, read back from the marker.
-     *
-     * The marker is a record, not a gate: the numbers it holds are the floor a
-     * later start must not subtract below. A marker written before this field
-     * existed (or one damaged by hand) yields an empty map, and the repair then
-     * falls back to the replay's own total.
-     */
-    private readRepairRecord;
     /**
      * Fold a parsed document into a target ledger.
      *

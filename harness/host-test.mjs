@@ -493,7 +493,7 @@ async function writeTranscript(home, lines, session = 'sess1') {
 
   // Day C is inflated now, and day A also grew by real calls while the marker holds A's floor.
   const marker = JSON.parse(await readFile(join(home, 'dsh-usage', 'usage-dedupe-marker.json'), 'utf8'))
-  check('the marker records the floor it left behind', typeof marker.after?.['2026-10-16\u0000buddy\u0000m1'] === 'object', JSON.stringify(marker.after ?? null))
+  check('the marker records the bucket it left behind', Array.isArray(marker.corrected) && marker.corrected.includes('2026-10-16\u0000buddy\u0000m1'), JSON.stringify(marker.corrected ?? null))
   const doc = JSON.parse(await readFile(ledgerPath, 'utf8'))
   doc.days['2026-10-16'].buddy.m1 = bucket(300, 30, 3) // +100/10 real calls
   doc.days['2026-10-17'] = { buddy: { m1: bucket(200, 20, 2) } } // clean 100/10 + copy 100/10
@@ -505,8 +505,9 @@ async function writeTranscript(home, lines, session = 'sess1') {
   check('the later start leaves the earlier floor alone', second.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens === 300, String(second.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens))
   await second.stop()
   const merged = JSON.parse(await readFile(join(home, 'dsh-usage', 'usage-dedupe-marker.json'), 'utf8'))
-  check('the marker keeps both floors', merged.after?.['2026-10-16\u0000buddy\u0000m1'] !== undefined && merged.after?.['2026-10-17\u0000buddy\u0000m1'] !== undefined,
-    JSON.stringify(Object.keys(merged.after ?? {})))
+  check('the marker keeps both corrected buckets',
+    Array.isArray(merged.corrected) && merged.corrected.includes('2026-10-16\u0000buddy\u0000m1') && merged.corrected.includes('2026-10-17\u0000buddy\u0000m1'),
+    JSON.stringify(merged.corrected ?? []))
 }
 
 // ---- a bucket that grew after the repair is not subtracted again ---------
@@ -585,7 +586,7 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await second.loadPersisted()
   check('a corrected bucket keeps growth the size of a copy', second.ledger.days['2026-10-16']?.buddy?.m1?.calls === 3,
     `${second.ledger.days['2026-10-16']?.buddy?.m1?.calls}/${second.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens}`)
-  check('a bucket that moved past its floor is reported', String(second.overview().usage.ledgerNote ?? '').includes('inflated'), String(second.overview().usage.ledgerNote))
+  check('a bucket that moved past its floor is not called inflated', !String(second.overview().usage.ledgerNote ?? '').includes('inflated'), String(second.overview().usage.ledgerNote))
   await second.stop()
 
   // A bucket that sits exactly on its floor is the corrected state, and saying
@@ -2265,9 +2266,11 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await writeTranscript(bommed, [call('msg-1', 100), call('msg-2', 300)], 'child')
   await writeFile(join(bommed, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`), JSON.stringify(inflated))
   await writeFile(join(bommed, 'dsh-usage', 'usage-dedupe-marker.json'), '\uFEFF' + JSON.stringify({
-    version: 2,
+    version: 3,
     appliedAt: Date.now() - 86_400_000,
-    after: { '2026-10-16\u0000buddy\u0000m1': { inputTokens: 400, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 2, cost: 0 } },
+    buckets: 1,
+    removedTokens: 100,
+    corrected: ['2026-10-16\u0000buddy\u0000m1'],
   }))
   const second = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
   await second.loadPersisted()
@@ -2584,6 +2587,49 @@ async function writeTranscript(home, lines, session = 'sess1') {
   await svc.loadPersisted()
   const note = String(svc.overview().usage.ledgerNote ?? '')
   check('a healthy ledger raises no repair note', note === '', note)
+  await svc.stop()
+}
+
+// ---- a ledger that is not a ledger is quarantined, not emptied ------------
+// `days: []` is what a half-written or hand-edited file looks like. Read as "no
+// days" it is a valid empty ledger, and the first flush would write that over the
+// user's history — the only copy. It must be treated as unreadable instead, and
+// the original kept for inspection.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { ledgerDayKeys } = await load('core/ledger.ts')
+  const ledgerPath = join(dir, `usage-ledger.${localDeviceId()}.json`)
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, days: [] }))
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  check('a ledger with no days object starts empty', ledgerDayKeys(svc.ledger).length === 0)
+  const quarantined = (await readdir(dir)).filter((name) => /\.(unreadable|corrupt)-\d+\.json$/.test(name))
+  check('a ledger with no days object is quarantined', quarantined.length === 1, JSON.stringify(quarantined))
+  check('a ledger with no days object says so', String(svc.overview().usage.ledgerError ?? '').includes('corrupt'), String(svc.overview().usage.ledgerError))
+  await svc.stop()
+}
+
+// ---- a negative counter is not a credit ----------------------------------
+// The reader coerced numbers without a sign check, so a hand-edited or corrupted
+// `-500` subtracted from every total the panel showed.
+{
+  const home = await freshHome()
+  const { localDateKey } = await load('core/ledger.ts')
+  const dayKey = localDateKey(Date.now() - 86_400_000)
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  await writeFile(join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`), JSON.stringify({
+    version: 1,
+    days: { [dayKey]: { buddy: { m1: { inputTokens: -500, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: -2, cost: -1 } } } },
+  }))
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const bucket = svc.ledger.days[dayKey]?.buddy?.m1
+  check('a negative counter is read as zero', bucket?.inputTokens === 0 && bucket?.calls === 0 && bucket?.cost === 0,
+    `${bucket?.inputTokens}/${bucket?.calls}/${bucket?.cost}`)
   await svc.stop()
 }
 

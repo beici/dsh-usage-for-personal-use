@@ -1460,7 +1460,7 @@ function pruneLedger(doc, todayKey, retainDays) {
 function reviveTotals(value) {
 	if (typeof value !== "object" || value === null) return void 0;
 	const source = value;
-	const num = (key) => typeof source[key] === "number" && Number.isFinite(source[key]) ? source[key] : 0;
+	const num = (key) => typeof source[key] === "number" && Number.isFinite(source[key]) ? Math.max(0, source[key]) : 0;
 	return {
 		inputTokens: num("inputTokens"),
 		outputTokens: num("outputTokens"),
@@ -1470,6 +1470,23 @@ function reviveTotals(value) {
 		calls: num("calls"),
 		cost: num("cost")
 	};
+}
+/**
+* Parse a ledger document the strict way: a document whose `days` is not a plain
+* object is *not* a ledger this build wrote, and reading it as "no days" would let
+* the next flush overwrite the user's history with an empty one.
+*
+* `days: []`, `days: "…"` and `days: 42` are the shapes an interrupted or
+* hand-edited write leaves behind; the caller quarantines the file instead.
+* A document with no `days` key at all stays a fresh ledger — that is the shape
+* an export or a first run has.
+*/
+function deserializeLedgerStrict(value) {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return void 0;
+	const days = value.days;
+	if (days === void 0) return deserializeLedger(value);
+	if (typeof days !== "object" || days === null || Array.isArray(days)) return void 0;
+	return deserializeLedger(value);
 }
 /**
 * Parse a ledger document from untrusted JSON: unknown shapes resolve to an
@@ -2062,6 +2079,34 @@ function findLedgerBucket(day, provider, model) {
 	}
 }
 /**
+* How many whole copies of `copy` a bucket holds on top of `clean`.
+*
+* A single boot of the old build folded one transcript twice, but every later
+* boot folded it again: a bucket inflated over three starts holds three copies,
+* and the replay only ever sees the one duplicate it finds inside the current
+* pass. So the difference has to be a whole number of copies of that duplicate
+* for the arithmetic to be the repair and not a guess — anything else (a real
+* call that landed after the copies, a provider that renamed itself) answers
+* undefined and is left alone.
+*
+* Fields are checked one by one rather than as a sum: a bucket whose calls
+* match by coincidence but whose tokens do not is not a copy set.
+*/
+function repairCopies(bucket, clean, copy) {
+	if (copy.calls <= 0) return void 0;
+	const extra = bucket.calls - clean.calls;
+	if (extra <= 0 || extra % copy.calls !== 0) return void 0;
+	const copies = extra / copy.calls;
+	for (const field of [
+		"inputTokens",
+		"outputTokens",
+		"cacheReadTokens",
+		"cacheWriteTokens",
+		"reasoningTokens"
+	]) if (bucket[field] - clean[field] !== copy[field] * copies) return void 0;
+	return copies;
+}
+/**
 * Marker key for one bucket: the day, the route and the model it belongs to.
 *
 * The route id and the model name reach this file from two places — the ledger
@@ -2160,27 +2205,6 @@ function service(ctx, name) {
 	} catch {
 		return;
 	}
-}
-/**
-* Read a totals-shaped value back from JSON, or undefined when it is not one.
-*
-* Used for the repair marker, which is written by this code but must never be
-* trusted blindly: a hand-edited or truncated marker would otherwise seed the
-* repair's floor with garbage and skew the subtraction.
-*/
-function readTotals(value) {
-	if (typeof value !== "object" || value === null) return void 0;
-	const record = value;
-	const num = (key) => typeof record[key] === "number" && Number.isFinite(record[key]) ? record[key] : 0;
-	return {
-		inputTokens: num("inputTokens"),
-		outputTokens: num("outputTokens"),
-		cacheReadTokens: num("cacheReadTokens"),
-		cacheWriteTokens: num("cacheWriteTokens"),
-		reasoningTokens: num("reasoningTokens"),
-		calls: num("calls"),
-		cost: num("cost")
-	};
 }
 /**
 * Read the persisted spend watch back, or undefined when it is not usable.
@@ -2376,18 +2400,6 @@ var UsageService = class {
 	/** The window a shrink in this session asked for, so later prunes still read as one. */
 	shrankTo;
 	/**
-	* What the last repair left in each bucket, and when it ran.
-	*
-	* Kept in memory for the whole session because a *later* fold can undo the
-	* repair: a same-machine file under an older name is max-merged in, and an
-	* older copy of this ledger still holds the duplicate copies the repair took
-	* out. Folding that above the floor would put the inflated total back, and the
-	* marker (whose floor no longer matches) would then stop the next start from
-	* correcting it — a permanent inflation out of a file that was only a rename.
-	*/
-	repairFloors = /* @__PURE__ */ new Map();
-	repairAt;
-	/**
 	* When the ledger file was last written (by this process or before it).
 	*
 	* A prune that drops two days is not evidence of anything by itself: a run
@@ -2434,6 +2446,19 @@ var UsageService = class {
 	* (lower) buckets must not be raised again by our stale copy.
 	*/
 	seenRepairedAt = 0;
+	/**
+	* Buckets an earlier start already corrected, by marker key.
+	*
+	* The record is a set of keys and nothing else: a bucket listed here was
+	* judged and rewritten, so a later start must not judge it again. Keeping the
+	* totals written (a "floor") is what the first version did, and a bucket that
+	* was later re-inflated never matched that floor again — it was locked out of
+	* the repair for good and warned about on every start. The key alone is enough
+	* to stay out of the way, and it is dropped once its day leaves the window.
+	*/
+	repairCorrected = /* @__PURE__ */ new Set();
+	/** The file predates the correction beside it: a backup was put back. */
+	repairRejudgeAll = false;
 	snapshots = /* @__PURE__ */ new Map();
 	/** The official DeepSeek family's real-spend watch (see SpendWatch). */
 	spendWatch;
@@ -2684,7 +2709,7 @@ var UsageService = class {
 		if (this.peers.length === 0) return this.ledger;
 		const merged = createLedgerDocument();
 		mergeLedgerSum(merged, this.ledger);
-		const oldest = localDateKey(Date.now() - (Math.max(1, this.options.retainDays) - 1) * 864e5);
+		const oldest = localDateKey(Date.now() - (Math.max(1, this.declaredWindow()) - 1) * 864e5);
 		for (const peer of this.peers) {
 			const windowed = createLedgerDocument();
 			for (const [dayKey, day] of Object.entries(peer.doc.days)) if (dayKey >= oldest) windowed.days[dayKey] = day;
@@ -2956,7 +2981,7 @@ var UsageService = class {
 			error: `names device ${deviceId}`
 		};
 		const inner = typeof record.ledger === "object" && record.ledger !== null ? record.ledger : record;
-		if (typeof inner.days !== "object" || inner.days === null) return {
+		if (!isPlainObject(inner.days)) return {
 			kind: "corrupt",
 			error: "no days in document"
 		};
@@ -3057,12 +3082,22 @@ var UsageService = class {
 		const replay = await this.replaySessionLogs();
 		this.replayDoc = replay.doc;
 		if (replay.skipped > 0) this.note("replay-cap", `${replay.skipped} older transcripts beyond the replay cap of ${SESSION_LOG_MAX_FILES} were not replayed`);
-		const prior = await this.readRepairRecord();
-		this.repairFloors = prior.floors;
-		this.repairAt = prior.appliedAt;
+		const marker = read.kind === "ok" ? await this.readRepairCorrected() : {
+			corrected: /* @__PURE__ */ new Set(),
+			appliedAt: void 0,
+			version: void 0
+		};
+		this.repairCorrected = marker.corrected;
+		if (marker.version !== void 0 && marker.version < 3) this.note("repair-record", "the repair record predates this build, so its buckets were re-judged from the replay");
 		const fileWrittenAt = await stat(this.ledgerPath).then((info) => info.mtimeMs).catch(() => void 0);
 		if (fileWrittenAt !== void 0) this.ledgerWrittenAt = fileWrittenAt;
-		const repaired = await this.repairDuplicatedReplay(replay, prior.floors, prior.appliedAt, fileWrittenAt, prior.present && prior.floors.size === 0);
+		this.repairRejudgeAll = fileWrittenAt !== void 0 && marker.appliedAt !== void 0 && fileWrittenAt < marker.appliedAt;
+		const repaired = read.kind === "ok" ? await this.repairDuplicatedReplay(replay) : {
+			buckets: 0,
+			removedTokens: 0,
+			repaired: /* @__PURE__ */ new Map(),
+			short: 0
+		};
 		await this.refreshPeers(true);
 		this.lastPrune = void 0;
 		this.pruneIfNeeded();
@@ -3074,26 +3109,21 @@ var UsageService = class {
 		this.loadRetries = 0;
 		this.ledgerWritten = structuredClone(this.ledger);
 		if (read.kind !== "corrupt") this.ledgerError = void 0;
+		if (repaired.short > 0) this.note("repair-short", `${repaired.short} bucket(s) hold fewer calls than the duplicate-free replay — the ledger may be missing calls`);
 		if (repaired.buckets > 0) {
 			const written = await this.persistRepair(repaired.repaired);
-			if (written !== void 0 && written.corrected.size > 0) await writeJsonAtomic(join(this.persistDir, DEDUPE_MARKER_FILE), {
-				version: 2,
-				appliedAt: Date.now(),
-				buckets: written.corrected.size,
-				removedTokens: written.removedTokens,
-				after: {
-					...Object.fromEntries([...prior.floors].map(([key, totals]) => [key, totals])),
-					...Object.fromEntries([...written.corrected])
-				}
-			}).catch(() => void 0);
+			if (written !== void 0 && written.corrected.size > 0) {
+				const oldest = localDateKey(Date.now() - (Math.max(1, this.options.retainDays) - 1) * 864e5);
+				const kept = [...this.repairCorrected].filter((key) => key.slice(0, 10) >= oldest);
+				await writeJsonAtomic(join(this.persistDir, DEDUPE_MARKER_FILE), {
+					version: 3,
+					appliedAt: Date.now(),
+					buckets: written.corrected.size,
+					removedTokens: written.removedTokens,
+					corrected: kept
+				}).catch(() => void 0);
+			}
 		}
-		if (repaired.skipped > 0) {
-			const reasons = [];
-			if (repaired.skippedBecause.blocked > 0) reasons.push(`${repaired.skippedBecause.blocked} grew after the repair and were left as recorded, so they may still be inflated`);
-			if (repaired.skippedBecause.excess > 0) reasons.push(`${repaired.skippedBecause.excess} hold more than the duplicate set explains, so they are left as recorded and may still be inflated`);
-			if (repaired.skippedBecause.short > 0) reasons.push(`${repaired.skippedBecause.short} hold fewer calls than the duplicate-free replay, so nothing was taken out there`);
-			if (reasons.length > 0) this.note("repair-skipped", `${repaired.skipped} bucket(s) could not be corrected: ${reasons.join("; ")}`);
-		} else this.clearNote("repair-skipped");
 		this.scheduleFlush();
 	}
 	/**
@@ -3239,6 +3269,7 @@ var UsageService = class {
 						} : totals;
 						const found = findLedgerBucket(day, provider, model);
 						if (found !== void 0) {
+							console.log("DBG fold", provider, model, JSON.stringify(found.totals), JSON.stringify(folded));
 							day[found.provider][found.model] = maxTotals(found.totals, folded);
 							continue;
 						}
@@ -3265,56 +3296,54 @@ var UsageService = class {
 		return pass;
 	}
 	/**
-	* Take the duplicate copies out of one bucket, or return `undefined` to leave
-	* it alone.
+	* Holds a copy of this machine's own ledger to what the repair left behind.
 	*
-	* `after` is where the bucket stood before the copies landed (the deduped
-	* replay, or the corrected total when re-checking a document about to be
-	* written), and `copy` is one copy's share. Copies sit on that floor in whole
-	* multiples: builds before the dedupe folded one copy per restart, so a bucket
-	* can hold two or three of them — and a repair that only accepted exactly one
-	* would refuse that ledger forever, because a bucket with two copies never
-	* again looks like a single copy. Anything that is not a whole number of
-	* copies is real calls the replay cannot see mixed in, and taking them away is
-	* the one mistake no later merge can bring back.
-	*
-	* Shared by the in-memory pass and the write-time re-check on purpose: the two
-	* drifted apart once, and the repair then corrected the ledger in memory while
-	* the file kept the inflated total.
+	* A renamed copy of this device's file, or an export of it re-imported, was
+	* written by a build that folded the duplicate copies: its buckets still carry
+	* the inflated totals the repair has just taken out. Max-merging such a copy
+	* would put them back on every boot and the flush would write them down again,
+	* which is how a correction became permanent inflation. Days the copy alone
+	* knows about are kept — those are history this file no longer has.
 	*/
-	repairCopies(bucket, after, copy) {
-		const copyCalls = copy.calls;
-		const extraCalls = bucket.calls - after.calls;
-		const extraTokens = totalTokens(bucket) - totalTokens(after);
-		if (copyCalls <= 0 || extraCalls <= 0 || extraCalls % copyCalls !== 0) return void 0;
-		const copies = extraCalls / copyCalls;
-		if (extraTokens !== totalTokens(copy) * copies) return void 0;
-		let next = bucket;
-		for (let taken = 0; taken < copies; taken += 1) next = subtractTotals(next, copy);
-		return maxTotals(next, after);
+	clampToOwnTotals(doc) {
+		for (const [dayKey, providers] of Object.entries(doc.days)) {
+			const own = this.ledger.days[dayKey];
+			if (own === void 0) continue;
+			for (const [provider, models] of Object.entries(providers)) for (const [model, bucket] of Object.entries(models)) {
+				const mine = findLedgerBucket(own, provider, model)?.totals;
+				if (mine === void 0) continue;
+				if (bucket.calls > mine.calls) models[model] = structuredClone(mine);
+			}
+		}
 	}
 	/**
-	* Holds a document folded in from an older copy of this ledger to what the
-	* repair left in each bucket.
+	* The buckets an earlier start already corrected, from the marker beside the
+	* ledger.
 	*
-	* Only for files written before the last repair: their buckets still carry the
-	* duplicate copies the repair took out, and max-merging them would put the
-	* inflated total back on top of the corrected one. A bucket the repair does
-	* not know is left alone — there is no floor to hold it to.
+	* Missing, unreadable and corrupt all mean the same thing here: nothing is
+	* known to be done, so the pass judges every bucket it finds. The marker is a
+	* record of work, never a permission — a damaged one must not stop the repair.
 	*/
-	clampToRepairFloors(doc) {
-		const keep = (value, floor) => value > floor ? floor : value;
-		for (const [dayKey, day] of Object.entries(doc.days)) for (const [provider, models] of Object.entries(day)) for (const [model, totals] of Object.entries(models)) {
-			const floor = this.repairFloors.get(repairKey(dayKey, provider, model));
-			if (floor === void 0) continue;
-			models[model] = {
-				inputTokens: keep(totals.inputTokens, floor.inputTokens),
-				outputTokens: keep(totals.outputTokens, floor.outputTokens),
-				cacheReadTokens: keep(totals.cacheReadTokens, floor.cacheReadTokens),
-				cacheWriteTokens: keep(totals.cacheWriteTokens, floor.cacheWriteTokens),
-				reasoningTokens: keep(totals.reasoningTokens, floor.reasoningTokens),
-				calls: keep(totals.calls, floor.calls),
-				cost: keep(totals.cost, floor.cost)
+	async readRepairCorrected() {
+		const raw = await readFile(join(this.persistDir, DEDUPE_MARKER_FILE), "utf8").catch(() => void 0);
+		if (raw === void 0) return {
+			corrected: /* @__PURE__ */ new Set(),
+			appliedAt: void 0,
+			version: void 0
+		};
+		try {
+			const parsed = parseJsonText(raw);
+			const list = Array.isArray(parsed.corrected) ? parsed.corrected : [];
+			return {
+				corrected: new Set(list.filter((key) => typeof key === "string")),
+				appliedAt: typeof parsed.appliedAt === "number" ? parsed.appliedAt : void 0,
+				version: typeof parsed.version === "number" ? parsed.version : void 0
+			};
+		} catch {
+			return {
+				corrected: /* @__PURE__ */ new Set(),
+				appliedAt: void 0,
+				version: void 0
 			};
 		}
 	}
@@ -3325,80 +3354,54 @@ var UsageService = class {
 	* assistant messages (same id, time and usage), and the replay used to fold
 	* both copies into the same bucket. Deduping the replay stops new inflation
 	* but cannot undo what is already written — the merge rule keeps the larger
-	* total, so an inflated bucket would never come back down. The extra copies
-	* are therefore subtracted once, and a sidecar marker records what was done.
+	* total, so an inflated bucket would never come back down.
 	*
-	* The subtraction is judged twice over, because a wrong subtraction cannot be
-	* undone by any later merge:
+	* The subtraction is exact and happens once:
 	*
-	* - `clean` is the deduped replay, the truth for that day. A bucket at or
-	*   below it holds no copy at all, so it is left alone.
-	* - `prior` is what an earlier start already left in the bucket (read back
-	*   from the marker). A bucket still at that floor has already been corrected
-	*   — subtracting again on every start would slowly eat real calls, which is
-	*   exactly what a plain "big enough to subtract" guard allows once the day
-	*   holds calls the replay cannot see.
+	* - once per bucket: a bucket the marker lists was judged and rewritten by an
+	*   earlier start, and a later start must not judge it again. Growth that
+	*   arrives afterwards is indistinguishable from a copy landing again, and
+	*   subtracting it would delete a call that really happened. The key is
+	*   dropped once its day leaves the window, so no bucket stays out forever.
+	* - whole copies only: the bucket has to sit a whole number of copies of this
+	*   replay's duplicate above the duplicate-free total. Anything else — a
+	*   bucket that grew, shrank, or holds a copy of another size — is left as
+	*   recorded and not accused, because the panel cannot tell those apart.
 	*/
-	async repairDuplicatedReplay(replay, prior, repairedAt, fileWrittenAt, recordUnusable = false) {
+	async repairDuplicatedReplay(replay) {
 		const repaired = /* @__PURE__ */ new Map();
 		let buckets = 0;
 		let removedTokens = 0;
-		let skipped = 0;
-		const skippedBecause = {
-			blocked: 0,
-			excess: 0,
-			short: 0
-		};
-		if (recordUnusable) this.note("repair-record", "the repair record could not be read, so every bucket was re-judged from the replay and the record rebuilt");
+		let short = 0;
 		for (const [key, duplicate] of replay.duplicates) {
 			const target = findLedgerBucket(this.ledger.days[duplicate.dayKey], duplicate.provider, duplicate.model);
 			if (target === void 0) continue;
-			const bucket = target.totals;
+			if (!this.repairRejudgeAll && this.repairCorrected.has(key)) continue;
 			const clean = findLedgerBucket(replay.fullDoc.days[duplicate.dayKey], duplicate.provider, duplicate.model)?.totals ?? emptyTotals();
-			const floor = prior.get(key);
-			if (floor !== void 0 && repairedAt !== void 0 && fileWrittenAt !== void 0 && fileWrittenAt >= repairedAt) {
-				if (bucket.calls !== floor.calls || totalTokens(bucket) !== totalTokens(floor)) {
-					skipped += 1;
-					skippedBecause.blocked += 1;
-				}
+			if (target.totals.calls === clean.calls) continue;
+			if (target.totals.calls < clean.calls) {
+				short += 1;
 				continue;
 			}
-			if (bucket.calls === clean.calls) continue;
-			if (bucket.calls < clean.calls) {
-				skipped += 1;
-				skippedBecause.short += 1;
-				continue;
-			}
-			const next = this.repairCopies(bucket, clean, duplicate.totals);
-			if (next === void 0) {
-				skipped += 1;
-				skippedBecause.excess += 1;
-				continue;
-			}
-			const dropped = totalTokens(bucket) - totalTokens(next);
-			if (dropped <= 0) {
-				skipped += 1;
-				skippedBecause.excess += 1;
-				continue;
-			}
-			const repriced = this.priceBucket(duplicate.dayKey, target.provider, target.model, next);
-			this.ledger.days[duplicate.dayKey][target.provider][target.model] = repriced;
+			if (repairCopies(target.totals, clean, duplicate.totals) === void 0) continue;
+			const next = this.priceBucket(duplicate.dayKey, target.provider, target.model, clean);
+			this.ledger.days[duplicate.dayKey][target.provider][target.model] = next;
 			repaired.set(key, {
 				...duplicate,
 				provider: target.provider,
 				model: target.model,
 				clean,
-				after: repriced
+				after: next
 			});
+			this.repairCorrected.add(key);
 			buckets += 1;
-			removedTokens += dropped;
+			removedTokens += totalTokens(target.totals) - totalTokens(next);
 		}
 		return {
 			buckets,
 			removedTokens,
 			repaired,
-			skipped,
-			skippedBecause
+			short
 		};
 	}
 	/**
@@ -3414,51 +3417,6 @@ var UsageService = class {
 			...totals,
 			cost: deepseekModelSpend(model, totals, atMs)
 		} : totals;
-	}
-	/**
-	* What the last repair left in each bucket, read back from the marker.
-	*
-	* The marker is a record, not a gate: the numbers it holds are the floor a
-	* later start must not subtract below. A marker written before this field
-	* existed (or one damaged by hand) yields an empty map, and the repair then
-	* falls back to the replay's own total.
-	*/
-	async readRepairRecord() {
-		const floors = /* @__PURE__ */ new Map();
-		let raw;
-		try {
-			raw = await readFile(join(this.persistDir, DEDUPE_MARKER_FILE), "utf8");
-		} catch {
-			return {
-				floors,
-				appliedAt: void 0,
-				present: false
-			};
-		}
-		try {
-			const parsed = parseJsonText(raw);
-			const appliedAt = typeof parsed.appliedAt === "number" ? parsed.appliedAt : void 0;
-			if (typeof parsed.after !== "object" || parsed.after === null) return {
-				floors,
-				appliedAt,
-				present: true
-			};
-			for (const [key, value] of Object.entries(parsed.after)) {
-				const totals = readTotals(value);
-				if (totals !== void 0) floors.set(key, totals);
-			}
-			return {
-				floors,
-				appliedAt,
-				present: true
-			};
-		} catch {
-			return {
-				floors,
-				appliedAt: void 0,
-				present: true
-			};
-		}
 	}
 	/**
 	* Fold a parsed document into a target ledger.
@@ -3587,7 +3545,7 @@ var UsageService = class {
 	/** A ledger file's days, or undefined when it is absent or unparseable. */
 	async readLedgerDocument(path) {
 		try {
-			return deserializeLedger(parseJsonText(await readFile(path, "utf8")));
+			return deserializeLedgerStrict(parseJsonText(await readFile(path, "utf8")));
 		} catch {
 			return;
 		}
@@ -3701,7 +3659,7 @@ var UsageService = class {
 				}
 				if (parsed.machine !== void 0 && this.sameMachine(parsed.machine)) {
 					const doc = this.windowedDocument(parsed.doc);
-					if (this.repairAt !== void 0 && info.mtimeMs < this.repairAt) this.clampToRepairFloors(doc);
+					if (this.seenRepairedAt > 0 && info.mtimeMs < this.seenRepairedAt) this.clampToOwnTotals(doc);
 					mergeLedgerMax(this.ledger, doc);
 					this.note(`renamed:${deviceId}`, `${name}: this machine under an older name, folded in rather than summed`);
 					continue;
@@ -3777,6 +3735,7 @@ var UsageService = class {
 		const lockPath = `${this.ledgerPath}.lock`;
 		const token = `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
 		let handle;
+		let sawLock = false;
 		for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt += 1) try {
 			handle = await open(lockPath, "wx");
 			if (!await handle.writeFile(token).then(() => true, () => false)) {
@@ -3787,13 +3746,16 @@ var UsageService = class {
 			break;
 		} catch (error) {
 			if (error.code !== "EEXIST") break;
-			if (await stat(lockPath).then((info) => Date.now() - info.mtimeMs, () => 0) > LOCK_STALE_MS) {
-				if (await readFile(lockPath, "utf8").catch(() => void 0) !== token) await rm(lockPath, { force: true }).catch(() => void 0);
+			sawLock = true;
+			const seen = await readFile(lockPath, "utf8").catch(() => void 0);
+			const age = await stat(lockPath).then((info) => Date.now() - info.mtimeMs, () => 0);
+			if (seen !== void 0 && age > LOCK_STALE_MS) {
+				if (await readFile(lockPath, "utf8").catch(() => void 0) === seen) await rm(lockPath, { force: true }).catch(() => void 0);
 				continue;
 			}
 			await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
 		}
-		if (handle === void 0) this.note("lock-busy", "the ledger lock stayed taken; this write may have raced another process");
+		if (handle === void 0 && sawLock) this.note("lock-busy", "the ledger lock stayed taken; this write may have raced another process");
 		this.lockHeld = handle !== void 0;
 		const held = handle !== void 0;
 		try {
@@ -4029,9 +3991,9 @@ var UsageService = class {
 				const found = findLedgerBucket(target.days[entry.dayKey], entry.provider, entry.model);
 				if (found === void 0) continue;
 				const bucket = found.totals;
-				const next = this.repairCopies(bucket, entry.after, entry.totals);
-				if (next === void 0) continue;
-				target.days[entry.dayKey][found.provider][found.model] = this.priceBucket(entry.dayKey, found.provider, found.model, next);
+				if (repairCopies(bucket, entry.after, entry.totals) === void 0) continue;
+				const next = this.priceBucket(entry.dayKey, found.provider, found.model, entry.after);
+				target.days[entry.dayKey][found.provider][found.model] = next;
 				const key = repairKey(entry.dayKey, found.provider, found.model);
 				corrected.set(key, next);
 				removedTokens += totalTokens(bucket) - totalTokens(next);

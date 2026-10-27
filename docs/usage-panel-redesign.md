@@ -604,7 +604,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   once, a clipboard that throws synchronously still releasing the button and
   saying the copy failed, a local draw failure told apart from a request failure,
   and an inverted custom pair keeping each typed value in its own box.
-- `node --experimental-strip-types harness/host-test.mjs` — 267 checks: range
+- `node --experimental-strip-types harness/host-test.mjs` — 271 checks: range
   aggregate + per-model series, route guards, device ledger, loopback fence,
   peak clock, the record-carried route of the live fold, transcript dedupe and
   the judged repair, ledger quarantine and unreadable-file protection, the

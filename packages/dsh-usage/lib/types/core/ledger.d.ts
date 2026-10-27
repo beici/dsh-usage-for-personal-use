@@ -102,6 +102,17 @@ export declare function countPrunable(doc: Readonly<UsageLedgerDocument>, todayK
  */
 export declare function pruneLedger(doc: UsageLedgerDocument, todayKey: string, retainDays: number): number;
 /**
+ * Parse a ledger document the strict way: a document whose `days` is not a plain
+ * object is *not* a ledger this build wrote, and reading it as "no days" would let
+ * the next flush overwrite the user's history with an empty one.
+ *
+ * `days: []`, `days: "…"` and `days: 42` are the shapes an interrupted or
+ * hand-edited write leaves behind; the caller quarantines the file instead.
+ * A document with no `days` key at all stays a fresh ledger — that is the shape
+ * an export or a first run has.
+ */
+export declare function deserializeLedgerStrict(value: unknown): UsageLedgerDocument | undefined;
+/**
  * Parse a ledger document from untrusted JSON: unknown shapes resolve to an
  * empty document, malformed entries are dropped, numbers are coerced to
  * finite values. Never throws.
