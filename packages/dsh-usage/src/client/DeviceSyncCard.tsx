@@ -42,6 +42,28 @@ interface Notice {
 }
 
 /**
+ * One device action can hang forever — a peer file on a dead network share, a
+ * clipboard permission prompt nobody answers. The card stops waiting after this
+ * long, says so, and hands the buttons back: a spinner with no way out is worse
+ * than a failure sentence.
+ */
+const ACTION_TIMEOUT_MS = 20_000
+
+/** Marks the race's timeout branch, so a hang is reported as a timeout rather
+ * than as a failure of whatever the action was doing. */
+const ACTION_TIMEOUT = Symbol('device action timeout')
+
+function withTimeout<T>(action: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => { reject(ACTION_TIMEOUT) }, ACTION_TIMEOUT_MS)
+    action.then(
+      (value) => { window.clearTimeout(timer); resolve(value) },
+      (error: unknown) => { window.clearTimeout(timer); reject(error) },
+    )
+  })
+}
+
+/**
  * The multi-device card. Device rows are the source list, not a picker: a peer
  * file is removed by deleting it from the DSH data directory, which the hint
  * says — an in-panel delete would need a confirmation surface the section has
@@ -66,6 +88,7 @@ export function DeviceSyncCard(props: {
   const [busy, setBusy] = useState<'export' | 'import' | 'rescan' | undefined>(undefined)
   const [notice, setNotice] = useState<Notice | undefined>(undefined)
   const [copied, setCopied] = useState(false)
+  const [copying, setCopying] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
   // The copied-label revert is a timer, and a timer that outlives the card is a
   // state update on a dead component: it is tracked and cleared on unmount.
@@ -87,15 +110,21 @@ export function DeviceSyncCard(props: {
     setBusy(kind)
     setNotice(undefined)
     try {
-      setNotice(await action())
+      // The timeout races the whole action, including the file read: a peer
+      // export on a stalled share hangs before the host ever answers.
+      setNotice(await withTimeout(action()))
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
-      const key = kind === 'export'
-        ? 'usage.device.exportFailed'
-        : kind === 'rescan' ? 'usage.device.rescanFailed' : 'usage.device.importFailed'
-      // The sentence is translated; the host's raw text stays in the title, where
-      // a diagnostic belongs.
-      setNotice({ text: t(key, { error: describeError(detail) }), tone: 'error', title: detail })
+      if (error === ACTION_TIMEOUT) {
+        setNotice({ text: t('usage.device.timeout'), tone: 'error' })
+      } else {
+        const detail = error instanceof Error ? error.message : String(error)
+        const key = kind === 'export'
+          ? 'usage.device.exportFailed'
+          : kind === 'rescan' ? 'usage.device.rescanFailed' : 'usage.device.importFailed'
+        // The sentence is translated; the host's raw text stays in the title, where
+        // a diagnostic belongs.
+        setNotice({ text: t(key, { error: describeError(detail) }), tone: 'error', title: detail })
+      }
     } finally {
       setBusy(undefined)
     }
@@ -143,8 +172,18 @@ export function DeviceSyncCard(props: {
   }
 
   const copyId = (): void => {
-    if (deviceId === undefined) return
-    void navigator.clipboard?.writeText(deviceId).then(
+    if (deviceId === undefined || copying) return
+    // A missing clipboard (an insecure context) and a rejected write (a denied
+    // permission) both used to leave the button silently unchanged; both now say
+    // so, because the user cannot tell a failed copy from a dead button.
+    const clipboard = navigator.clipboard
+    if (clipboard === undefined || typeof clipboard.writeText !== 'function') {
+      setNotice({ text: t('usage.device.copyFailed'), tone: 'error' })
+      return
+    }
+    setCopying(true)
+    setNotice(undefined)
+    void withTimeout(clipboard.writeText(deviceId)).then(
       () => {
         setCopied(true)
         // One pending revert at a time: a second copy must not be undone by the
@@ -155,12 +194,17 @@ export function DeviceSyncCard(props: {
           setCopied(false)
         }, 1_500)
       },
-      () => setCopied(false),
-    )
+      (error: unknown) => {
+        setCopied(false)
+        setNotice(error === ACTION_TIMEOUT
+          ? { text: t('usage.device.timeout'), tone: 'error' }
+          : { text: t('usage.device.copyFailed'), tone: 'error' })
+      },
+    ).finally(() => { setCopying(false) })
   }
 
   return (
-    <div className={styles.card} data-dsh-part="device-card">
+    <div className={styles.card} data-dsh-part="device-card" aria-busy={busy !== undefined || copying}>
       <span className={styles.cardTitle}>{t('usage.device.title')}</span>
       <span className={styles.muted}>{t('usage.device.hint')}</span>
       {devices.length <= 1 && <span className={styles.muted} data-dsh-part="device-none">{t('usage.device.none')}</span>}
@@ -191,17 +235,29 @@ export function DeviceSyncCard(props: {
       )}
       <div className={styles.rangeControls} style={{ marginTop: 8 }}>
         <button type="button" className={styles.refreshBtn} onClick={onExport} disabled={busy !== undefined}>
-          {t('usage.device.export')}
+          {busy === 'export' ? t('usage.device.exporting') : t('usage.device.export')}
         </button>
         <button type="button" className={styles.refreshBtn} onClick={() => fileRef.current?.click()} disabled={busy !== undefined}>
           {busy === 'import' ? t('usage.device.importing') : t('usage.device.import')}
         </button>
         <button type="button" className={styles.refreshBtn} onClick={onRescan} disabled={busy !== undefined}>
-          {t('usage.device.rescan')}
+          {busy === 'rescan' ? t('usage.device.rescanning') : t('usage.device.rescan')}
         </button>
         {deviceId !== undefined && (
-          <button type="button" className={styles.refreshBtn} onClick={copyId}>
-            {copied ? t('usage.device.copied') : t('usage.device.copyId')}
+          <button
+            type="button"
+            className={styles.refreshBtn}
+            onClick={copyId}
+            disabled={copying}
+            // The visible text is only "copy id", and the card lists two ids:
+            // the name has to say which one this button copies.
+            aria-label={t('usage.device.copyIdNamed', { deviceId })}
+          >
+            {/* The copy is otherwise silent, so the label doubles as the live
+                region that announces the result. */}
+            <span role="status">
+              {copying ? t('usage.device.copying') : copied ? t('usage.device.copied') : t('usage.device.copyId')}
+            </span>
           </button>
         )}
         <input

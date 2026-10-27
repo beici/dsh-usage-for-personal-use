@@ -477,6 +477,8 @@ export declare class UsageService {
     private writeLedgerLocked;
     /** This process's ledger as a file document: the identity travels with it. */
     private ledgerFileDocument;
+    /** The retention window a written document may honestly claim. */
+    private declaredWindow;
     /** The retention bookkeeping a write may move before it fails. */
     private retentionSnapshot;
     /** Put that bookkeeping back after a write that never landed. */

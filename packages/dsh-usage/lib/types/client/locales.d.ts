@@ -113,13 +113,17 @@ export declare const zh: {
     'usage.device.local': string;
     'usage.device.peer': string;
     'usage.device.copyId': string;
+    'usage.device.copyIdNamed': string;
     'usage.device.copied': string;
+    'usage.device.copying': string;
+    'usage.device.copyFailed': string;
     'usage.device.none': string;
     'usage.device.error': string;
     'usage.ledger.error': string;
     'usage.ledger.note': string;
     'usage.stale': string;
     'usage.device.export': string;
+    'usage.device.exporting': string;
     'usage.device.exported': string;
     'usage.device.exportFailed': string;
     'usage.device.import': string;
@@ -129,8 +133,10 @@ export declare const zh: {
     'usage.device.importFailed': string;
     'usage.device.dropHint': string;
     'usage.device.rescan': string;
+    'usage.device.rescanning': string;
     'usage.device.rescanned': string;
     'usage.device.rescanFailed': string;
+    'usage.device.timeout': string;
 };
 /** English mirror; every zh key present. */
 export declare const en: Record<UsageKey, string>;

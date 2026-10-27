@@ -4,6 +4,11 @@
  * client.js: one extra export line) inside jsdom, feeds it the saved live
  * overview + day fixtures, and asserts the window tiles / breakdown / chart
  * render the numbers we expect for 今日 / 昨日 / 近7天 / 近30天 / 自定义.
+ *
+ * The last section covers the client half of the accessibility audit: a hidden
+ * bank tab must not paint, trend bars must not cost 30 tab stops, a hung device
+ * action must time out, a failed copy must speak, and raw error text must reach
+ * a keyboard user rather than only a mouse.
  */
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -268,6 +273,12 @@ const stats30 = qa('[data-dsh-part="window-card"] [class*="statValue"]').map(tex
 check('last30 six stat cells', stats30.length === 6, JSON.stringify(stats30))
 const bars30 = qa('[data-dsh-part="trend-chart"] [data-dsh-part="trend-bar"]')
 check('last30 trend bars = 30 calendar days', bars30.length === 30, 'bars=' + bars30.length)
+// Thirty focusable bars cost thirty Tab presses before the next control, and
+// the group label already states the plot's summary. The bars keep their
+// per-day aria-label for a screen reader's browse mode but leave the tab order.
+check('trend bars are not tab stops',
+  bars30.every((bar) => bar.getAttribute('tabindex') === '-1'),
+  bars30.map((bar) => bar.getAttribute('tabindex')).join(','))
 const gridlines = qa('[data-dsh-part="trend-chart"] [class*="trendGridline"]')
 check('trend gridlines = 4', gridlines.length === 4, 'lines=' + gridlines.length)
 const legend = qa('[data-dsh-part="trend-chart"] [class*="trendLegendItem"]')
@@ -288,6 +299,10 @@ const tip = q('[data-dsh-part="trend-tooltip"]')
 check('trend tooltip on hover', tip !== null)
 if (tip !== null) {
   console.log('   tooltip:', text(tip))
+  // The tooltip repeats the hovered bar's label; exposing both would read every
+  // number twice to a screen reader.
+  check('the tooltip is hidden from assistive tech', tip.getAttribute('aria-hidden') === 'true',
+    String(tip.getAttribute('aria-hidden')))
   check('tooltip shows date + totals + calls + hit',
     text(tip).includes('2026-10-20') && text(tip).includes('85.8M') && text(tip).includes('667') && text(tip).includes('96.6%'),
     text(tip))
@@ -306,7 +321,7 @@ await act(async () => { await new Promise((r) => setTimeout(r, 60)) })
 const cardY = q('[data-dsh-part="window-card"]')
 console.log('   yesterday card:', text(cardY).slice(0, 400))
 const spanY = q('[data-dsh-part="window-card"] [class*="spanLine"]')
-check('yesterday span', text(spanY) === '2026-10-19 ~ 2026-10-19', text(spanY))
+check('yesterday span prints its one day once', text(spanY) === '2026-10-19', text(spanY))
 const statsY = qa('[data-dsh-part="window-card"] [class*="statValue"]').map(text)
 // Derive expectations from the fixture: total counts all four token fields,
 // "input" is the billed input (raw input + cache read + cache write).
@@ -1232,6 +1247,12 @@ console.log('   plans tab text:', text(container).slice(0, 200))
   check('the raw transport text stays in the title',
     notice !== null && String(notice.getAttribute('title') ?? '').includes('failed: 500'),
     notice === null ? 'no notice' : String(notice.getAttribute('title')))
+  // A title is mouse-only. The same text has to sit in a described-by sibling,
+  // which is what a screen reader reads after the sentence.
+  const describedBy = notice === null ? null : window.document.getElementById(String(notice.getAttribute('aria-describedby') ?? ''))
+  check('the range failure exposes its wire text to assistive tech',
+    describedBy !== null && text(describedBy) === rawError && String(describedBy.className).includes('srOnly'),
+    describedBy === null ? 'no described-by target' : text(describedBy))
 
   await act(async () => { localRoot.unmount() })
   host.remove()
@@ -2259,11 +2280,23 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
       }))
     })
     await act(async () => { await new Promise((r) => setTimeout(r, 250)) })
+    // The bank panel starts hidden, and a hidden canvas has no layout: the draw
+    // waits for the reveal. `drawVoucher` sets width/height to the art's 512, so
+    // the jsdom default (300x150) proves the draw did not run while hidden.
+    const bankCanvas = host.querySelector('[data-dsh-part="bank-card"] canvas')
+    check('a hidden bank tab does not paint its canvas',
+      bankCanvas !== null && bankCanvas.width === 300 && bankCanvas.height === 150,
+      bankCanvas === null ? 'no canvas' : bankCanvas.width + 'x' + bankCanvas.height)
     const tabButtons = [...host.querySelectorAll('[data-dsh-part="tabs"] button')]
     await act(async () => {
       tabButtons[2]?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
-      await new Promise((r) => setTimeout(r, 250))
     })
+    // The draw is deferred to the reveal (a hidden panel has no layout), and
+    // the art decode resolves after the effect: give both their own flush.
+    await act(async () => { await new Promise((r) => setTimeout(r, 250)) })
+    check('revealing the bank tab paints the canvas',
+      bankCanvas !== null && bankCanvas.width === 512,
+      bankCanvas === null ? 'no canvas' : String(bankCanvas.width))
     const drawError = () => host.querySelector('[data-dsh-part="bank-card"] [class*="errorLine"]')
     check('a canvas that cannot draw reports the voucher failure',
       drawError() !== null && text(drawError()).includes('票券生成失败'),
@@ -2635,6 +2668,341 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
     await act(async () => { mounted.localRoot.unmount() })
     mounted.host.remove()
   }
+}
+
+// ---- the audit's client defects -----------------------------------------
+// F3: a device action whose promise never settles used to disable the other
+// buttons with no label change, no busy signal and no way out. The card reports
+// the action as pending and a 20s watchdog turns the silence into a retryable
+// failure.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const hung = { ...deviceSync, exportLedger: () => new Promise(() => {}) }
+  const realSetTimeout = window.setTimeout
+  const watchdogs = []
+  window.setTimeout = (fn, ms, ...args) => {
+    // `withTimeout` arms the only 20s timer the card owns; every other timer
+    // stays real so React and the harness still flush.
+    if (ms === 20000) { watchdogs.push(fn); return 0 }
+    return realSetTimeout(fn, ms, ...args)
+  }
+  const localRoot = ReactDOMClient.createRoot(host)
+  try {
+    await act(async () => {
+      localRoot.render(React.createElement(UsageSectionCard, {
+        store,
+        poll: () => {},
+        refresh: () => {},
+        loadDay,
+        loadRange,
+        settings,
+        deviceSync: hung,
+        close: () => {},
+      }))
+    })
+    await act(async () => { await new Promise((r) => realSetTimeout(r, 150)) })
+    const card = host.querySelector('[data-dsh-part="device-card"]')
+    check('the device card renders for the pending-action test', card !== null)
+    if (card !== null) {
+      const buttonOf = (label) => [...card.querySelectorAll('button')].find((button) => text(button).includes(label))
+      const exportBtn = buttonOf('导出本机用量')
+      if (exportBtn !== undefined) {
+        await act(async () => { exportBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+        check('a pending device action announces itself as busy',
+          card.getAttribute('aria-busy') === 'true', String(card.getAttribute('aria-busy')))
+        check('a pending device action says what it is doing', text(exportBtn) === '导出中…', text(exportBtn))
+        check('the other device actions wait for the pending one',
+          buttonOf('导入其他设备').disabled === true && buttonOf('重新扫描').disabled === true)
+        check('the watchdog is armed once', watchdogs.length === 1, String(watchdogs.length))
+        await act(async () => { watchdogs[0]?.(); await new Promise((r) => realSetTimeout(r, 50)) })
+        check('a timed-out action hands the buttons back',
+          card.getAttribute('aria-busy') !== 'true' && exportBtn.disabled === false && text(exportBtn) === '导出本机用量',
+          text(exportBtn) + ' disabled=' + String(exportBtn.disabled))
+        const timeoutNotice = host.querySelector('[data-dsh-part="device-notice"]')
+        check('a timed-out action says so',
+          timeoutNotice !== null && text(timeoutNotice).includes('操作超时'),
+          timeoutNotice === null ? 'no notice' : text(timeoutNotice))
+      }
+    }
+  } finally {
+    window.setTimeout = realSetTimeout
+    await act(async () => { localRoot.unmount() })
+    host.remove()
+  }
+}
+
+// F4: the copy button was named by its visible text only while the card shows
+// two ids, and a missing or denied clipboard failed silently.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const localRoot = ReactDOMClient.createRoot(host)
+  const realClipboard = Object.getOwnPropertyDescriptor(window.navigator, 'clipboard')
+  const setClipboard = (value) => Object.defineProperty(window.navigator, 'clipboard', { value, configurable: true })
+  try {
+    await act(async () => {
+      localRoot.render(React.createElement(UsageSectionCard, {
+        store,
+        poll: () => {},
+        refresh: () => {},
+        loadDay,
+        loadRange,
+        settings,
+        deviceSync,
+        close: () => {},
+      }))
+    })
+    await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+    const card = host.querySelector('[data-dsh-part="device-card"]')
+    const copyBtn = card === null ? undefined : [...card.querySelectorAll('button')].find((button) => text(button).includes('复制标识'))
+    check('the copy button names the id it copies',
+      copyBtn !== undefined && String(copyBtn.getAttribute('aria-label') ?? '').includes('scrip-desktop-9c1f2a'),
+      copyBtn === undefined ? 'no button' : String(copyBtn.getAttribute('aria-label')))
+    check('the copy label is a live region',
+      copyBtn !== undefined && copyBtn.querySelector('[role="status"]') !== null)
+    if (copyBtn !== undefined) {
+      setClipboard(undefined)
+      await act(async () => { copyBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+      const missing = host.querySelector('[data-dsh-part="device-notice"]')
+      check('a missing clipboard reports the copy failure',
+        missing !== null && text(missing).includes('复制失败'),
+        missing === null ? 'no notice' : text(missing))
+      // Replace the notice through a working export, so the rejection below has
+      // to produce a fresh message instead of leaving the previous one in place.
+      const exportBtn = [...card.querySelectorAll('button')].find((button) => text(button) === '导出本机用量')
+      await act(async () => {
+        exportBtn?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+        await new Promise((r) => setTimeout(r, 30))
+      })
+      check('a working action replaces the copy failure',
+        host.querySelector('[data-dsh-part="device-notice"]') !== null &&
+        text(host.querySelector('[data-dsh-part="device-notice"]')).includes('已导出'),
+        text(host.querySelector('[data-dsh-part="device-notice"]')))
+      setClipboard({ writeText: () => new Promise((resolve, reject) => setTimeout(() => reject(new Error('clipboard denied')), 20)) })
+      await act(async () => { copyBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+      check('a pending copy says so', text(copyBtn) === '复制中…' && copyBtn.disabled === true, text(copyBtn))
+      await act(async () => { await new Promise((r) => setTimeout(r, 60)) })
+      const denied = host.querySelector('[data-dsh-part="device-notice"]')
+      check('a rejected clipboard write reports the copy failure',
+        denied !== null && text(denied).includes('复制失败') && copyBtn.disabled === false,
+        denied === null ? 'no notice' : text(denied) + ' disabled=' + String(copyBtn.disabled))
+    }
+  } finally {
+    if (realClipboard === undefined) delete window.navigator.clipboard
+    else Object.defineProperty(window.navigator, 'clipboard', realClipboard)
+    await act(async () => { localRoot.unmount() })
+    host.remove()
+  }
+}
+
+// F5: the bank day error kept the raw wire text in the title, where only a mouse
+// can reach it; the described-by sibling is the keyboard/screen-reader path.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const rawDay = 'usage api/dsh-usage/day?date=2026-10-20 failed: 502'
+  const state = { snapshot, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  try {
+    await act(async () => {
+      localRoot.render(React.createElement(UsageSectionCard, {
+        store: localStore,
+        poll: () => {},
+        refresh: () => {},
+        loadDay: async () => { throw new Error(rawDay) },
+        loadRange,
+        settings,
+        deviceSync,
+        close: () => {},
+      }))
+    })
+    await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
+    const bankTab = [...host.querySelectorAll('[role="tab"]')].find((tab) => text(tab).includes('Token 银行'))
+    await act(async () => { bankTab?.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+    await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
+    // The day picker is the bank card's sibling (it sits above the voucher),
+    // not one of the voucher's own children.
+    const select = host.querySelector('[data-dsh-part="day-bank"] select')
+    // Today is answered from the snapshot, so the picker must name an older day
+    // to make the host call that can fail.
+    const option = select === null ? null : [...select.querySelectorAll('option')].find((entry) => entry.value === '2026-10-19')
+    check('the bank day picker offers a day to fail', option !== null)
+    if (select !== null && option !== null) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set
+      await act(async () => {
+        setter.call(select, '2026-10-19')
+        select.dispatchEvent(new window.Event('change', { bubbles: true }))
+      })
+      await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+      const errLine = host.querySelector('[data-dsh-part="bank-card"] [class*="errorLine"]')
+      check('a failed bank day is stated in the user\'s language',
+        errLine !== null && text(errLine).includes('该日用量加载失败') && !text(errLine).includes('usage api'),
+        errLine === null ? 'no error line' : text(errLine))
+      const detail = errLine === null ? null : window.document.getElementById(String(errLine.getAttribute('aria-describedby') ?? ''))
+      check('the bank day failure exposes its wire text to assistive tech',
+        detail !== null && text(detail) === rawDay && String(detail.className).includes('srOnly'),
+        detail === null ? 'no described-by target' : text(detail))
+    }
+  } finally {
+    await act(async () => { localRoot.unmount() })
+    host.remove()
+  }
+}
+
+// F6: `toLocale*` follows the runtime locale, so a zh panel could print
+// "2:45:45 AM" or "10/20/2026"; the ISO order reads the same everywhere.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const state = { snapshot, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  try {
+    await act(async () => {
+      localRoot.render(React.createElement(UsageSectionCard, {
+        store: localStore,
+        poll: () => {},
+        refresh: () => {},
+        loadDay,
+        loadRange,
+        settings,
+        deviceSync,
+        close: () => {},
+      }))
+    })
+    await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
+    const panelText = text(host)
+    check('a timestamp prints as YYYY-MM-DD HH:mm, not the runtime locale',
+      /更新于 \d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(panelText) && !/\b(AM|PM)\b/.test(panelText) && !/\d{1,2}\/\d{1,2}\/\d{4}/.test(panelText),
+      panelText.slice(0, 160))
+  } finally {
+    await act(async () => { localRoot.unmount() })
+    host.remove()
+  }
+}
+
+// F8: a rejected interval write left the un-applied value in the field (120 in
+// the input, 60 in the Host). The draft that asked for the write is dropped.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const realSet = settings.set
+  const localRoot = ReactDOMClient.createRoot(host)
+  try {
+    settings.set = async (field, value) => {
+      settingsCalls.push({ field, value })
+      return field === 'pollIntervalSec' ? false : true
+    }
+    await act(async () => {
+      localRoot.render(React.createElement(UsageSectionCard, {
+        store,
+        poll: () => {},
+        refresh: () => {},
+        loadDay,
+        loadRange,
+        settings,
+        deviceSync,
+        close: () => {},
+      }))
+    })
+    await act(async () => { await new Promise((r) => setTimeout(r, 200)) })
+    const input = host.querySelector('[data-dsh-part="settings-row"] input[type="number"]')
+    check('the poll-interval field renders for the rejected-write test', input !== null)
+    if (input !== null) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+      await act(async () => {
+        setter.call(input, '120')
+        input.dispatchEvent(new window.Event('input', { bubbles: true }))
+      })
+      await act(async () => {
+        input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+        await new Promise((r) => setTimeout(r, 80))
+      })
+      check('a rejected interval write restores the stored value',
+        input.value === '60', 'value=' + input.value)
+      check('a rejected interval write says it failed',
+        text(host).includes('保存失败'), text(host).slice(-120))
+    }
+  } finally {
+    settings.set = realSet
+    await act(async () => { localRoot.unmount() })
+    host.remove()
+  }
+}
+
+// F10: the printed share and the bar width now read one clamped number, with a
+// single format: one decimal below 10, integers at and above.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const bucket = (calls, input) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const shareSnapshot = {
+    ...snapshot,
+    providers: [{
+      provider: 'codex',
+      displayName: 'Codex',
+      credential: 'stored',
+      planSupported: true,
+      updatedAt: Date.now(),
+      totals: bucket(1, 100),
+      plan: {
+        planName: 'Pro',
+        updatedAt: Date.now(),
+        windows: [{ key: '7_day', percent: 5.56 }, { key: '5h', percent: 120 }],
+      },
+    }],
+  }
+  const shareState = { snapshot: shareSnapshot, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => shareState, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  try {
+    await act(async () => {
+      localRoot.render(React.createElement(UsageSectionCard, {
+        store: localStore,
+        poll: () => {},
+        refresh: () => {},
+        loadDay,
+        loadRange,
+        settings,
+        deviceSync,
+        close: () => {},
+      }))
+    })
+    await act(async () => { await new Promise((r) => setTimeout(r, 120)) })
+    const plansTab = [...host.querySelectorAll('[role="tab"]')].find((tab) => text(tab).includes('个人套餐'))
+    await act(async () => {
+      plansTab?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+      await new Promise((r) => setTimeout(r, 120))
+    })
+    const planText = text(host.querySelector('[data-dsh-part="plan-card"]') ?? host)
+    const widths = [...host.querySelectorAll('[data-dsh-part="plan-card"] [class*="barFill"]')].map((fill) => fill.style.width)
+    check('a share below ten prints one decimal', planText.includes('5.6%'), planText)
+    check('a share above one hundred prints the width the bar can show',
+      planText.includes('100%') && widths[1] === '100%', planText + ' widths=' + JSON.stringify(widths))
+    check('the printed share and the bar width read the same clamp',
+      widths[0] === '5.56%', JSON.stringify(widths))
+  } finally {
+    await act(async () => { localRoot.unmount() })
+    host.remove()
+  }
+}
+
+// F9: one panel used two words for the same thing ("Token 银行" / "总 tokens",
+// "提供方" / "provider"). The dictionary now says Token and 提供方 throughout.
+{
+  const localeSource = readClient('locales.ts')
+  check('the panel says Token with one casing',
+    localeSource.includes("'usage.tokens.total': '总 Token'") &&
+    localeSource.includes("'usage.tab.bank': 'Token 银行'") &&
+    !localeSource.includes('总 tokens'),
+    'tokens.total casing')
+  check('the panel says 提供方 for every configured-provider sentence',
+    localeSource.includes('没有已配置的提供方') &&
+    localeSource.includes('套餐类提供方') &&
+    !localeSource.includes('套餐类 provider'),
+    'provider wording')
 }
 
 const failed = report.filter((row) => !row.ok)

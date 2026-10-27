@@ -2091,6 +2091,18 @@ function foreignDeviceOf(error) {
 	if (!isDeviceId(claimed)) return void 0;
 	return claimed === localDeviceId() ? void 0 : claimed;
 }
+/**
+* `JSON.parse` for a document that came from disk.
+*
+* A UTF-8 BOM is what any Windows editor adds on re-save, and `JSON.parse`
+* rejects it as a syntax error. Only the import path stripped it, so a ledger
+* re-saved by hand (or a peer file copied through an editor) read as corrupt:
+* the local one was quarantined and the panel showed an empty history. Every
+* document read from disk goes through here instead.
+*/
+function parseJsonText(text) {
+	return JSON.parse(text.charCodeAt(0) === 65279 ? text.slice(1) : text);
+}
 /** Probe timeout per HTTP call. */
 const PROBE_TIMEOUT_MS = 1e4;
 /** Ledger flush debounce. */
@@ -2489,7 +2501,7 @@ var UsageService = class {
 		if (Buffer.byteLength(text, "utf8") > IMPORT_MAX_BYTES$1) throw new UsageImportError(`ledger exceeds ${IMPORT_MAX_BYTES$1} bytes`);
 		let parsed;
 		try {
-			parsed = JSON.parse(text.charCodeAt(0) === 65279 ? text.slice(1) : text);
+			parsed = parseJsonText(text);
 		} catch {
 			throw new UsageImportError("not JSON");
 		}
@@ -2503,10 +2515,12 @@ var UsageService = class {
 		if (doc === void 0) throw new UsageImportError("unreadable ledger payload");
 		await mkdir(this.persistDir, { recursive: true });
 		const target = join(this.persistDir, ledgerFileName(claimedId));
-		await this.withLedgerLock(async () => {
+		let imported = false;
+		await this.withLedgerLock(async (locked) => {
+			if (!locked) return;
 			const existing = await readFile(target, "utf8").then((text) => {
 				try {
-					return parsePeerLedger(JSON.parse(text));
+					return parsePeerLedger(parseJsonText(text));
 				} catch {
 					return;
 				}
@@ -2528,7 +2542,9 @@ var UsageService = class {
 				...peerWindow === void 0 ? {} : { retentionDays: peerWindow },
 				ledger: merged
 			});
+			imported = true;
 		});
+		if (!imported) throw new UsageImportError("another process is writing the ledger; nothing was imported — try again");
 		await this.refreshPeers();
 		return { deviceId: claimedId };
 	}
@@ -2585,7 +2601,7 @@ var UsageService = class {
 					totals: range.totals,
 					providers: range.providers
 				},
-				availableDays: ledgerDayKeys(this.ledger),
+				availableDays: allKeys,
 				all: {
 					from: allKeys[0] ?? todayKey,
 					to: allKeys[allKeys.length - 1] ?? todayKey,
@@ -2876,7 +2892,7 @@ var UsageService = class {
 	ledgerFromJson(raw) {
 		let parsed;
 		try {
-			parsed = JSON.parse(raw);
+			parsed = parseJsonText(raw);
 		} catch (error) {
 			return {
 				kind: "corrupt",
@@ -2997,7 +3013,8 @@ var UsageService = class {
 		await this.refreshPeers(true);
 		if (replay.skipped > 0) this.note("replay-cap", `${replay.skipped} older transcripts beyond the replay cap of ${SESSION_LOG_MAX_FILES} were not replayed`);
 		const prior = await this.readRepairRecord();
-		const repaired = await this.repairDuplicatedReplay(replay, prior);
+		const fileWrittenAt = await stat(this.ledgerPath).then((info) => info.mtimeMs).catch(() => void 0);
+		const repaired = await this.repairDuplicatedReplay(replay, prior.floors, prior.appliedAt, fileWrittenAt);
 		this.lastPrune = void 0;
 		this.pruneIfNeeded();
 		this.loaded = true;
@@ -3016,7 +3033,7 @@ var UsageService = class {
 				buckets: written.corrected.size,
 				removedTokens: written.removedTokens,
 				after: {
-					...Object.fromEntries([...prior].map(([key, totals]) => [key, totals])),
+					...Object.fromEntries([...prior.floors].map(([key, totals]) => [key, totals])),
 					...Object.fromEntries([...written.corrected])
 				}
 			}).catch(() => void 0);
@@ -3186,7 +3203,7 @@ var UsageService = class {
 	*   exactly what a plain "big enough to subtract" guard allows once the day
 	*   holds calls the replay cannot see.
 	*/
-	async repairDuplicatedReplay(replay, prior) {
+	async repairDuplicatedReplay(replay, prior, repairedAt, fileWrittenAt) {
 		const repaired = /* @__PURE__ */ new Map();
 		let buckets = 0;
 		let removedTokens = 0;
@@ -3199,7 +3216,12 @@ var UsageService = class {
 			}
 			const bucket = target.totals;
 			const clean = findLedgerBucket(replay.doc.days[duplicate.dayKey], duplicate.provider, duplicate.model)?.totals ?? emptyTotals();
-			const base = prior.get(key) ?? clean;
+			const floor = prior.get(key);
+			if (floor !== void 0 && repairedAt !== void 0 && fileWrittenAt !== void 0 && fileWrittenAt >= repairedAt) {
+				if (bucket.calls - floor.calls === duplicate.totals.calls && totalTokens(bucket) - totalTokens(floor) === totalTokens(duplicate.totals)) skipped += 1;
+				continue;
+			}
+			const base = clean;
 			if (bucket.calls - base.calls !== duplicate.totals.calls) {
 				skipped += 1;
 				continue;
@@ -3253,22 +3275,37 @@ var UsageService = class {
 	* falls back to the replay's own total.
 	*/
 	async readRepairRecord() {
-		const record = /* @__PURE__ */ new Map();
+		const floors = /* @__PURE__ */ new Map();
 		let raw;
 		try {
 			raw = await readFile(join(this.persistDir, DEDUPE_MARKER_FILE), "utf8");
 		} catch {
-			return record;
+			return {
+				floors,
+				appliedAt: void 0
+			};
 		}
 		try {
 			const parsed = JSON.parse(raw);
-			if (typeof parsed.after !== "object" || parsed.after === null) return record;
+			const appliedAt = typeof parsed.appliedAt === "number" ? parsed.appliedAt : void 0;
+			if (typeof parsed.after !== "object" || parsed.after === null) return {
+				floors,
+				appliedAt
+			};
 			for (const [key, value] of Object.entries(parsed.after)) {
 				const totals = readTotals(value);
-				if (totals !== void 0) record.set(key, totals);
+				if (totals !== void 0) floors.set(key, totals);
 			}
-		} catch {}
-		return record;
+			return {
+				floors,
+				appliedAt
+			};
+		} catch {
+			return {
+				floors,
+				appliedAt: void 0
+			};
+		}
 	}
 	/**
 	* Fold a parsed document into a target ledger.
@@ -3311,7 +3348,7 @@ var UsageService = class {
 			const raw = await readFile(path, "utf8").catch(() => void 0);
 			if (raw === void 0) continue;
 			try {
-				const doc = deserializeLedger(JSON.parse(raw));
+				const doc = deserializeLedger(parseJsonText(raw));
 				const days = Object.keys(doc.days).length;
 				if (days === 0) continue;
 				mergeLedgerMax(this.ledger, doc);
@@ -3358,7 +3395,7 @@ var UsageService = class {
 			if (disk.kind === "ok") mergeLedgerMax(this.ledger, disk.doc);
 			await writeJsonAtomic(this.ledgerPath, ledgerFileDocument(this.ledger, {
 				machine: this.machine,
-				retentionDays: this.recordedWindow()
+				retentionDays: this.declaredWindow()
 			}));
 		}).then(() => true, () => false) && source.path === legacyPath) await this.retireLegacyFile(legacyPath, migratedPath);
 	}
@@ -3382,7 +3419,7 @@ var UsageService = class {
 	/** A ledger file's days, or undefined when it is absent or unparseable. */
 	async readLedgerDocument(path) {
 		try {
-			return deserializeLedger(JSON.parse(await readFile(path, "utf8")));
+			return deserializeLedger(parseJsonText(await readFile(path, "utf8")));
 		} catch {
 			return;
 		}
@@ -3397,14 +3434,16 @@ var UsageService = class {
 	*/
 	async trimQuarantine(keep, limit = 3) {
 		const prefix = `${basename(this.ledgerPath)}.`;
-		const mine = (await readdir(this.persistDir).catch(() => [])).filter((name) => name.startsWith(prefix) && /\.(unreadable|corrupt)-\d+\.json$/.test(name)).filter((name) => name !== keep);
-		const keepCount = keep === void 0 ? 0 : 1;
+		const names = await readdir(this.persistDir).catch(() => []);
+		const keepName = keep === void 0 ? void 0 : basename(keep);
+		const mine = names.filter((name) => name.startsWith(prefix) && /\.(unreadable|corrupt)-\d+\.json$/.test(name)).filter((name) => name !== keepName);
+		const keepCount = keepName === void 0 ? 0 : 1;
 		if (mine.length + keepCount <= limit) return;
 		const dated = await Promise.all(mine.map(async (name) => ({
 			name,
 			at: await stat(join(this.persistDir, name)).then((info) => info.mtimeMs, () => 0)
 		})));
-		dated.sort((a, b) => b.at - a.at || a.name.localeCompare(b.name));
+		dated.sort((a, b) => b.at - a.at || b.name.localeCompare(a.name));
 		for (const { name } of dated.slice(Math.max(0, limit - keepCount))) await rm(join(this.persistDir, name), { force: true }).catch(() => void 0);
 	}
 	/**
@@ -3445,7 +3484,7 @@ var UsageService = class {
 			const filePath = join(this.persistDir, name);
 			try {
 				const [raw, info] = await Promise.all([readFile(filePath, "utf8"), stat(filePath)]);
-				const parsed = parsePeerLedger(JSON.parse(raw));
+				const parsed = parsePeerLedger(parseJsonText(raw));
 				if (parsed === void 0) {
 					failures.push(`${name}: not a usage ledger`);
 					continue;
@@ -3465,10 +3504,12 @@ var UsageService = class {
 						const local = this.ledger.days[day];
 						const kept = {};
 						for (const [provider, models] of Object.entries(buckets)) for (const [model, totals] of Object.entries(models)) {
-							if (findLedgerBucket(local, provider, model) !== void 0) continue;
+							const mine = findLedgerBucket(local, provider, model)?.totals;
+							const extra = mine === void 0 ? totals : subtractTotals(totals, mine);
+							if (extra.calls === 0 && totalTokens(extra) === 0) continue;
 							kept[provider] = {
 								...kept[provider] ?? {},
-								[model]: totals
+								[model]: extra
 							};
 							taken += 1;
 						}
@@ -3483,7 +3524,7 @@ var UsageService = class {
 						},
 						updatedAt: info.mtimeMs
 					});
-					this.note(`unverified:${deviceId}`, taken === 0 ? `${name}: unverified (no machine id in the document), and every bucket in it is already recorded here, so it was not counted` : `${name}: unverified (no machine id in the document), so only the ${taken} bucket(s) this machine has no record of were counted`);
+					this.note(`unverified:${deviceId}`, taken === 0 ? `${name}: unverified (no machine id in the document), and every bucket in it is already recorded here, so it was not counted` : `${name}: unverified (no machine id in the document), so only what the ${taken} bucket(s) hold beyond this machine's own record were counted`);
 					continue;
 				}
 				if (parsed.machine !== void 0 && this.sameMachine(parsed.machine)) {
@@ -3562,14 +3603,16 @@ var UsageService = class {
 		}
 		if (handle === void 0) this.note("lock-busy", "the ledger lock stayed taken; this write may have raced another process");
 		this.lockHeld = handle !== void 0;
+		const held = handle !== void 0;
 		try {
-			await work();
+			await work(held);
 		} finally {
 			await handle?.close().catch(() => {});
 			if (handle !== void 0) {
 				if (await readFile(lockPath, "utf8").catch(() => void 0) === token) await rm(lockPath, { force: true }).catch(() => {});
 			}
 		}
+		return held;
 	}
 	async writeLedgerLocked() {
 		const before = structuredClone(this.ledger);
@@ -3653,8 +3696,12 @@ var UsageService = class {
 		return ledgerFileDocument(this.ledger, {
 			machine: this.machine,
 			...this.seenRepairedAt > 0 ? { repairedAt: this.seenRepairedAt } : {},
-			retentionDays: this.recordedWindow()
+			retentionDays: this.declaredWindow()
 		});
+	}
+	/** The retention window a written document may honestly claim. */
+	declaredWindow() {
+		return this.windowRefused ? this.fileRetention ?? this.recordedWindow() : this.recordedWindow();
 	}
 	/** The retention bookkeeping a write may move before it fails. */
 	retentionSnapshot() {
@@ -3708,7 +3755,7 @@ var UsageService = class {
 		const jump = stale > 0 && prunable > days * .5 || prunable === days || unstampedWipe;
 		if (days > 0 && jump) {
 			this.windowRefused = true;
-			this.note("retention-jump", `retention skipped: the clock would drop ${prunable} of ${days} recorded days — delete the ledger file (and any .migrated copy beside it) to accept it`);
+			this.note("retention-jump", shrank ? `retention skipped: the ${this.options.retainDays}-day window would drop ${prunable} of ${days} recorded days — raise the window to keep them, or delete the ledger file (and any .migrated copy beside it) to accept it` : `retention skipped: the clock would drop ${prunable} of ${days} recorded days — if the clock is right, delete the ledger file (and any .migrated copy beside it) to accept it`);
 			return 0;
 		}
 		this.windowRefused = false;
@@ -3761,9 +3808,13 @@ var UsageService = class {
 		try {
 			await mkdir(dirname(this.ledgerPath), { recursive: true });
 			let result;
-			await this.withLedgerLock(async () => {
+			if (!await this.withLedgerLock(async (locked) => {
+				if (!locked) return;
 				result = await this.persistRepairLocked(repaired);
-			});
+			})) {
+				this.note("repair-lock", "the ledger lock stayed taken; the duplicate repair was not written and will be retried");
+				return;
+			}
 			return result;
 		} catch (error) {
 			this.ledgerError = `ledger write failed (${error instanceof Error ? error.message : String(error)})`;
@@ -3802,7 +3853,7 @@ var UsageService = class {
 				await writeJsonAtomic(this.ledgerPath, ledgerFileDocument(target, {
 					machine: this.machine,
 					repairedAt: this.seenRepairedAt,
-					retentionDays: this.recordedWindow()
+					retentionDays: this.declaredWindow()
 				}));
 			} catch (error) {
 				this.ledgerError = `ledger write failed (${error instanceof Error ? error.message : String(error)})`;

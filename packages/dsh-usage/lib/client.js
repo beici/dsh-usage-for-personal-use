@@ -75,7 +75,7 @@ window.__ModuleLoader__.load({
 			"usage.peak.starts": "{time} 进入高峰",
 			"usage.calls": "{n} 次调用",
 			"usage.callsLabel": "次调用",
-			"usage.tokens.total": "总 tokens",
+			"usage.tokens.total": "总 Token",
 			"usage.tokens.input": "输入",
 			"usage.tokens.output": "输出",
 			"usage.tokens.cacheRead": "缓存读",
@@ -115,7 +115,7 @@ window.__ModuleLoader__.load({
 			"usage.oauth": "OAuth 凭据，不做余额查询",
 			"usage.plan.reset": "{date} 重置",
 			"usage.plan.noPlan": "未检测到套餐数据",
-			"usage.plan.noneConfigured": "没有已配置的套餐类 provider（如 Kimi、GLM、OpenCode Go、MiniMax、Codex 订阅）",
+			"usage.plan.noneConfigured": "没有已配置的套餐类提供方（如 Kimi、GLM、OpenCode Go、MiniMax、Codex 订阅）",
 			"usage.plan.windows.5h": "5 小时",
 			"usage.plan.windows.week": "每周",
 			"usage.plan.windows.month": "每月",
@@ -153,13 +153,17 @@ window.__ModuleLoader__.load({
 			"usage.device.local": "本机",
 			"usage.device.peer": "已导入",
 			"usage.device.copyId": "复制标识",
+			"usage.device.copyIdNamed": "复制本机标识 {deviceId}",
 			"usage.device.copied": "已复制",
+			"usage.device.copying": "复制中…",
+			"usage.device.copyFailed": "复制失败，请手动选择标识",
 			"usage.device.none": "只有本机数据",
 			"usage.device.error": "部分文件无法读取：{error}",
 			"usage.ledger.error": "账本读取异常，下面的数字可能不完整：{error}",
 			"usage.ledger.note": "说明：{note}",
 			"usage.stale": "上次刷新失败（{error}），下面是 {time} 的数据",
 			"usage.device.export": "导出本机用量",
+			"usage.device.exporting": "导出中…",
 			"usage.device.exported": "已导出本机用量",
 			"usage.device.exportFailed": "导出失败：{error}",
 			"usage.device.import": "导入其他设备",
@@ -169,8 +173,10 @@ window.__ModuleLoader__.load({
 			"usage.device.importFailed": "导入失败：{error}",
 			"usage.device.dropHint": "也可以把导出的 .json 文件直接放进 ~/.dsh/dsh-usage/ 后点「重新扫描」。",
 			"usage.device.rescan": "重新扫描",
+			"usage.device.rescanning": "扫描中…",
 			"usage.device.rescanned": "已重新扫描",
-			"usage.device.rescanFailed": "重新扫描失败：{error}"
+			"usage.device.rescanFailed": "重新扫描失败：{error}",
+			"usage.device.timeout": "操作超时，请重试"
 		};
 		/** English mirror; every zh key present. */
 		const en = {
@@ -280,13 +286,17 @@ window.__ModuleLoader__.load({
 			"usage.device.local": "This device",
 			"usage.device.peer": "Imported",
 			"usage.device.copyId": "Copy id",
+			"usage.device.copyIdNamed": "Copy this device id {deviceId}",
 			"usage.device.copied": "Copied",
+			"usage.device.copying": "Copying…",
+			"usage.device.copyFailed": "Copy failed; select the id manually",
 			"usage.device.none": "This device only",
 			"usage.device.error": "Some files could not be read: {error}",
 			"usage.ledger.error": "The usage ledger could not be read, so the numbers below may be incomplete: {error}",
 			"usage.ledger.note": "Note: {note}",
 			"usage.stale": "Last refresh failed ({error}); the numbers below are from {time}",
 			"usage.device.export": "Export this device",
+			"usage.device.exporting": "Exporting…",
 			"usage.device.exported": "Exported this device",
 			"usage.device.exportFailed": "Export failed: {error}",
 			"usage.device.import": "Import another device",
@@ -296,8 +306,10 @@ window.__ModuleLoader__.load({
 			"usage.device.importFailed": "Import failed: {error}",
 			"usage.device.dropHint": "You can also drop an exported .json into ~/.dsh/dsh-usage/ and press Rescan.",
 			"usage.device.rescan": "Rescan",
+			"usage.device.rescanning": "Rescanning…",
 			"usage.device.rescanned": "Rescanned",
-			"usage.device.rescanFailed": "Rescan failed: {error}"
+			"usage.device.rescanFailed": "Rescan failed: {error}",
+			"usage.device.timeout": "The action timed out; try again"
 		};
 		/**
 		* Active dictionary, picked by the document language at call time. The
@@ -1044,7 +1056,7 @@ window.__ModuleLoader__.load({
 											"data-recorded": bucket.recorded ? "true" : "false",
 											"data-failed": bucket.failed ? "true" : "false",
 											role: "img",
-											tabIndex: 0,
+											tabIndex: -1,
 											"aria-label": bucket.recorded ? `${bucketLabel}: ${formatTokens(totalOf$1(bucket.totals))}, ${t("usage.calls", { n: bucket.totals.calls })}` : `${bucketLabel}: ${bucket.failed ? t("usage.range.loadFailed") : t("usage.range.noRecord")}`,
 											onMouseEnter: () => {
 												setHovered(index);
@@ -1068,6 +1080,7 @@ window.__ModuleLoader__.load({
 								hoveredBucket !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 									className: usage_module_css_default.trendTooltip,
 									"data-dsh-part": "trend-tooltip",
+									"aria-hidden": "true",
 									style: tooltipStyle(hovered ?? 0, buckets.length, totalOf$1(hoveredBucket.totals), axisMax),
 									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: usage_module_css_default.trendTooltipTitle,
@@ -2089,6 +2102,30 @@ window.__ModuleLoader__.load({
 		* @module @linxin666/dsh-usage/client/DeviceSyncCard
 		*/
 		/**
+		* One device action can hang forever — a peer file on a dead network share, a
+		* clipboard permission prompt nobody answers. The card stops waiting after this
+		* long, says so, and hands the buttons back: a spinner with no way out is worse
+		* than a failure sentence.
+		*/
+		const ACTION_TIMEOUT_MS = 2e4;
+		/** Marks the race's timeout branch, so a hang is reported as a timeout rather
+		* than as a failure of whatever the action was doing. */
+		const ACTION_TIMEOUT = Symbol("device action timeout");
+		function withTimeout(action) {
+			return new Promise((resolve, reject) => {
+				const timer = window.setTimeout(() => {
+					reject(ACTION_TIMEOUT);
+				}, ACTION_TIMEOUT_MS);
+				action.then((value) => {
+					window.clearTimeout(timer);
+					resolve(value);
+				}, (error) => {
+					window.clearTimeout(timer);
+					reject(error);
+				});
+			});
+		}
+		/**
 		* The multi-device card. Device rows are the source list, not a picker: a peer
 		* file is removed by deleting it from the DSH data directory, which the hint
 		* says — an in-panel delete would need a confirmation surface the section has
@@ -2103,6 +2140,7 @@ window.__ModuleLoader__.load({
 			const [busy, setBusy] = (0, react.useState)(void 0);
 			const [notice, setNotice] = (0, react.useState)(void 0);
 			const [copied, setCopied] = (0, react.useState)(false);
+			const [copying, setCopying] = (0, react.useState)(false);
 			const fileRef = (0, react.useRef)(null);
 			const copiedTimer = (0, react.useRef)(void 0);
 			(0, react.useEffect)(() => {
@@ -2115,14 +2153,20 @@ window.__ModuleLoader__.load({
 				setBusy(kind);
 				setNotice(void 0);
 				try {
-					setNotice(await action());
+					setNotice(await withTimeout(action()));
 				} catch (error) {
-					const detail = error instanceof Error ? error.message : String(error);
-					setNotice({
-						text: t(kind === "export" ? "usage.device.exportFailed" : kind === "rescan" ? "usage.device.rescanFailed" : "usage.device.importFailed", { error: describeError(detail) }),
-						tone: "error",
-						title: detail
+					if (error === ACTION_TIMEOUT) setNotice({
+						text: t("usage.device.timeout"),
+						tone: "error"
 					});
+					else {
+						const detail = error instanceof Error ? error.message : String(error);
+						setNotice({
+							text: t(kind === "export" ? "usage.device.exportFailed" : kind === "rescan" ? "usage.device.rescanFailed" : "usage.device.importFailed", { error: describeError(detail) }),
+							tone: "error",
+							title: detail
+						});
+					}
 				} finally {
 					setBusy(void 0);
 				}
@@ -2172,19 +2216,41 @@ window.__ModuleLoader__.load({
 				});
 			};
 			const copyId = () => {
-				if (deviceId === void 0) return;
-				navigator.clipboard?.writeText(deviceId).then(() => {
+				if (deviceId === void 0 || copying) return;
+				const clipboard = navigator.clipboard;
+				if (clipboard === void 0 || typeof clipboard.writeText !== "function") {
+					setNotice({
+						text: t("usage.device.copyFailed"),
+						tone: "error"
+					});
+					return;
+				}
+				setCopying(true);
+				setNotice(void 0);
+				withTimeout(clipboard.writeText(deviceId)).then(() => {
 					setCopied(true);
 					if (copiedTimer.current !== void 0) window.clearTimeout(copiedTimer.current);
 					copiedTimer.current = window.setTimeout(() => {
 						copiedTimer.current = void 0;
 						setCopied(false);
 					}, 1500);
-				}, () => setCopied(false));
+				}, (error) => {
+					setCopied(false);
+					setNotice(error === ACTION_TIMEOUT ? {
+						text: t("usage.device.timeout"),
+						tone: "error"
+					} : {
+						text: t("usage.device.copyFailed"),
+						tone: "error"
+					});
+				}).finally(() => {
+					setCopying(false);
+				});
 			};
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: usage_module_css_default.card,
 				"data-dsh-part": "device-card",
+				"aria-busy": busy !== void 0 || copying,
 				children: [
 					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 						className: usage_module_css_default.cardTitle,
@@ -2232,7 +2298,7 @@ window.__ModuleLoader__.load({
 								className: usage_module_css_default.refreshBtn,
 								onClick: onExport,
 								disabled: busy !== void 0,
-								children: t("usage.device.export")
+								children: busy === "export" ? t("usage.device.exporting") : t("usage.device.export")
 							}),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 								type: "button",
@@ -2246,13 +2312,18 @@ window.__ModuleLoader__.load({
 								className: usage_module_css_default.refreshBtn,
 								onClick: onRescan,
 								disabled: busy !== void 0,
-								children: t("usage.device.rescan")
+								children: busy === "rescan" ? t("usage.device.rescanning") : t("usage.device.rescan")
 							}),
 							deviceId !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 								type: "button",
 								className: usage_module_css_default.refreshBtn,
 								onClick: copyId,
-								children: copied ? t("usage.device.copied") : t("usage.device.copyId")
+								disabled: copying,
+								"aria-label": t("usage.device.copyIdNamed", { deviceId }),
+								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									role: "status",
+									children: copying ? t("usage.device.copying") : copied ? t("usage.device.copied") : t("usage.device.copyId")
+								})
 							}),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
 								ref: fileRef,
@@ -2347,9 +2418,18 @@ window.__ModuleLoader__.load({
 		* base and still a bounded wait for a dead endpoint.
 		*/
 		const RETRY_BACKOFF_MAX_MS = 12e4;
-		function formatTime(ms) {
+		/**
+		* `YYYY-MM-DD HH:mm` from the runtime's local clock. `toLocale*` follows the
+		* runtime locale, so a zh panel could print "2:45:45 AM" or "10/20/2026"; the
+		* ISO order reads the same in every locale and sorts as a date. `stamp` is a
+		* millisecond count for the snapshot times and an ISO string for plan resets.
+		*/
+		function formatStamp(stamp) {
 			try {
-				return new Date(ms).toLocaleTimeString();
+				const date = new Date(stamp);
+				if (Number.isNaN(date.getTime())) return "";
+				const pad = (value) => String(value).padStart(2, "0");
+				return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 			} catch {
 				return "";
 			}
@@ -2357,6 +2437,23 @@ window.__ModuleLoader__.load({
 		/** Formatted CNY spend estimate (the only priced currency today). */
 		function formatCost(cost) {
 			return "¥" + cost.toFixed(2);
+		}
+		/**
+		* The share a plan bar can actually show. A percentage printed above 100 would
+		* claim more than the track can hold, so the number and the width both read
+		* through here instead of one clamping and the other not.
+		*/
+		function planShare(percent) {
+			return Math.min(100, Math.max(0, percent));
+		}
+		/**
+		* One format for the printed share: a decimal only below 10, integers at and
+		* above. The width reads the same clamped number, so a share above 100 prints
+		* "100%" instead of a percentage the track cannot show.
+		*/
+		function formatShare(percent) {
+			const share = planShare(percent);
+			return `${share < 10 ? share.toFixed(1) : String(Math.round(share))}%`;
 		}
 		function toneClass(percent) {
 			if (percent >= 90) return usage_module_css_default.barLow;
@@ -3352,6 +3449,7 @@ window.__ModuleLoader__.load({
 			const ledgerDetailId = (0, react.useId)();
 			const cardId = (0, react.useId)();
 			const staleDetailId = (0, react.useId)();
+			const rangeDetailId = (0, react.useId)();
 			const providerDetailId = (0, react.useId)();
 			(0, react.useId)();
 			(0, react.useId)();
@@ -3712,7 +3810,7 @@ window.__ModuleLoader__.load({
 							},
 							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 								className: usage_module_css_default.muted,
-								children: t("usage.updated", { time: formatTime(snapshot.updatedAt) })
+								children: t("usage.updated", { time: formatStamp(snapshot.updatedAt) })
 							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 								type: "button",
 								className: usage_module_css_default.refreshBtn,
@@ -3730,7 +3828,7 @@ window.__ModuleLoader__.load({
 						"aria-describedby": staleDetailId,
 						children: t("usage.stale", {
 							error: describeError(ui.error ?? ""),
-							time: formatTime(snapshot.updatedAt)
+							time: formatStamp(snapshot.updatedAt)
 						})
 					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 						id: staleDetailId,
@@ -3812,7 +3910,7 @@ window.__ModuleLoader__.load({
 											children: t("usage.range.detail", { label: t(RANGE_LABEL_KEYS[rangeKey]) })
 										}), (rangeKey !== "custom" || customPicked) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 											className: usage_module_css_default.spanLine,
-											children: t("usage.range.span", {
+											children: activeWindow.from === activeWindow.to ? activeWindow.from : t("usage.range.span", {
 												from: activeWindow.from,
 												to: activeWindow.to
 											})
@@ -3823,12 +3921,17 @@ window.__ModuleLoader__.load({
 										boundaryMs: deepseekPeriod.boundaryMs,
 										variant: "full"
 									}),
-									activeError !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									activeError !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: usage_module_css_default.errorLine,
 										role: "status",
 										title: activeError,
+										"aria-describedby": rangeDetailId,
 										children: t("usage.range.error", { error: describeError(activeError) })
-									}),
+									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										id: rangeDetailId,
+										className: usage_module_css_default.srOnly,
+										children: activeError
+									})] }),
 									rangeKey === "custom" && !customPicked ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: usage_module_css_default.muted,
 										"data-dsh-part": "custom-prompt",
@@ -3964,6 +4067,7 @@ window.__ModuleLoader__.load({
 							window: bankWindow,
 							observedSpend: bankSelection === void 0 ? snapshot.usage.observedSpend : void 0,
 							loading: bankSelection !== void 0 && bankDayLoad?.status === "loading",
+							hidden: tab !== "bank",
 							...bankDayLoad?.status === "error" ? { error: bankDayLoad.error ?? "" } : {}
 						})]
 					})
@@ -3981,10 +4085,11 @@ window.__ModuleLoader__.load({
 		* degrades to an error line and never takes the section down.
 		*/
 		function VoucherCard(props) {
-			const { window: ledger, observedSpend, loading, error } = props;
+			const { window: ledger, observedSpend, loading, error, hidden = false } = props;
 			const data = voucherData(ledger);
 			const drawDetailId = (0, react.useId)();
 			const saveDetailId = (0, react.useId)();
+			const dayDetailId = (0, react.useId)();
 			const canvasRef = (0, react.useRef)(null);
 			const [drawError, setDrawError] = (0, react.useState)(void 0);
 			const [saveError, setSaveError] = (0, react.useState)(void 0);
@@ -4000,7 +4105,7 @@ window.__ModuleLoader__.load({
 			}, []);
 			const dataKey = data === void 0 ? "" : `${data.from}|${data.to}|${data.tokens}|${data.calls}|${data.cost}`;
 			(0, react.useEffect)(() => {
-				if (data === void 0) return;
+				if (data === void 0 || hidden) return;
 				const voucher = data;
 				let cancelled = false;
 				loadVoucherArt().then((art) => {
@@ -4018,7 +4123,7 @@ window.__ModuleLoader__.load({
 				return () => {
 					cancelled = true;
 				};
-			}, [dataKey]);
+			}, [dataKey, hidden]);
 			const onSave = () => {
 				const canvas = canvasRef.current;
 				if (canvas === null || data === void 0 || saving) return;
@@ -4074,11 +4179,16 @@ window.__ModuleLoader__.load({
 				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 					className: usage_module_css_default.cardTitle,
 					children: t("usage.bank.title")
-				}), error !== void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+				}), error !== void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 					className: usage_module_css_default.errorLine,
 					title: error,
+					"aria-describedby": dayDetailId,
 					children: t("usage.day.error", { error: describeError(error) })
-				}) : loading === true ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					id: dayDetailId,
+					className: usage_module_css_default.srOnly,
+					children: error
+				})] }) : loading === true ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 					className: usage_module_css_default.muted,
 					children: t("usage.day.loading")
 				}) : data === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
@@ -4207,21 +4317,21 @@ window.__ModuleLoader__.load({
 						children: [
 							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 								className: usage_module_css_default.windowLabel,
-								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: planWindowLabel(window) }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: window.percent !== void 0 ? `${window.percent >= 10 ? Math.round(window.percent) : window.percent.toFixed(1)}%` : "" })]
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: planWindowLabel(window) }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: window.percent !== void 0 ? formatShare(window.percent) : "" })]
 							}),
 							window.percent !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 								className: usage_module_css_default.bar,
 								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 									className: barClass(window.percent),
 									style: {
-										width: `${Math.min(100, Math.max(0, window.percent))}%`,
+										width: `${planShare(window.percent)}%`,
 										display: "block"
 									}
 								})
 							}),
 							window.resetsAt !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 								className: usage_module_css_default.resetLine,
-								children: t("usage.plan.reset", { date: new Date(window.resetsAt).toLocaleString() })
+								children: t("usage.plan.reset", { date: formatStamp(window.resetsAt) })
 							})
 						]
 					}, `${window.key}#${windowAt}`))
@@ -4262,17 +4372,24 @@ window.__ModuleLoader__.load({
 			const storedInterval = typeof value.pollIntervalSec === "number" ? value.pollIntervalSec : 60;
 			const write = (field, next) => {
 				setFailure(void 0);
+				const failed = (message) => {
+					if (field === "pollIntervalSec") {
+						const attempted = String(next);
+						setDraft((current) => current === attempted ? void 0 : current);
+					}
+					setFailure(message);
+				};
 				let answer;
 				try {
 					answer = settings.set(field, next);
 				} catch (error) {
-					setFailure(error instanceof Error ? error.message : String(error));
+					failed(error instanceof Error ? error.message : String(error));
 					return;
 				}
 				Promise.resolve(answer).then((accepted) => {
-					if (!accepted) setFailure("");
+					if (!accepted) failed("");
 				}, (error) => {
-					setFailure(error instanceof Error ? error.message : String(error));
+					failed(error instanceof Error ? error.message : String(error));
 				});
 			};
 			const commitInterval = () => {

@@ -24,8 +24,8 @@ cd packages/dsh-usage
 ../../node_modules/.bin/tsdown                              # bundles, exit 0
 cd ../..
 node harness/build-test-bundle.cjs                          # derives harness/client.test.cjs
-node --experimental-strip-types harness/host-test.mjs       # 226 checks
-node harness/render-test.mjs                                # 187 checks (jsdom)
+node --experimental-strip-types harness/host-test.mjs       # 241 checks
+node harness/render-test.mjs                                # 217 checks (jsdom)
 bash patches/install-patches.sh                             # deploy + verify markers
 ```
 

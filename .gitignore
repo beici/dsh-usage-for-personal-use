@@ -22,3 +22,5 @@ Thumbs.db
 
 # Local scratch
 *.log
+.render-out.txt
+.render-err.txt

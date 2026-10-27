@@ -125,9 +125,18 @@ const RETRY_BACKOFF_BASE_MS = SECTION_POLL_MS
  */
 const RETRY_BACKOFF_MAX_MS = 120_000
 
-function formatTime(ms: number): string {
+/**
+ * `YYYY-MM-DD HH:mm` from the runtime's local clock. `toLocale*` follows the
+ * runtime locale, so a zh panel could print "2:45:45 AM" or "10/20/2026"; the
+ * ISO order reads the same in every locale and sorts as a date. `stamp` is a
+ * millisecond count for the snapshot times and an ISO string for plan resets.
+ */
+function formatStamp(stamp: number | string): string {
   try {
-    return new Date(ms).toLocaleTimeString()
+    const date = new Date(stamp)
+    if (Number.isNaN(date.getTime())) return ''
+    const pad = (value: number): string => String(value).padStart(2, '0')
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
   } catch {
     return ''
   }
@@ -136,6 +145,25 @@ function formatTime(ms: number): string {
 /** Formatted CNY spend estimate (the only priced currency today). */
 function formatCost(cost: number): string {
   return '¥' + cost.toFixed(2)
+}
+
+/**
+ * The share a plan bar can actually show. A percentage printed above 100 would
+ * claim more than the track can hold, so the number and the width both read
+ * through here instead of one clamping and the other not.
+ */
+function planShare(percent: number): number {
+  return Math.min(100, Math.max(0, percent))
+}
+
+/**
+ * One format for the printed share: a decimal only below 10, integers at and
+ * above. The width reads the same clamped number, so a share above 100 prints
+ * "100%" instead of a percentage the track cannot show.
+ */
+function formatShare(percent: number): string {
+  const share = planShare(percent)
+  return `${share < 10 ? share.toFixed(1) : String(Math.round(share))}%`
 }
 
 function toneClass(percent: number): string {
@@ -1128,6 +1156,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
   // One hidden detail node per error surface: a title is mouse-only, and the raw
   // wire text must stay reachable without being printed in the sentence.
   const staleDetailId = useId()
+  const rangeDetailId = useId()
   const providerDetailId = useId()
   const saveDetailId = useId()
   const drawDetailId = useId()
@@ -1559,7 +1588,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
             : t('usage.noData')}
         </span>
         <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span className={styles.muted}>{t('usage.updated', { time: formatTime(snapshot.updatedAt) })}</span>
+          <span className={styles.muted}>{t('usage.updated', { time: formatStamp(snapshot.updatedAt) })}</span>
           <button type="button" className={styles.refreshBtn} onClick={onRefresh} disabled={refreshing}>
             {refreshing ? t('usage.refreshing') : t('usage.refresh')}
           </button>
@@ -1579,7 +1608,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
             title={ui.error ?? ''}
             aria-describedby={staleDetailId}
           >
-            {t('usage.stale', { error: describeError(ui.error ?? ''), time: formatTime(snapshot.updatedAt) })}
+            {t('usage.stale', { error: describeError(ui.error ?? ''), time: formatStamp(snapshot.updatedAt) })}
           </span>
           <span id={staleDetailId} className={styles.srOnly}>{ui.error ?? ''}</span>
         </>
@@ -1662,13 +1691,33 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
             <span className={styles.cardTitle}>{t('usage.range.detail', { label: t(RANGE_LABEL_KEYS[rangeKey]) })}</span>
             {/* An untouched custom range has no span to state yet. */}
             {(rangeKey !== 'custom' || customPicked) && (
-              <span className={styles.spanLine}>{t('usage.range.span', { from: activeWindow.from, to: activeWindow.to })}</span>
+              <span className={styles.spanLine}>
+                {/* A one-day window would otherwise print its date twice
+                    ("2026-10-19 ~ 2026-10-19"). */}
+                {activeWindow.from === activeWindow.to
+                  ? activeWindow.from
+                  : t('usage.range.span', { from: activeWindow.from, to: activeWindow.to })}
+              </span>
             )}
           </div>
           {deepseekVisible && (
             <PeakBadge peak={deepseekPeriod.peak} boundaryMs={deepseekPeriod.boundaryMs} variant="full" />
           )}
-          {activeError !== undefined && <span className={styles.errorLine} role="status" title={activeError}>{t('usage.range.error', { error: describeError(activeError) })}</span>}
+          {activeError !== undefined && (
+            <>
+              <span
+                className={styles.errorLine}
+                role="status"
+                title={activeError}
+                aria-describedby={rangeDetailId}
+              >
+                {t('usage.range.error', { error: describeError(activeError) })}
+              </span>
+              {/* A title is mouse-only, so the raw text rides along where a
+                  screen reader can reach it without being printed twice. */}
+              <span id={rangeDetailId} className={styles.srOnly}>{activeError}</span>
+            </>
+          )}
           {rangeKey === 'custom' && !customPicked
             ? <span className={styles.muted} data-dsh-part="custom-prompt">{t('usage.range.customPrompt')}</span>
             : slicePending(activeSlice, rangeKey)
@@ -1789,6 +1838,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
           // voucher falls back to that day's fold-time estimate.
           observedSpend={bankSelection === undefined ? snapshot.usage.observedSpend : undefined}
           loading={bankSelection !== undefined && bankDayLoad?.status === 'loading'}
+          hidden={tab !== 'bank'}
           {...(bankDayLoad?.status === 'error' ? { error: bankDayLoad.error ?? '' } : {})}
         />
       </div>
@@ -1806,13 +1856,14 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
  * estimate, which only the priced family feeds; the artwork draw failure
  * degrades to an error line and never takes the section down.
  */
-function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: ObservedSpendView; loading?: boolean; error?: string }): ReactNode {
-  const { window: ledger, observedSpend, loading, error } = props
+function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: ObservedSpendView; loading?: boolean; error?: string; hidden?: boolean }): ReactNode {
+  const { window: ledger, observedSpend, loading, error, hidden = false } = props
   const data = voucherData(ledger)
   // The raw failure text is a diagnostic (a canvas error, a URL API error) that
   // belongs in the title and in a described-by sibling, not in the sentence.
   const drawDetailId = useId()
   const saveDetailId = useId()
+  const dayDetailId = useId()
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [drawError, setDrawError] = useState<string | undefined>(undefined)
   // A save can fail on its own (a canvas with no encoder, a blocked URL API),
@@ -1836,7 +1887,10 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
   const dataKey = data === undefined ? '' : `${data.from}|${data.to}|${data.tokens}|${data.calls}|${data.cost}`
 
   useEffect(() => {
-    if (data === undefined) return
+    // A hidden panel has no layout, so a canvas painted into it is painted
+    // blind; the effect runs again when the tab is revealed, which is the only
+    // moment the artwork is actually seen.
+    if (data === undefined || hidden) return
     const voucher = data
     let cancelled = false
     loadVoucherArt().then((art) => {
@@ -1859,8 +1913,9 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
     return () => {
       cancelled = true
     }
-  // dataKey covers every field the draw and the buttons read.
-  }, [dataKey])
+  // dataKey covers every field the draw and the buttons read; `hidden` decides
+  // whether the draw can be seen at all.
+  }, [dataKey, hidden])
 
   const onSave = (): void => {
     const canvas = canvasRef.current
@@ -1928,8 +1983,12 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
       <span className={styles.cardTitle}>{t('usage.bank.title')}</span>
       {error !== undefined
         // The sentence is translated; the raw text (route and status code) stays
-        // in the title, where a diagnostic belongs.
-        ? <span className={styles.errorLine} title={error}>{t('usage.day.error', { error: describeError(error) })}</span>
+        // in the title, where a diagnostic belongs, and in a described-by
+        // sibling, where a keyboard or screen-reader user can reach it.
+        ? <>
+          <span className={styles.errorLine} title={error} aria-describedby={dayDetailId}>{t('usage.day.error', { error: describeError(error) })}</span>
+          <span id={dayDetailId} className={styles.srOnly}>{error}</span>
+        </>
         : loading === true
           ? <span className={styles.muted}>{t('usage.day.loading')}</span>
           : data === undefined
@@ -2004,15 +2063,15 @@ function PlanCard(props: { provider: ProviderSnapshotView; current?: string }): 
             <div key={`${window.key}#${windowAt}`} className={styles.windowRow} data-dsh-part="plan-window">
               <span className={styles.windowLabel}>
                 <span>{planWindowLabel(window)}</span>
-                <span>{window.percent !== undefined ? `${window.percent >= 10 ? Math.round(window.percent) : window.percent.toFixed(1)}%` : ''}</span>
+                <span>{window.percent !== undefined ? formatShare(window.percent) : ''}</span>
               </span>
               {window.percent !== undefined && (
                 <span className={styles.bar}>
-                  <span className={barClass(window.percent)} style={{ width: `${Math.min(100, Math.max(0, window.percent))}%`, display: 'block' }} />
+                  <span className={barClass(window.percent)} style={{ width: `${planShare(window.percent)}%`, display: 'block' }} />
                 </span>
               )}
               {window.resetsAt !== undefined && (
-                <span className={styles.resetLine}>{t('usage.plan.reset', { date: new Date(window.resetsAt).toLocaleString() })}</span>
+                <span className={styles.resetLine}>{t('usage.plan.reset', { date: formatStamp(window.resetsAt) })}</span>
               )}
             </div>
           ))}
@@ -2066,19 +2125,30 @@ function SettingsRow(props: {
 
   const write = (field: 'enabled' | 'pollIntervalSec', next: boolean | number): void => {
     setFailure(undefined)
+    // A rejected interval write must not leave the rejected number in the
+    // field: the input would read 120 while the Host still polls every 60 s.
+    // Only the draft that asked for this write is dropped — a newer edit typed
+    // while the answer was in flight stays.
+    const failed = (message: string): void => {
+      if (field === 'pollIntervalSec') {
+        const attempted = String(next)
+        setDraft((current) => (current === attempted ? undefined : current))
+      }
+      setFailure(message)
+    }
     let answer: Promise<boolean>
     try {
       answer = settings.set(field, next)
     } catch (error) {
-      setFailure(error instanceof Error ? error.message : String(error))
+      failed(error instanceof Error ? error.message : String(error))
       return
     }
     // false is the contract's refusal/skip answer (the Host rejected the value,
     // the entry is not writable, or the write was dropped); a rejecting
     // transport reports through the same failed-save surface.
     Promise.resolve(answer).then(
-      (accepted) => { if (!accepted) setFailure('') },
-      (error: unknown) => { setFailure(error instanceof Error ? error.message : String(error)) },
+      (accepted) => { if (!accepted) failed('') },
+      (error: unknown) => { failed(error instanceof Error ? error.message : String(error)) },
     )
   }
 

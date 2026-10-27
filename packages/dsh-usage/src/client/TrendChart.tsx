@@ -302,10 +302,12 @@ export function TrendChart(props: {
 
   return (
     <div className={styles.trendWrap} data-dsh-part="trend-chart">
-      {/* The plot is a group, not one image: each bar carries its own label and
-          takes focus, so the per-day numbers are reachable without a mouse. The
-          window summary stays on the group, and the legend stays a sibling so
-          each series keeps its name. */}
+      {/* The plot is a group, not one image: the group carries the window
+          summary and each bar keeps its own label for a screen reader's browse
+          mode. The bars are NOT tab stops: 30 focusable bars cost 30 presses of
+          Tab before a keyboard user reached the next control, and the group's
+          summary already states the window. The legend stays a sibling so each
+          series keeps its name. */}
       <div
         className={styles.trendPlot}
         role="group"
@@ -351,7 +353,7 @@ export function TrendChart(props: {
                       data-recorded={bucket.recorded ? 'true' : 'false'}
                       data-failed={bucket.failed ? 'true' : 'false'}
                       role="img"
-                      tabIndex={0}
+                      tabIndex={-1}
                       aria-label={bucket.recorded
                         ? `${bucketLabel}: ${formatTokens(totalOf(bucket.totals))}, ${t('usage.calls', { n: bucket.totals.calls })}`
                         : `${bucketLabel}: ${bucket.failed ? t('usage.range.loadFailed') : t('usage.range.noRecord')}`}
@@ -375,6 +377,9 @@ export function TrendChart(props: {
             <div
               className={styles.trendTooltip}
               data-dsh-part="trend-tooltip"
+              // The tooltip repeats the hovered bar's label; exposing both
+              // would read every number twice to a screen reader.
+              aria-hidden="true"
               style={tooltipStyle(hovered ?? 0, buckets.length, totalOf(hoveredBucket.totals), axisMax)}
             >
               <span className={styles.trendTooltipTitle}>

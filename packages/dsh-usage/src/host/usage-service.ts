@@ -183,6 +183,19 @@ function foreignDeviceOf(error: string): string | undefined {
   return claimed === localDeviceId() ? undefined : claimed
 }
 
+/**
+ * `JSON.parse` for a document that came from disk.
+ *
+ * A UTF-8 BOM is what any Windows editor adds on re-save, and `JSON.parse`
+ * rejects it as a syntax error. Only the import path stripped it, so a ledger
+ * re-saved by hand (or a peer file copied through an editor) read as corrupt:
+ * the local one was quarantined and the panel showed an empty history. Every
+ * document read from disk goes through here instead.
+ */
+function parseJsonText(text: string): unknown {
+  return JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text)
+}
+
 /** Probe timeout per HTTP call. */
 const PROBE_TIMEOUT_MS = 10_000
 
@@ -678,10 +691,7 @@ export class UsageService {
     }
     let parsed: unknown
     try {
-      // A UTF-8 BOM is what any Windows editor adds on re-save; `JSON.parse`
-      // rejects it as a syntax error and the user is told a valid export is
-      // "not JSON". Stripping it is the whole fix.
-      parsed = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text)
+      parsed = parseJsonText(text)
     } catch {
       throw new UsageImportError('not JSON')
     }
@@ -705,11 +715,17 @@ export class UsageService {
     // are a read-modify-write on the same target, and the second used to replace
     // the first's merge with its own older view (a lost update, not corruption —
     // the write itself is atomic).
-    await this.withLedgerLock(async () => {
+    let imported = false
+    await this.withLedgerLock(async (locked) => {
+      // A merge we cannot make exclusive would replace whatever the other writer
+      // put in the file with our older view — a lost update, not corruption, and
+      // the one thing the lock exists to prevent. The import is user-initiated,
+      // so standing down and asking for a retry costs nothing.
+      if (!locked) return
       const existing = await readFile(target, 'utf8').then(
         (text) => {
           try {
-            return parsePeerLedger(JSON.parse(text) as unknown)
+            return parsePeerLedger(parseJsonText(text))
           } catch {
             return undefined
           }
@@ -748,7 +764,9 @@ export class UsageService {
         ...(peerWindow === undefined ? {} : { retentionDays: peerWindow }),
         ledger: merged,
       })
+      imported = true
     })
+    if (!imported) throw new UsageImportError('another process is writing the ledger; nothing was imported — try again')
     await this.refreshPeers()
     return { deviceId: claimedId }
   }
@@ -817,11 +835,12 @@ export class UsageService {
           totals: range.totals,
           providers: range.providers,
         },
-        // Every retained day *this machine* recorded, not just the trend window:
-        // the day picker's option list reaches back to the oldest day retention
-        // keeps. Peer-only days are left out on purpose — picking one would show
-        // an empty tile, since the picker opens this machine's ledger.
-        availableDays: ledgerDayKeys(this.ledger),
+        // Every day the totals count, peers included: `day()` reads the merged
+        // ledger, so a day that only a peer recorded opens with its numbers. The
+        // list used to come from this machine's file alone, which left days out
+        // of the picker while `all` summed them — a day the panel counted and
+        // could not open.
+        availableDays: allKeys,
         all: {
           from: allKeys[0] ?? todayKey,
           to: allKeys[allKeys.length - 1] ?? todayKey,
@@ -1122,7 +1141,7 @@ export class UsageService {
   private ledgerFromJson(raw: string): { kind: 'ok'; doc: UsageLedgerDocument; repairedAt?: number; machine?: string; retentionDays?: number } | { kind: 'corrupt'; error: string } {
     let parsed: unknown
     try {
-      parsed = JSON.parse(raw)
+      parsed = parseJsonText(raw)
     } catch (error) {
       return { kind: 'corrupt', error: error instanceof Error ? error.message : String(error) }
     }
@@ -1297,7 +1316,11 @@ export class UsageService {
     // left behind: a bucket that matches either was never inflated (or has
     // already been corrected), so real calls are never taken away.
     const prior = await this.readRepairRecord()
-    const repaired = await this.repairDuplicatedReplay(replay, prior)
+    // When the file was last written decides whether a bucket the marker knows
+    // about can still hold the copies: a file older than the repair is one a
+    // backup put back, a newer one has taken calls since.
+    const fileWrittenAt = await stat(this.ledgerPath).then((info) => info.mtimeMs).catch(() => undefined)
+    const repaired = await this.repairDuplicatedReplay(replay, prior.floors, prior.appliedAt, fileWrittenAt)
     // Prune after the replay (it re-adds days retention already dropped) and
     // before the write below, so the file gets the pruned document too.
     this.lastPrune = undefined
@@ -1342,7 +1365,7 @@ export class UsageService {
           // let a later repair on another day take real calls out of a bucket
           // this run no longer knows about.
           after: {
-            ...Object.fromEntries([...prior].map(([key, totals]) => [key, totals])),
+            ...Object.fromEntries([...prior.floors].map(([key, totals]) => [key, totals])),
             ...Object.fromEntries([...written.corrected]),
           },
         }).catch(() => undefined)
@@ -1556,7 +1579,7 @@ export class UsageService {
    *   exactly what a plain "big enough to subtract" guard allows once the day
    *   holds calls the replay cannot see.
    */
-  private async repairDuplicatedReplay(replay: ReplayPass, prior: Map<string, UsageTokenTotals>): Promise<RepairResult> {
+  private async repairDuplicatedReplay(replay: ReplayPass, prior: Map<string, UsageTokenTotals>, repairedAt: number | undefined, fileWrittenAt: number | undefined): Promise<RepairResult> {
     const repaired = new Map<string, RepairBucket>()
     let buckets = 0
     let removedTokens = 0
@@ -1573,10 +1596,22 @@ export class UsageService {
       }
       const bucket = target.totals
       const clean = findLedgerBucket(replay.doc.days[duplicate.dayKey], duplicate.provider, duplicate.model)?.totals ?? emptyTotals()
-      // Where the bucket stood before this repair: the total an earlier start
-      // already left behind, or — on the first start — what the deduped replay
-      // bills. Either way, a copy on top of it is exactly `base + copies`.
-      const base = prior.get(key) ?? clean
+      // A marker entry means this bucket was already corrected on an earlier
+      // start, so the file is the corrected one — unless it has not been written
+      // since, which is a ledger a backup put back: that one still holds the
+      // copies and is repaired again. A file written after the repair is the
+      // opposite case: whatever sits above the floor is growth the replay cannot
+      // see (a call made since, or an older build inflating again), and the two
+      // look identical, so nothing is taken away. Counting it as "skipped" is
+      // still worth a word — that is also what a restored ledger looks like when
+      // its mtime survived the copy.
+      const floor = prior.get(key)
+      if (floor !== undefined && repairedAt !== undefined && fileWrittenAt !== undefined && fileWrittenAt >= repairedAt) {
+        if (bucket.calls - floor.calls === duplicate.totals.calls && totalTokens(bucket) - totalTokens(floor) === totalTokens(duplicate.totals)) skipped += 1
+        continue
+      }
+      // Where the bucket stood before this repair: what the deduped replay bills.
+      const base = clean
       // How far the bucket has moved past that floor. A copy sits exactly on the
       // floor, so growth equal to the copies is the only state this repair can
       // undo: growth below it means no full copy is there, and growth above it
@@ -1627,25 +1662,27 @@ export class UsageService {
    * existed (or one damaged by hand) yields an empty map, and the repair then
    * falls back to the replay's own total.
    */
-  private async readRepairRecord(): Promise<Map<string, UsageTokenTotals>> {
-    const record = new Map<string, UsageTokenTotals>()
+  private async readRepairRecord(): Promise<{ floors: Map<string, UsageTokenTotals>; appliedAt: number | undefined }> {
+    const floors = new Map<string, UsageTokenTotals>()
     let raw: string
     try {
       raw = await readFile(join(this.persistDir, DEDUPE_MARKER_FILE), 'utf8')
     } catch {
-      return record
+      return { floors, appliedAt: undefined }
     }
     try {
-      const parsed = JSON.parse(raw) as { after?: unknown }
-      if (typeof parsed.after !== 'object' || parsed.after === null) return record
+      const parsed = JSON.parse(raw) as { after?: unknown; appliedAt?: unknown }
+      const appliedAt = typeof parsed.appliedAt === 'number' ? parsed.appliedAt : undefined
+      if (typeof parsed.after !== 'object' || parsed.after === null) return { floors, appliedAt }
       for (const [key, value] of Object.entries(parsed.after as Record<string, unknown>)) {
         const totals = readTotals(value)
-        if (totals !== undefined) record.set(key, totals)
+        if (totals !== undefined) floors.set(key, totals)
       }
+      return { floors, appliedAt }
     } catch {
       // A damaged marker only means the repair re-judges from the replay.
+      return { floors, appliedAt: undefined }
     }
-    return record
   }
 
   /**
@@ -1694,7 +1731,7 @@ export class UsageService {
       const raw = await readFile(path, 'utf8').catch(() => undefined)
       if (raw === undefined) continue
       try {
-        const doc = deserializeLedger(JSON.parse(raw))
+        const doc = deserializeLedger(parseJsonText(raw))
         const days = Object.keys(doc.days).length
         if (days === 0) continue
         mergeLedgerMax(this.ledger, doc)
@@ -1763,7 +1800,7 @@ export class UsageService {
       if (disk.kind === 'ok') mergeLedgerMax(this.ledger, disk.doc)
       await writeJsonAtomic(
         this.ledgerPath,
-        ledgerFileDocument(this.ledger, { machine: this.machine, retentionDays: this.recordedWindow() }),
+        ledgerFileDocument(this.ledger, { machine: this.machine, retentionDays: this.declaredWindow() }),
       )
     }).then(
       () => true,
@@ -1797,7 +1834,7 @@ export class UsageService {
   /** A ledger file's days, or undefined when it is absent or unparseable. */
   private async readLedgerDocument(path: string): Promise<UsageLedgerDocument | undefined> {
     try {
-      return deserializeLedger(JSON.parse(await readFile(path, 'utf8')))
+      return deserializeLedger(parseJsonText(await readFile(path, 'utf8')))
     } catch {
       return undefined
     }
@@ -1817,10 +1854,14 @@ export class UsageService {
     // The file this boot just wrote is never a candidate: its mtime ties with a
     // decoy written in the same millisecond, and deleting it would take the only
     // forensic copy of the user's ledger while `ledgerError` still names it.
+    // `keep` arrives as a full path while the candidates are bare names, so the
+    // exclusion compares basenames — comparing the path never matched, and the
+    // named copy was trimmed like any other.
+    const keepName = keep === undefined ? undefined : basename(keep)
     const mine = names
       .filter((name) => name.startsWith(prefix) && /\.(unreadable|corrupt)-\d+\.json$/.test(name))
-      .filter((name) => name !== keep)
-    const keepCount = keep === undefined ? 0 : 1
+      .filter((name) => name !== keepName)
+    const keepCount = keepName === undefined ? 0 : 1
     if (mine.length + keepCount <= limit) return
     const dated = await Promise.all(
       mine.map(async (name) => ({
@@ -1832,8 +1873,9 @@ export class UsageService {
       })),
     )
     // Newest first, with the name as the tiebreak: without it two files written in
-    // the same millisecond sort arbitrarily and the survivor changes per boot.
-    dated.sort((a, b) => b.at - a.at || a.name.localeCompare(b.name))
+    // the same millisecond sort arbitrarily and the survivor changes per boot. The
+    // name carries the write instant, so the larger name is the newer copy.
+    dated.sort((a, b) => b.at - a.at || b.name.localeCompare(a.name))
     for (const { name } of dated.slice(Math.max(0, limit - keepCount))) {
       await rm(join(this.persistDir, name), { force: true }).catch(() => undefined)
     }
@@ -1891,7 +1933,7 @@ export class UsageService {
       const filePath = join(this.persistDir, name)
       try {
         const [raw, info] = await Promise.all([readFile(filePath, 'utf8'), stat(filePath)])
-        const parsed = parsePeerLedger(JSON.parse(raw))
+        const parsed = parsePeerLedger(parseJsonText(raw))
         if (parsed === undefined) {
           failures.push(`${name}: not a usage ledger`)
           continue
@@ -1919,6 +1961,11 @@ export class UsageService {
           // this machine never did, on a day it did run others, holds a real
           // bucket there. Judging by the day alone dropped it while the note said
           // the day was "already recorded".
+          // ... and what it contributes is the difference, not the whole bucket:
+          // dropping a bucket this machine has any record of made the peer's
+          // calls disappear the moment this machine recorded its first call of
+          // the same day/provider/model (a total that fell by 4 with no user
+          // action). A true copy of this machine's own file subtracts to nothing.
           const unrecorded: UsageLedgerDocument['days'] = {}
           let taken = 0
           for (const [day, buckets] of Object.entries(parsed.doc.days)) {
@@ -1926,8 +1973,10 @@ export class UsageService {
             const kept: UsageLedgerDocument['days'][string] = {}
             for (const [provider, models] of Object.entries(buckets)) {
               for (const [model, totals] of Object.entries(models)) {
-                if (findLedgerBucket(local, provider, model) !== undefined) continue
-                kept[provider] = { ...(kept[provider] ?? {}), [model]: totals }
+                const mine = findLedgerBucket(local, provider, model)?.totals
+                const extra = mine === undefined ? totals : subtractTotals(totals, mine)
+                if (extra.calls === 0 && totalTokens(extra) === 0) continue
+                kept[provider] = { ...(kept[provider] ?? {}), [model]: extra }
                 taken += 1
               }
             }
@@ -1938,7 +1987,7 @@ export class UsageService {
             `unverified:${deviceId}`,
             taken === 0
               ? `${name}: unverified (no machine id in the document), and every bucket in it is already recorded here, so it was not counted`
-              : `${name}: unverified (no machine id in the document), so only the ${taken} bucket(s) this machine has no record of were counted`,
+              : `${name}: unverified (no machine id in the document), so only what the ${taken} bucket(s) hold beyond this machine's own record were counted`,
           )
           continue
         }
@@ -2014,7 +2063,7 @@ export class UsageService {
    * interleaved write is recoverable on the next replay, while refusing to write
    * at all loses every call made after it.
    */
-  private async withLedgerLock(work: () => Promise<void>): Promise<void> {
+  private async withLedgerLock(work: (held: boolean) => Promise<void>): Promise<boolean> {
     const lockPath = `${this.ledgerPath}.lock`
     // The token says which process holds the lock, so the release below can tell
     // its own lock from one another process broke and took over.
@@ -2060,18 +2109,23 @@ export class UsageService {
     // above: clearing it from a write that never waited would hide the very race
     // the note is about.
     this.lockHeld = handle !== undefined
+    const held = handle !== undefined
     try {
-      await work()
+      await work(held)
     } finally {
       await handle?.close().catch(() => {})
       if (handle !== undefined) {
         // Only the lock this run created is removed: if it went stale and another
         // process broke and re-took it, deleting the file would hand a third
         // writer the same section.
-        const held = await readFile(lockPath, 'utf8').catch(() => undefined)
-        if (held === token) await rm(lockPath, { force: true }).catch(() => {})
+        const current = await readFile(lockPath, 'utf8').catch(() => undefined)
+        if (current === token) await rm(lockPath, { force: true }).catch(() => {})
       }
     }
+    // Reported so the two read-modify-write callers (import, repair) can stand
+    // down instead of writing a view they could not make exclusive: an append to
+    // our own document is recoverable, replacing another writer's merge is not.
+    return held
   }
 
   private async writeLedgerLocked(): Promise<void> {
@@ -2235,8 +2289,17 @@ export class UsageService {
     return ledgerFileDocument(this.ledger, {
       machine: this.machine,
       ...(this.seenRepairedAt > 0 ? { repairedAt: this.seenRepairedAt } : {}),
-      retentionDays: this.recordedWindow(),
+      // A refused prune must not stamp the window it refused to apply: the days
+      // it kept are outside that window, and the number is what an import or a
+      // peer scan carries as "how much this file holds". Keeping the window the
+      // file already recorded leaves the two consistent.
+      retentionDays: this.declaredWindow(),
     })
+  }
+
+  /** The retention window a written document may honestly claim. */
+  private declaredWindow(): number {
+    return this.windowRefused ? (this.fileRetention ?? this.recordedWindow()) : this.recordedWindow()
   }
 
   /** The retention bookkeeping a write may move before it fails. */
@@ -2324,9 +2387,15 @@ export class UsageService {
       // so the next flush and the next boot see the same evidence and refuse the
       // same prune instead of accepting it as ordinary retention.
       this.windowRefused = true
+      // A shrink is the user's own doing, so the note names the window they set
+      // instead of blaming the clock: a 365→30 change used to read "the clock
+      // would drop 3 of 3 recorded days", which is wrong on every deliberate
+      // change and hides the one action that helps (raising the window again).
       this.note(
         'retention-jump',
-        `retention skipped: the clock would drop ${prunable} of ${days} recorded days — delete the ledger file (and any .migrated copy beside it) to accept it`,
+        shrank
+          ? `retention skipped: the ${this.options.retainDays}-day window would drop ${prunable} of ${days} recorded days — raise the window to keep them, or delete the ledger file (and any .migrated copy beside it) to accept it`
+          : `retention skipped: the clock would drop ${prunable} of ${days} recorded days — if the clock is right, delete the ledger file (and any .migrated copy beside it) to accept it`,
       )
       return 0
     }
@@ -2399,9 +2468,19 @@ export class UsageService {
       // and writes it straight back, and the correction is only re-applied on the
       // next start; the other way round, a repair that wins the race drops the
       // calls that flush had just folded in.
-      await this.withLedgerLock(async () => {
+      const held = await this.withLedgerLock(async (locked) => {
+        if (!locked) return
         result = await this.persistRepairLocked(repaired)
       })
+      // The repair replaces the whole document, so it may not run on a view it
+      // could not make exclusive: a flush that lands between our read and our
+      // write would be overwritten, and its calls would only come back on the
+      // next replay. Standing down leaves the file untouched; the correction is
+      // re-attempted on the next start.
+      if (!held) {
+        this.note('repair-lock', 'the ledger lock stayed taken; the duplicate repair was not written and will be retried')
+        return undefined
+      }
       return result
     } catch (error) {
       this.ledgerError = `ledger write failed (${error instanceof Error ? error.message : String(error)})`
@@ -2453,7 +2532,7 @@ export class UsageService {
       // back must not lower a stamp another process already recorded.
       this.seenRepairedAt = Math.max(this.seenRepairedAt, Date.now())
       try {
-        await writeJsonAtomic(this.ledgerPath, ledgerFileDocument(target, { machine: this.machine, repairedAt: this.seenRepairedAt, retentionDays: this.recordedWindow() }))
+        await writeJsonAtomic(this.ledgerPath, ledgerFileDocument(target, { machine: this.machine, repairedAt: this.seenRepairedAt, retentionDays: this.declaredWindow() }))
       } catch (error) {
         // The correction is in memory but not on disk, and nothing else would
         // retry it: the next flush would see a file without a stamp and max-merge

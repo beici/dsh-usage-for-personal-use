@@ -45,7 +45,7 @@ export const zh = {
   // The stat cell already prints the count as its value; the label names the
   // unit only, so the same number is not stated twice.
   'usage.callsLabel': '次调用',
-  'usage.tokens.total': '总 tokens',
+  'usage.tokens.total': '总 Token',
   'usage.tokens.input': '输入',
   'usage.tokens.output': '输出',
   'usage.tokens.cacheRead': '缓存读',
@@ -88,7 +88,7 @@ export const zh = {
   'usage.oauth': 'OAuth 凭据，不做余额查询',
   'usage.plan.reset': '{date} 重置',
   'usage.plan.noPlan': '未检测到套餐数据',
-  'usage.plan.noneConfigured': '没有已配置的套餐类 provider（如 Kimi、GLM、OpenCode Go、MiniMax、Codex 订阅）',
+  'usage.plan.noneConfigured': '没有已配置的套餐类提供方（如 Kimi、GLM、OpenCode Go、MiniMax、Codex 订阅）',
   'usage.plan.windows.5h': '5 小时',
   'usage.plan.windows.week': '每周',
   'usage.plan.windows.month': '每月',
@@ -126,7 +126,12 @@ export const zh = {
   'usage.device.local': '本机',
   'usage.device.peer': '已导入',
   'usage.device.copyId': '复制标识',
+  // The visible label is only "copy id" and the card lists two ids, so the
+  // accessible name has to carry the id it copies.
+  'usage.device.copyIdNamed': '复制本机标识 {deviceId}',
   'usage.device.copied': '已复制',
+  'usage.device.copying': '复制中…',
+  'usage.device.copyFailed': '复制失败，请手动选择标识',
   'usage.device.none': '只有本机数据',
   'usage.device.error': '部分文件无法读取：{error}',
   'usage.ledger.error': '账本读取异常，下面的数字可能不完整：{error}',
@@ -135,6 +140,7 @@ export const zh = {
   // as a typo between two CJK characters.
   'usage.stale': '上次刷新失败（{error}），下面是 {time} 的数据',
   'usage.device.export': '导出本机用量',
+  'usage.device.exporting': '导出中…',
   // A notice states what happened, so it cannot reuse the button label: the
   // past tense is what tells a finished action from an offered one.
   'usage.device.exported': '已导出本机用量',
@@ -146,8 +152,10 @@ export const zh = {
   'usage.device.importFailed': '导入失败：{error}',
   'usage.device.dropHint': '也可以把导出的 .json 文件直接放进 ~/.dsh/dsh-usage/ 后点「重新扫描」。',
   'usage.device.rescan': '重新扫描',
+  'usage.device.rescanning': '扫描中…',
   'usage.device.rescanned': '已重新扫描',
   'usage.device.rescanFailed': '重新扫描失败：{error}',
+  'usage.device.timeout': '操作超时，请重试',
 }
 
 /** English mirror; every zh key present. */
@@ -258,13 +266,17 @@ export const en: Record<UsageKey, string> = {
   'usage.device.local': 'This device',
   'usage.device.peer': 'Imported',
   'usage.device.copyId': 'Copy id',
+  'usage.device.copyIdNamed': 'Copy this device id {deviceId}',
   'usage.device.copied': 'Copied',
+  'usage.device.copying': 'Copying…',
+  'usage.device.copyFailed': 'Copy failed; select the id manually',
   'usage.device.none': 'This device only',
   'usage.device.error': 'Some files could not be read: {error}',
   'usage.ledger.error': 'The usage ledger could not be read, so the numbers below may be incomplete: {error}',
   'usage.ledger.note': 'Note: {note}',
   'usage.stale': 'Last refresh failed ({error}); the numbers below are from {time}',
   'usage.device.export': 'Export this device',
+  'usage.device.exporting': 'Exporting…',
   'usage.device.exported': 'Exported this device',
   'usage.device.exportFailed': 'Export failed: {error}',
   'usage.device.import': 'Import another device',
@@ -274,8 +286,10 @@ export const en: Record<UsageKey, string> = {
   'usage.device.importFailed': 'Import failed: {error}',
   'usage.device.dropHint': 'You can also drop an exported .json into ~/.dsh/dsh-usage/ and press Rescan.',
   'usage.device.rescan': 'Rescan',
+  'usage.device.rescanning': 'Rescanning…',
   'usage.device.rescanned': 'Rescanned',
   'usage.device.rescanFailed': 'Rescan failed: {error}',
+  'usage.device.timeout': 'The action timed out; try again',
 }
 
 export type UsageKey = keyof typeof zh

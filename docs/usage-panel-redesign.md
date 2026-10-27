@@ -142,20 +142,26 @@ keeps the larger total and would drop the correction.
 Two rules make that correction safe to repeat on every start:
 
 - It is judged, not blind, and the yardstick is *where the bucket stood before*
-  this repair: the total an earlier start already left behind (read back from the
-  marker), or — on the first start — what the deduped replay bills. The bucket has
-  to still carry *exactly* `base + copies`. A lower bucket holds real calls the
-  replay cannot see (they must stay); a bucket that grew by more than the copies is
-  not explained by them; a bucket already at `base` was corrected once. Only an
-  exact match is rewritten, and anything else is left alone — a repair that cannot
-  explain a bucket must not touch it.
+  this repair: what the deduped replay bills. The bucket has to still carry
+  *exactly* `base + copies`. A lower bucket holds real calls the replay cannot see
+  (they must stay); a bucket that grew by more than the copies is not explained by
+  them; a bucket already at `base` was corrected once. Only an exact match is
+  rewritten, and anything else is left alone — a repair that cannot explain a
+  bucket must not touch it.
 - `usage-dedupe-marker.json` is a record, not a gate. Version 2 stores the totals
   the repair left in each bucket (`after`), which is the floor the next start
   compares against; a later pass merges its own floors into the existing map
   instead of replacing it, so an older day keeps its floor. The marker is written
   only after the corrected file landed (a crash in between re-runs an idempotent
-  pass instead of leaving a claim over an inflated ledger). A ledger restored from
-  a backup is therefore corrected again instead of staying inflated forever.
+  pass instead of leaving a claim over an inflated ledger).
+- A bucket the marker knows about is judged again only when the *file* is older
+  than the repair — that is a ledger a backup put back, and it is corrected rather
+  than staying inflated forever. A file written after the repair has taken calls
+  since, and growth of exactly the copies cannot be told apart from the copies
+  landing twice, so nothing is taken away; the panel says the bucket may still be
+  inflated instead of guessing. A bucket sitting exactly on its floor is the
+  corrected state, and says nothing — warning about it on every start was the
+  noise that made a correct ledger look broken.
 
 The correction is applied to the file's own document rather than written over it
 verbatim: reading, replaying ~18 s of transcripts and writing leaves a window in
@@ -257,9 +263,15 @@ Two more write-path rules:
   hand. A corrupt file is renamed to
   `usage-ledger.<device>.json.corrupt-<ts>.json` and reported, so a fresh
   document keeps counting without destroying the bytes someone may still want.
+  A file that starts with a UTF-8 BOM (a Windows editor, or a `>` redirect from
+  PowerShell) is read as the JSON it is: the parse used to fail, the ledger was
+  quarantined as corrupt and the next flush rewrote it without its days. Peer
+  files are read the same way.
   Both quarantine names are capped at the newest three: each is a full copy of a
   ledger that can be megabytes, and a profile that keeps failing would otherwise
-  fill the directory with copies of the same broken file.
+  fill the directory with copies of the same broken file. The copy the error
+  message names is the one kept: the trim compares file names, so an mtime tie
+  the other way cannot delete the file the panel tells the user to salvage.
 - A flush writes the file's growth plus this process's own growth. Two DSH
   processes on one machine (two windows, or the CLI beside the desktop app) share
   one file and each writes the whole document; `mergeLedgerDelta(disk, ledger,
@@ -295,8 +307,12 @@ Two more write-path rules:
   `deviceId` does not match its file name, or whose `machine` is this machine, is
   skipped with a named failure. A peer document written before the `machine` digest
   existed cannot be told apart from a copy of this machine's own export — the shape
-  is identical — so it contributes only the days this machine has never recorded,
-  and the note names the file and how many days it added (`unverified:<id>`).
+  is identical — so it is added bucket by bucket and only beyond what this machine
+  already recorded: a shared day is not added twice, and the note names the file
+  and how many days and calls it added (`unverified:<id>`). An import is a
+  read-modify-write of the peer file and stands down when another writer holds the
+  lock (`another process is writing the ledger; nothing was imported — try again`),
+  because an unexclusive merge would replace that writer's newer view with ours.
   Non-fatal trouble (a skipped retention pass, a transcript set that hit the
   discovery cap, a quarantined file) travels to the panel as `usage.ledgerNote`
   instead of being swallowed.
@@ -487,7 +503,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
 ## Verification
 
 - `node harness/render-test.mjs` — jsdom, real bundle, saved live fixtures,
-  **187/187 checks**: eight tiles with correct labels/values/`aria-pressed`
+  **217/217 checks**: eight tiles with correct labels/values/`aria-pressed`
   (近 3 天 sums 今日 + 10-19; 近 6 个月 / 全部 read the range aggregate, which the
   stub answers only up to yesterday — 49.2 M / 584 calls — so their 135 M / 1251
   tiles prove the panel folded the live today in itself, and no range fetch may
@@ -550,7 +566,14 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   exposed to assistive tech as one group (one label instead of dozens of stray
   `img` nodes), a hidden tab that does not paint its canvas, a plan sub-bar whose
   printed share matches its width, and the copy button describing what it copies.
-- `node --experimental-strip-types harness/host-test.mjs` — 226 checks: range
+  Round 14 adds: the trend bars out of the tab order (the group label carries the
+  chart, so a keyboard user no longer tabs through 30 bars), a device card that
+  says which action is running (`aria-busy`, a per-action label) instead of
+  wedging on a hung promise, a copy-id failure stated in the card, the copy
+  button naming the id it copies, and the last two error surfaces (range card,
+  bank day) exposing their wire text through `aria-describedby` rather than a
+  mouse-only `title`.
+- `node --experimental-strip-types harness/host-test.mjs` — 241 checks: range
   aggregate + per-model series, route guards, device ledger, loopback fence,
   peak clock, the record-carried route of the live fold, transcript dedupe and
   the judged repair, ledger quarantine and unreadable-file protection, the
@@ -581,6 +604,17 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   every day the totals count (peer-only days included), a BOM-prefixed export
   importing, the stale-writer note naming the calls it did not re-adopt, and a
   write that gave up on the lock standing down instead of writing anyway.
+  Round 14 adds: a JSON document read from disk tolerating a BOM (a ledger
+  re-saved by an editor no longer reads as corrupt), the quarantine trim keeping
+  the copy the error message names (`basename`, not a path), the judged repair
+  subtracting only growth it can prove is a duplicate (a marker floor plus the
+  file's own mtime; a corrected bucket's later real calls are left alone), the
+  "may still be inflated" note no longer permanent once a repair lands, an
+  unverified peer contributing `max(0, peer − local)` per bucket instead of
+  dropping whole buckets when this machine records the same day/provider/model,
+  an import standing down when the ledger lock is held elsewhere, a retained
+  window surviving a refused prune, and the day picker offering days only a peer
+  recorded.
 - Live bundle serving was proven against the running host:
   `GET /plugins/events` (loopback-exempt) lists the plugin row's `rev`, and
   `GET /plugins/??@linxin666/dsh-usage/client.js&rev=<rev>` returns the new

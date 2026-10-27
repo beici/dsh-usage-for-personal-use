@@ -50,9 +50,11 @@ mis-imported ledger.
 A file written before this build stamped a machine id carries no proof of which
 machine wrote it, and a copy of *this* machine's own export has exactly the same
 shape. Summing such a file whole counts our own history twice — that is how one
-export put 2,766 calls / 330 M tokens on one day a second time — so it contributes
-only the days this machine has never recorded, and the panel says so by name
-(`unverified:…`, with the number of days it did add). A peer that this build wrote
+export put 2,766 calls / 330 M tokens on one day a second time — so it is added
+bucket by bucket, and only the part beyond what this machine already recorded: a
+day both files hold is not a day to add twice, and a bucket the peer has larger
+than ours contributes the difference. The panel says so by name (`unverified:…`,
+with the number of days and calls it did add). A peer that this build wrote
 carries the `machine` digest and is summed in full.
 
 Two DSH processes on one machine (two windows, or the CLI beside the desktop app)
@@ -186,7 +188,7 @@ peer, delete its `usage-ledger.<id>.json` and press 重新扫描.
 node --experimental-strip-types harness/host-test.mjs
 ```
 
-226 checks, covering device id hygiene, the export envelope shape, import of
+241 checks, covering device id hygiene, the export envelope shape, import of
 valid and invalid payloads, merging rather than replacing a peer file, summing,
 re-import idempotence, the local-ledger invariant, legacy migration (including
 that it persists before renaming the old file away), transcript backfill, the
