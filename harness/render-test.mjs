@@ -2270,6 +2270,12 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
     fillText: () => {},
   }
   window.HTMLCanvasElement.prototype.getContext = () => null
+  // A share sheet nobody closes: `share()` never settles, so the only thing that
+  // could end the busy state is a watchdog that should not be measuring the sheet.
+  const realCanShare = Object.getOwnPropertyDescriptor(window.navigator, 'canShare')
+  const realShare = Object.getOwnPropertyDescriptor(window.navigator, 'share')
+  Object.defineProperty(window.navigator, 'canShare', { configurable: true, value: () => true })
+  Object.defineProperty(window.navigator, 'share', { configurable: true, value: () => new Promise(() => {}) })
   const localRoot = ReactDOMClient.createRoot(host)
   try {
     await act(async () => {
@@ -2333,11 +2339,54 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
       saveButton() === undefined ? 'no button' : text(saveButton()) + ' disabled=' + String(saveButton().disabled))
     check('a failed save states the failure instead of dying silently',
       text(host).includes('票券保存失败'), text(host).slice(-80))
+    // A `toBlob` that never calls back is the watchdog's case. The timer is fired
+    // as soon as it is armed (the test does not wait fifteen seconds); what it says
+    // matters: the sentence used to go through `describeError`, which turned a
+    // local encoder stall into "请求失败" — a request that never happened.
+    const realTimeoutForStall = window.setTimeout
+    window.setTimeout = (callback, delay, ...rest) => realTimeoutForStall(callback, delay >= 15000 ? 0 : delay, ...rest)
+    window.HTMLCanvasElement.prototype.toBlob = () => {}
+    await act(async () => {
+      saveButton()?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+      await new Promise((r) => realTimeoutForStall(r, 150))
+    })
+    check('a stalled encoder is called a draw failure',
+      text(host).includes('票券生成失败') && !text(host).includes('请求失败'),
+      text(host).slice(-90))
+    check('a stalled encoder hands the button back',
+      saveButton() !== undefined && saveButton().disabled === false,
+      saveButton() === undefined ? 'no button' : String(saveButton().disabled))
+    // The two buttons carry their own busy label, and the share watchdog stops
+    // measuring once the sheet is open: a user reading the sheet at 15 s used to be
+    // told the share failed while it was still on screen, and the re-enabled button
+    // let a second share start under them.
+    window.HTMLCanvasElement.prototype.toBlob = (callback) => callback(new window.Blob([new Uint8Array([1])], { type: 'image/png' }))
+    const shareButton = () => [...host.querySelectorAll('[data-dsh-part="bank-card"] button')]
+      .find((button) => text(button).includes('分享'))
+    check('a supported share sheet offers the share button', shareButton() !== undefined, text(host).slice(-60))
+    await act(async () => {
+      shareButton()?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+      await new Promise((r) => realTimeoutForStall(r, 150))
+    })
+    check('a share says it is sharing while the save button keeps its own label',
+      text(shareButton() ?? host).includes('正在分享') && text(saveButton() ?? host).includes('保存图片'),
+      shareButton() === undefined ? 'no share button' : text(shareButton()) + ' / ' + text(saveButton() ?? host))
+    await act(async () => {
+      await new Promise((r) => realTimeoutForStall(r, 200))
+    })
+    check('an open share sheet is not called a failure',
+      !text(host).includes('票券分享失败') && text(shareButton() ?? host).includes('正在分享'),
+      text(host).slice(-90))
+    window.setTimeout = realTimeoutForStall
   } finally {
     window.HTMLCanvasElement.prototype.getContext = realGetContext
     window.HTMLCanvasElement.prototype.toBlob = realToBlob
     globalThis.Image = realImage
     window.Image = realImage
+    if (realCanShare === undefined) delete window.navigator.canShare
+    else Object.defineProperty(window.navigator, 'canShare', realCanShare)
+    if (realShare === undefined) delete window.navigator.share
+    else Object.defineProperty(window.navigator, 'share', realShare)
     await act(async () => { localRoot.unmount() })
     host.remove()
   }
@@ -2368,6 +2417,34 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
   await act(async () => { localRoot.render(React.createElement(TrendChart, { rows: [], allFailed: true })) })
   check('an empty failed window still states the failure',
     host.querySelector('[data-dsh-part="trend-failed"]') !== null, text(host))
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- a day without a model split keeps its tokens -----------------------
+// Model mode stacked only the models it knew. A day that recorded tokens without a
+// per-model split therefore drew as an empty column and its tokens disappeared from
+// the chart — a bar shorter than its own total, with nothing saying what was left
+// out. The remainder is its own segment now, and the legend names it.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const localRoot = ReactDOMClient.createRoot(host)
+  const dayTotals = { inputTokens: 100, outputTokens: 100, cacheReadTokens: 100, cacheWriteTokens: 0, reasoningTokens: 0, calls: 2, cost: 0 }
+  const rows = [
+    { date: '2026-10-18', totals: { ...dayTotals }, models: { 'deepseek-chat': { ...dayTotals } } },
+    { date: '2026-10-19', totals: { ...dayTotals } },
+    { date: '2026-10-20', totals: { ...dayTotals }, models: { 'deepseek-chat': { ...dayTotals } } },
+  ]
+  await act(async () => {
+    localRoot.render(React.createElement(TrendChart, { rows, colors: new Map([['deepseek-chat', '#123456']]) }))
+  })
+  const bars = [...host.querySelectorAll('[data-dsh-part="trend-bar"]')]
+  const segments = bars[1] === undefined ? [] : [...bars[1].children]
+  check('a day without a model split still draws its tokens',
+    bars.length === 3 && segments.length === 1 && (segments[0].getAttribute('style') ?? '').includes('height'),
+    'bars=' + bars.length + ' segments=' + segments.length + ' ' + (segments[0]?.getAttribute('style') ?? ''))
+  check('the legend names the unclassified remainder', text(host).includes('未分类'), text(host).slice(-60))
   await act(async () => { localRoot.unmount() })
   host.remove()
 }

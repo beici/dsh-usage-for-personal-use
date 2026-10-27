@@ -101,6 +101,8 @@ export declare const zh: {
     'usage.bank.windowAll': string;
     'usage.bank.save': string;
     'usage.bank.saving': string;
+    'usage.bank.sharing': string;
+    'usage.trend.unknownModel': string;
     'usage.bank.share': string;
     'usage.bank.drawError': string;
     'usage.bank.drawFailed': string;

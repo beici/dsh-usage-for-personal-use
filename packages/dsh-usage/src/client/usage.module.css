@@ -431,8 +431,10 @@
   background: color-mix(in srgb, currentColor 6%, transparent);
 }
 
-/* A bar takes focus so its day is reachable from the keyboard; the ring has to
-   sit inside the column (negative offset) or it would paint over its neighbour. */
+/* The bars are deliberately not tab stops: thirty of them cost thirty presses of
+   Tab before a keyboard user reached the next control, and the plot's group label
+   already states the window. Nothing focuses a bar, so this rule never applies —
+   it stays only so a future decision to make them reachable has a ring to show. */
 .trendBar:focus-visible {
   outline: 2px solid currentColor;
   outline-offset: -2px;
@@ -663,6 +665,13 @@
 }
 
 /* Token 银行：票面 canvas 按容器宽度缩放；按钮行沿用 ghost 按钮样式。 */
+.voucherPreview {
+  /* The canvas carries no width/height until the artwork decodes, and an
+     attribute-less canvas collapses the card on first paint; a minimum height
+     holds the space the note is about to fill. */
+  min-height: 120px;
+}
+
 .voucherPreview canvas {
   display: block;
   width: 100%;
@@ -672,6 +681,8 @@
 
 .buttonRow {
   display: flex;
+  /* 两个按钮在窄栏里并排会挤成两行字，换行比压扁可读。 */
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -779,8 +790,11 @@
 .settingItem {
   display: flex;
   align-items: center;
+  /* 窄栏里一行放不下「标签 + 输入框」时换行，别让输入框被挤出卡片。 */
+  flex-wrap: wrap;
   gap: 8px;
   font-size: 13px;
+  min-width: 0;
 }
 
 .settingItem input[type='checkbox'] {

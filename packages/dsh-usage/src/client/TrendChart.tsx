@@ -43,6 +43,13 @@ const LEGEND_MAX_MODELS = 12
 /** Models listed in the tooltip before it cuts to the totals line. */
 const TOOLTIP_MAX_MODELS = 3
 
+/**
+ * Segment key for tokens a bucket holds without a model split. It is not a model
+ * name — the leading NUL keeps it out of every real model key — and it only ever
+ * appears as the last stack segment.
+ */
+const MODEL_UNKNOWN_KEY = '\u0000unknown'
+
 /** One calendar day of the window: totals plus the per-model split when known. */
 export interface TrendRow {
   /** Local-date key `YYYY-MM-DD`. */
@@ -274,10 +281,29 @@ export function TrendChart(props: {
   // draw it against. Otherwise the token-type stack keeps old hosts readable.
   const order = modelOrderOf(buckets)
   const modelMode = order.length > 0 && colors !== undefined && colors.size > 0
+  // A bucket can hold tokens the host never attributed to a model: a day recorded
+  // before the split existed, or a provider that reports only totals. Stacking the
+  // known models alone made that bar shorter than its own total and lost the
+  // remainder, so a day with 2M tokens and no split drew as nothing (round-21
+  // audit M4). The remainder becomes its own slate segment instead.
+  const unknownOf = (bucket: TrendBucket): number => {
+    let known = 0
+    for (const totals of bucket.models.values()) known += totalOf(totals)
+    return Math.max(0, totalOf(bucket.totals) - known)
+  }
+  const hasUnknown = buckets.some((bucket) => unknownOf(bucket) > 0)
+  const segmentKeys = hasUnknown ? [...order, MODEL_UNKNOWN_KEY] : order
   const colorOf = (model: string): string => colors?.get(model) ?? MODEL_COLOR_OTHER
-  const labelOf = (model: string): string => labels?.get(model) ?? model
+  const labelOf = (model: string): string => (model === MODEL_UNKNOWN_KEY ? t('usage.trend.unknownModel') : labels?.get(model) ?? model)
+  const legendKeys = (() => {
+    const keys = segmentKeys.slice(0, LEGEND_MAX_MODELS)
+    // The unknown remainder is the one series a reader cannot infer from the
+    // model names, so it keeps its place in the legend even when the table is cut.
+    if (hasUnknown && !keys.includes(MODEL_UNKNOWN_KEY)) keys[keys.length - 1] = MODEL_UNKNOWN_KEY
+    return keys
+  })()
   const legendEntries: Array<{ key: string; className?: string; color?: string; label: string }> = modelMode
-    ? order.slice(0, LEGEND_MAX_MODELS).map((model) => ({ key: model, color: colorOf(model), label: labelOf(model) }))
+    ? legendKeys.map((model) => ({ key: model, color: colorOf(model), label: labelOf(model) }))
     : [
         { key: 'cache', className: styles.trendSegCache, label: t('usage.tokens.cacheRead') },
         { key: 'input', className: styles.trendSegInput, label: t('usage.tokens.input') },
@@ -336,8 +362,8 @@ export function TrendChart(props: {
               <div className={styles.trendBars} onMouseLeave={() => { setHovered(undefined) }}>
                 {buckets.map((bucket, index) => {
                   const stack: Array<{ height: number; color?: string; className?: string }> = modelMode
-                    ? stackHeights(order.map((model) => totalOf(bucket.models.get(model) ?? emptyTotals())), axisMax)
-                        .map((height, at) => ({ height, color: colorOf(order[at]) }))
+                    ? stackHeights(segmentKeys.map((key) => (key === MODEL_UNKNOWN_KEY ? unknownOf(bucket) : totalOf(bucket.models.get(key) ?? emptyTotals()))), axisMax)
+                        .map((height, at) => ({ height, color: colorOf(segmentKeys[at]) }))
                     : (() => {
                         const tokens = tokenStack(bucket.totals)
                         return stackHeights(tokens.map((segment) => segment.value), axisMax)
@@ -358,8 +384,6 @@ export function TrendChart(props: {
                         ? `${bucketLabel}: ${formatTokens(totalOf(bucket.totals))}, ${t('usage.calls', { n: bucket.totals.calls })}`
                         : `${bucketLabel}: ${bucket.failed ? t('usage.range.loadFailed') : t('usage.range.noRecord')}`}
                       onMouseEnter={() => { setHovered(index) }}
-                      onFocus={() => { setHovered(index) }}
-                      onBlur={() => { setHovered(undefined) }}
                     >
                       {segments.map((segment, at) => (
                         <span
@@ -405,6 +429,11 @@ export function TrendChart(props: {
                             <span className={styles.trendSwatch} style={{ background: colorOf(entry.model) }} /> {labelOf(entry.model)} · {formatTokens(totalOf(entry.totals))}
                           </span>
                         ))}
+                        {modelMode && unknownOf(hoveredBucket) > 0 && (
+                          <span className={styles.trendTooltipLine}>
+                            <span className={styles.trendSwatch} style={{ background: MODEL_COLOR_OTHER }} /> {t('usage.trend.unknownModel')} · {formatTokens(unknownOf(hoveredBucket))}
+                          </span>
+                        )}
                       </>
                     )
                   })()}

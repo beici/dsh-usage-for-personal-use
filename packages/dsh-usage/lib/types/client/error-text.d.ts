@@ -24,6 +24,14 @@ import { type UsageKey } from './locales.ts';
  */
 export declare function describeError(error: string, fallback?: UsageKey): string;
 /**
+ * A settings save: a transport failure reads as one localized sentence, but a
+ * validation message from the host ("retainDays must be at least 1") is the one
+ * part a user can act on, so it is shown as written. The row used to append the
+ * generic "请求失败" to every failure, which turned a rejected number into a
+ * network error that never happened (round-21 audit L1).
+ */
+export declare function describeSettingError(error: string): string;
+/**
  * The voucher's own draw failure already *is* the sentence: wrapping it in
  * "failed to render the voucher: …" printed it twice. Anything else keeps the
  * wrapper, so a real cause still reads as a cause.

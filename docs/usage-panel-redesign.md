@@ -530,7 +530,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
 ## Verification
 
 - `node harness/render-test.mjs` — jsdom, real bundle, saved live fixtures,
-  **225/225 checks**: eight tiles with correct labels/values/`aria-pressed`
+  **232/232 checks**: eight tiles with correct labels/values/`aria-pressed`
   (近 3 天 sums 今日 + 10-19; 近 6 个月 / 全部 read the range aggregate, which the
   stub answers only up to yesterday — 49.2 M / 584 calls — so their 135 M / 1251
   tiles prove the panel folded the live today in itself, and no range fetch may
@@ -604,7 +604,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   once, a clipboard that throws synchronously still releasing the button and
   saying the copy failed, a local draw failure told apart from a request failure,
   and an inverted custom pair keeping each typed value in its own box.
-- `node --experimental-strip-types harness/host-test.mjs` — 280 checks: range
+- `node --experimental-strip-types harness/host-test.mjs` — 288 checks: range
   aggregate + per-model series, route guards, device ledger, loopback fence,
   peak clock, the record-carried route of the live fold, transcript dedupe and
   the judged repair, ledger quarantine and unreadable-file protection, the

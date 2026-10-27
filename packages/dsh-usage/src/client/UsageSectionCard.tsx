@@ -24,7 +24,7 @@ import { useEffect, useId, useRef, useState, useSyncExternalStore, type Keyboard
 import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { UsageStoreInstance } from './usage-store.ts'
 import { t } from './locales.ts'
-import { describeError, drawErrorText } from './error-text.ts'
+import { describeError, describeSettingError, drawErrorText } from './error-text.ts'
 import styles from './usage.module.css'
 import { PeakBadge } from './PeakBadge.tsx'
 import { TrendChart, type TrendRow } from './TrendChart.tsx'
@@ -339,7 +339,17 @@ function historyStampOf(usage: UsageOverviewView['usage']): string {
     for (let index = 0; index < seed.length; index += 1) split = (split * 31 + seed.charCodeAt(index)) | 0
   }
   const today = usage.today.totals
-  return `${recorded}:${tokens - totalOf(today)}:${calls - today.calls}:${Math.round((cost - today.cost) * 10_000)}:${split}`
+  // The per-day split above only reaches the trend cap (thirty days). A backfill
+  // into a day older than that moves the whole-ledger total while neither the day
+  // count nor the thirty-day window changes, so 近 6 个月 and 全部 kept serving
+  // their old answer (round-21 audit H1). The ledger-wide total closes that hole:
+  // it sees every retained day, and today is subtracted for the same reason as
+  // above. `max(0, …)` guards a poll where `all` was built before `today` grew.
+  const all = usage.all?.totals
+  const restTokens = all === undefined ? 0 : Math.max(0, totalOf(all) - totalOf(today))
+  const restCalls = all === undefined ? 0 : Math.max(0, all.calls - today.calls)
+  const restCost = all === undefined ? 0 : Math.max(0, Math.round((all.cost - today.cost) * 10_000))
+  return `${recorded}:${tokens - totalOf(today)}:${calls - today.calls}:${Math.round((cost - today.cost) * 10_000)}:${split}:${restTokens}:${restCalls}:${restCost}`
 }
 
 /**
@@ -1939,9 +1949,16 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
   // A failed share is not a failed save: the sentence has to say which button it
   // came from, or "保存失败" appears over a share the user never asked to save.
   const [shareError, setShareError] = useState<string | undefined>(undefined)
+  // Which button failed, not just that one did: a canvas that never encoded is a
+  // draw failure and says so, while a rejected share sheet is a share failure.
+  const [saveStalled, setSaveStalled] = useState(false)
+  const [shareStalled, setShareStalled] = useState(false)
   // Encoding a full-size PNG takes long enough to be worth a label change: a
-  // button that looks idle invites a second click and a second download.
+  // button that looks idle invites a second click and a second download. The two
+  // buttons keep their own flag — one shared flag made the save button read
+  // "正在生成…" while the user was in the share sheet.
   const [saving, setSaving] = useState(false)
+  const [sharing, setSharing] = useState(false)
   // The download's object URL outlives the click by design, so both the timer
   // and the mounted flag have to outlive the handler: an unmount used to leave
   // the timer armed and a state update queued on a dead component.
@@ -1974,6 +1991,8 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
     // The save failure belongs to the voucher that was on screen: picking
     // another date used to keep "failed to save" next to a fresh note.
     setSaveError(undefined)
+    setSaveStalled(false)
+    setDrawError(undefined)
     loadVoucherArt().then((art) => {
       if (cancelled) return
       const canvas = canvasRef.current
@@ -2000,9 +2019,10 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
 
   const onSave = (): void => {
     const canvas = canvasRef.current
-    if (canvas === null || data === undefined || saving) return
+    if (canvas === null || data === undefined || saving || sharing) return
     setSaving(true)
     setSaveError(undefined)
+    setSaveStalled(false)
     // `toBlob` and the object URL can both throw, and a `toBlob` can also never
     // call back at all: the button is released on every path, including the
     // silent one, which is why the release sits in a `finally` plus a watchdog.
@@ -2011,7 +2031,11 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
       saveWatchdog.current = window.setTimeout(() => {
         saveWatchdog.current = undefined
         if (!mounted.current) return
-        setSaveError(t('usage.bank.drawFailed'))
+        // A stalled encoder is a draw failure, not a save the user caused: the
+        // sentence is its own text, never fed through `describeError` (which
+        // turned this one into "请求失败" — a network error that never happened).
+        setSaveStalled(true)
+        setSaveError(undefined)
         setSaving(false)
       }, 15_000)
     }
@@ -2029,7 +2053,10 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
           // no encoder at all): the click used to release the button and say
           // nothing, which read as a save that silently did not happen.
           if (blob === null) {
-            if (mounted.current) setSaveError('canvas produced no image')
+            if (mounted.current) {
+              setSaveError('canvas produced no image')
+              setSaveStalled(true)
+            }
             return
           }
           const url = URL.createObjectURL(blob)
@@ -2061,21 +2088,23 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
   const shareSupported = typeof navigator !== 'undefined' && typeof navigator.canShare === 'function'
   const onShare = (): void => {
     const canvas = canvasRef.current
-    if (canvas === null || data === undefined || !shareSupported || saving) return
+    if (canvas === null || data === undefined || !shareSupported || saving || sharing) return
     // The share used to have no busy state and no failure path at all: a null
     // blob, a `canShare` refusal and a throw all ended in silence, which reads as
     // a click that did nothing. Every one of them now says so, under its own
     // sentence — a failed share is not a failed save, and a stalled encoder is
     // released by the watchdog instead of disabling both buttons for the session.
-    setSaving(true)
+    setSharing(true)
     setShareError(undefined)
+    setShareStalled(false)
     const armWatchdog = (): void => {
       if (shareWatchdog.current !== undefined) window.clearTimeout(shareWatchdog.current)
       shareWatchdog.current = window.setTimeout(() => {
         shareWatchdog.current = undefined
         if (!mounted.current) return
-        setShareError(t('usage.bank.shareError'))
-        setSaving(false)
+        setShareStalled(true)
+        setShareError(undefined)
+        setSharing(false)
       }, 15_000)
     }
     const disarmWatchdog = (): void => {
@@ -2089,30 +2118,45 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
         void (async () => {
           try {
             if (blob === null) {
-              if (mounted.current) setShareError(t('usage.bank.shareError'))
+              if (mounted.current) {
+                setShareStalled(true)
+                setShareError(undefined)
+              }
               return
             }
             const file = new File([blob], `dsh-whale-voucher-${data.to}.png`, { type: 'image/png' })
             if (!navigator.canShare({ files: [file] })) {
-              if (mounted.current) setShareError(t('usage.bank.shareError'))
+              if (mounted.current) {
+                setShareStalled(true)
+                setShareError(undefined)
+              }
               return
             }
+            // The sheet belongs to the user, not to the encoder: the watchdog
+            // measures the draw, and keeping it armed across `share()` made a
+            // share the user was still reading fail at 15 s and re-enable the
+            // button under them, so a second tap started a second share.
+            disarmWatchdog()
             await navigator.share({ files: [file], title: t('usage.bank.title') })
           } catch (error) {
             // A cancelled share sheet rejects with AbortError and needs no
             // sentence; anything else is a failure worth reporting.
             const cancelled = error instanceof DOMException && error.name === 'AbortError'
-            if (!cancelled && mounted.current) setShareError(t('usage.bank.shareError'))
+            if (!cancelled && mounted.current) {
+              setShareError(error instanceof Error ? error.message : String(error))
+              setShareStalled(false)
+            }
           } finally {
             disarmWatchdog()
-            if (mounted.current) setSaving(false)
+            if (mounted.current) setSharing(false)
           }
         })()
       }, 'image/png')
-    } catch {
+    } catch (error) {
       disarmWatchdog()
-      setShareError(t('usage.bank.shareError'))
-      setSaving(false)
+      setShareError(error instanceof Error ? error.message : String(error))
+      setShareStalled(false)
+      setSharing(false)
     }
   }
 
@@ -2147,26 +2191,28 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
             </div>
             {drawError !== undefined && (
             <>
-              <span className={styles.errorLine} title={drawError} aria-describedby={drawDetailId}>
+              <span className={styles.errorLine} role="status" title={drawError} aria-describedby={drawDetailId}>
                 {drawErrorText(drawError)}
               </span>
               <span id={drawDetailId} className={styles.srOnly}>{drawError}</span>
             </>
           )}
-            {saveError !== undefined && (
+            {(saveError !== undefined || saveStalled) && (
             <>
-              <span className={styles.errorLine} title={saveError} aria-describedby={saveDetailId}>
-                {t('usage.bank.saveError', { error: describeError(saveError) })}
+              <span className={styles.errorLine} role="status" title={saveError ?? ''} aria-describedby={saveDetailId}>
+                {saveStalled
+                  ? t('usage.bank.drawFailed')
+                  : t('usage.bank.saveError', { error: describeError(saveError ?? '') })}
               </span>
-              <span id={saveDetailId} className={styles.srOnly}>{saveError}</span>
+              <span id={saveDetailId} className={styles.srOnly}>{saveError ?? ''}</span>
             </>
           )}
-            {shareError !== undefined && (
+            {(shareError !== undefined || shareStalled) && (
             <>
-              <span className={styles.errorLine} title={shareError} aria-describedby={shareDetailId}>
-                {t('usage.bank.shareError')}
+              <span className={styles.errorLine} role="status" title={shareError ?? ''} aria-describedby={shareDetailId}>
+                {shareStalled ? t('usage.bank.drawFailed') : t('usage.bank.shareError')}
               </span>
-              <span id={shareDetailId} className={styles.srOnly}>{shareError}</span>
+              <span id={shareDetailId} className={styles.srOnly}>{shareError ?? ''}</span>
             </>
           )}
             <div className={styles.providerRow}>
@@ -2182,10 +2228,10 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
               {data.from === data.to ? data.from : t('usage.bank.window', { from: data.from, to: data.to })}
             </span>
             <div className={styles.buttonRow}>
-              <button type="button" className={styles.refreshBtn} onClick={onSave} disabled={saving || drawError !== undefined}>
+              <button type="button" className={styles.refreshBtn} onClick={onSave} disabled={saving || sharing || drawError !== undefined}>
                 {saving ? t('usage.bank.saving') : t('usage.bank.save')}
               </button>
-              {shareSupported && <button type="button" className={styles.refreshBtn} onClick={onShare} disabled={saving || drawError !== undefined}>{t('usage.bank.share')}</button>}
+              {shareSupported && <button type="button" className={styles.refreshBtn} onClick={onShare} disabled={saving || sharing || drawError !== undefined}>{sharing ? t('usage.bank.sharing') : t('usage.bank.share')}</button>}
             </div>
           </>}
     </div>
@@ -2365,7 +2411,7 @@ function SettingsRow(props: {
       {failure !== undefined && (
         <>
           <span className={styles.errorLine} role="status" title={failure} aria-describedby={failureDetailId}>
-            {t('usage.config.saveFailed')}{failure === '' ? '' : ' - ' + t('usage.error.unknown')}
+            {t('usage.config.saveFailed')}{failure === '' ? '' : ' - ' + describeSettingError(failure)}
           </span>
           <span id={failureDetailId} className={styles.srOnly}>{failure}</span>
         </>

@@ -102,6 +102,16 @@ export declare function countPrunable(doc: Readonly<UsageLedgerDocument>, todayK
  */
 export declare function pruneLedger(doc: UsageLedgerDocument, todayKey: string, retainDays: number): number;
 /**
+ * The largest counter a bucket may hold and still be believed.
+ *
+ * A truncated or hand-edited number (1e15) is not a count this plugin could have
+ * produced — a very heavy day sits around 1e10 tokens — and reading it verbatim
+ * let one bad digit inflate every total the panel shows for the rest of the
+ * retention window. Such a field is read as unreadable (zero) and the reader's
+ * count lets the panel say so.
+ */
+export declare const MAX_LEDGER_COUNTER = 10000000000000;
+/**
  * Parse a ledger document the strict way: a document whose `days` is not a plain
  * object is *not* a ledger this build wrote, and reading it as "no days" would let
  * the next flush overwrite the user's history with an empty one.

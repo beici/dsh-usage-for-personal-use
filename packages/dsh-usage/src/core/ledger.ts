@@ -56,7 +56,10 @@ export function foldUsage(
   usage: Readonly<UsageTokenTotals>,
 ): void {
   if (!isSafeBucketKey(provider) || !isSafeBucketKey(model)) return
-  if (usage.calls <= 0 && usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens <= 0) return
+  // A bucket with reasoning tokens but no calls and no billed tokens is not an
+  // empty one: reasoning is tracked beside the billed counters (a provider can
+  // report it without adding output), and the calls-only test dropped it.
+  if (usage.calls <= 0 && usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens + usage.reasoningTokens <= 0) return
   const dayKey = localDateKey(atMs)
   const day = doc.days[dayKey] ?? {}
   const models = day[provider] ?? {}
@@ -197,7 +200,10 @@ export function mergeLedgerDelta(
           calls: grow(totals.calls, base?.calls ?? 0),
           cost: grow(totals.cost, base?.cost ?? 0),
         }
-        if (delta.calls === 0 && totalTokens(delta) === 0 && delta.cost === 0) continue
+        // A bucket can hold reasoning tokens without counting calls or any other
+        // token: `totalTokens` leaves reasoning out, so testing it alone dropped
+        // that bucket and the tokens with it.
+        if (delta.calls === 0 && totalTokens(delta) === 0 && delta.reasoningTokens === 0 && delta.cost === 0) continue
         const atMs = new Date(dayKey + 'T12:00:00').getTime()
         if (!Number.isFinite(atMs)) continue
         foldUsage(target, atMs, provider, model, delta)
@@ -298,10 +304,27 @@ export function pruneLedger(doc: UsageLedgerDocument, todayKey: string, retainDa
   return pruned
 }
 
+/**
+ * The largest counter a bucket may hold and still be believed.
+ *
+ * A truncated or hand-edited number (1e15) is not a count this plugin could have
+ * produced — a very heavy day sits around 1e10 tokens — and reading it verbatim
+ * let one bad digit inflate every total the panel shows for the rest of the
+ * retention window. Such a field is read as unreadable (zero) and the reader's
+ * count lets the panel say so.
+ */
+export const MAX_LEDGER_COUNTER = 1e13
+
 function reviveTotals(value: unknown): UsageTokenTotals | undefined {
   if (typeof value !== 'object' || value === null) return undefined
   const source = value as Record<string, unknown>
-  const num = (key: string): number => typeof source[key] === 'number' && Number.isFinite(source[key]) ? Math.max(0, source[key]) : 0
+  const num = (key: string): number => {
+    const raw = source[key]
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) return 0
+    // A negative or absurd counter is a damaged value, not a smaller one.
+    if (raw < 0 || raw > MAX_LEDGER_COUNTER) return 0
+    return raw
+  }
   return {
     inputTokens: num('inputTokens'),
     outputTokens: num('outputTokens'),

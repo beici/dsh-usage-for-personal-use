@@ -138,6 +138,17 @@ export declare class UsageService {
      * recovers — those are not expressible as growth since our last write.
      */
     private replayDoc;
+    /**
+     * What this machine's own renamed copies (and a peer that appears under two
+     * file names) contributed to `this.ledger`.
+     *
+     * A flush that adopts the disk file instead of merging our view — because
+     * another process wrote a newer repair stamp — starts from that file, which
+     * never held these buckets: the delta is measured against what we last wrote,
+     * so the fold falls out of the window and the device's days disappear until
+     * the next rescan.
+     */
+    private foldedDoc;
     private ledger;
     /**
      * The document this process last wrote to disk. Another process on this
@@ -387,6 +398,8 @@ export declare class UsageService {
      */
     private windowedDocument;
     private replaySessionLogs;
+    /** Remember what a fold contributed, so a flush that adopts the disk file can put it back. */
+    private rememberFold;
     /**
      * Holds a copy of this machine's own ledger to what the repair left behind.
      *

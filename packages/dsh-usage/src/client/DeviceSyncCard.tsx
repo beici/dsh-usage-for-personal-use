@@ -49,13 +49,22 @@ interface Notice {
  */
 const ACTION_TIMEOUT_MS = 20_000
 
+/**
+ * An import gets a longer leash than the other two. The host answers an import
+ * only after it has merged the file under the ledger lock, and that budget is
+ * sixty seconds — a twenty-second client timeout reported "timed out" for an
+ * import the host was still busy performing, and the caller could not tell the
+ * two apart (round-21 audit M7). The extra quarter-minute is slack, not a promise.
+ */
+const IMPORT_TIMEOUT_MS = 75_000
+
 /** Marks the race's timeout branch, so a hang is reported as a timeout rather
  * than as a failure of whatever the action was doing. */
 const ACTION_TIMEOUT = Symbol('device action timeout')
 
-function withTimeout<T>(action: Promise<T>): Promise<T> {
+function withTimeout<T>(action: Promise<T>, budgetMs: number = ACTION_TIMEOUT_MS): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = window.setTimeout(() => { reject(ACTION_TIMEOUT) }, ACTION_TIMEOUT_MS)
+    const timer = window.setTimeout(() => { reject(ACTION_TIMEOUT) }, budgetMs)
     action.then(
       (value) => { window.clearTimeout(timer); resolve(value) },
       (error: unknown) => { window.clearTimeout(timer); reject(error) },
@@ -112,7 +121,7 @@ export function DeviceSyncCard(props: {
     try {
       // The timeout races the whole action, including the file read: a peer
       // export on a stalled share hangs before the host ever answers.
-      setNotice(await withTimeout(action()))
+      setNotice(await withTimeout(action(), kind === 'import' ? IMPORT_TIMEOUT_MS : ACTION_TIMEOUT_MS))
     } catch (error) {
       if (error === ACTION_TIMEOUT) {
         setNotice({ text: t('usage.device.timeout'), tone: 'error' })

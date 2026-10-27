@@ -2781,8 +2781,160 @@ async function writeTranscript(home, lines, session = 'sess1') {
   const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
   await svc.loadPersisted()
   const note = String(svc.overview().usage.ledgerNote ?? '')
-  check('an entry the reader had to leave out is reported', note.includes('could not be read and were left out'), note)
+  check('an entry the reader had to leave out is reported', note.includes('could not be read and were dropped or zeroed'), note)
   check('the readable entries survive', svc.ledger.days['2026-10-16']?.buddy?.m1?.inputTokens === 100, JSON.stringify(svc.ledger.days['2026-10-16']))
+  await svc.stop()
+}
+
+// ---- a same-machine copy spelled differently is the same bucket ----------
+// `mergeLedgerMax` keys on the exact spelling, so a copy written by an older
+// build ("Buddy/M1") sat beside this build's "buddy/m1" and the day was billed
+// twice: the repair, the clamp and the replay all match loosely, the fold did not.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const machine = 'a'.repeat(32)
+  const day = localDateKey(Date.now() - 86_400_000)
+  const bucket = { inputTokens: 200, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 2, cost: 0 }
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, 'machine-id.json'), JSON.stringify({ version: 2, machineId: machine, previous: [] }))
+  await writeFile(join(dir, `usage-ledger.${localDeviceId()}.json`), JSON.stringify({
+    version: 1,
+    deviceId: localDeviceId(),
+    machine,
+    days: { [day]: { buddy: { m1: bucket } } },
+  }))
+  await writeFile(join(dir, 'usage-ledger.oldname-abc123.json'), JSON.stringify({
+    version: 1,
+    machine,
+    days: { [day]: { Buddy: { M1: bucket } } },
+  }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const calls = svc.ledger.days[day]?.buddy?.m1?.calls
+  check('a copy spelled differently is not billed twice', calls === 2, String(calls))
+  await svc.stop()
+}
+
+// ---- the repair survives the flush that follows it ----------------------
+// `persistRepairLocked` meant to keep memory in step with the file, but it
+// assigned through the wrapper `findLedgerBucket` returns: the ledger kept the
+// inflated bucket, the next flush measured the removed calls as growth, and the
+// repair was written back out of existence.
+{
+  const home = await freshHome()
+  const at = new Date('2026-10-16T09:00:00').getTime()
+  const call = (id, input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { id, source: { provider: 'buddy', model: 'm1' } },
+    },
+  })
+  await writeTranscript(home, [call('msg-1', 100)], 'parent')
+  await writeTranscript(home, [call('msg-1', 100), call('msg-2', 300)], 'child')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
+  const inflated = { inputTokens: 600, outputTokens: 40, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 4, cost: 0 }
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, days: { '2026-10-16': { buddy: { m1: inflated } } } }))
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  await svc.flushLedger()
+  const after = JSON.parse(await readFile(ledgerPath, 'utf8')).days['2026-10-16'].buddy.m1
+  check('the next flush does not put the copies back', after.calls === 2 && after.inputTokens === 400, `${after.calls}/${after.inputTokens}`)
+  await svc.stop()
+}
+
+// ---- a bucket that holds only reasoning tokens is not empty -------------
+// `totalTokens` leaves reasoning out, so the growth test called such a delta
+// empty and the bucket — and its tokens — never reached the ledger.
+{
+  const { createLedgerDocument, foldUsage, mergeLedgerDelta } = await load('core/ledger.ts')
+  const atMs = new Date('2026-10-16T12:00:00').getTime()
+  const base = createLedgerDocument()
+  foldUsage(base, atMs, 'buddy', 'm1', { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 900, calls: 0, cost: 0 })
+  const target = createLedgerDocument()
+  mergeLedgerDelta(target, base, createLedgerDocument())
+  const kept = target.days['2026-10-16']?.buddy?.m1?.reasoningTokens
+  check('a reasoning-only bucket survives the delta', kept === 900, String(kept))
+}
+
+// ---- an absurd counter is read as zero, not as history ------------------
+// A truncated or hand-edited number was taken verbatim and inflated every total
+// the panel shows for the rest of the window.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, `usage-ledger.${localDeviceId()}.json`), JSON.stringify({
+    version: 1,
+    deviceId: localDeviceId(),
+    days: { '2026-10-16': { buddy: { m1: { inputTokens: 1e15, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 3, cost: 0 } } } },
+  }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const bucket = svc.ledger.days['2026-10-16']?.buddy?.m1
+  check('an absurd counter is read as zero', bucket?.inputTokens === 0 && bucket?.calls === 3, JSON.stringify(bucket))
+  check('the absurd counter is reported', String(svc.overview().usage.ledgerNote ?? '').includes('dropped or zeroed'), String(svc.overview().usage.ledgerNote ?? ''))
+  await svc.stop()
+}
+
+// ---- a ledger with no days key at all is an empty ledger, not a crash ----
+// The reader counted entries of `undefined` and the whole document was
+// quarantined over a raw TypeError message.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  await mkdir(dir, { recursive: true })
+  const ledgerPath = join(dir, `usage-ledger.${localDeviceId()}.json`)
+  await writeFile(ledgerPath, JSON.stringify({ version: 1 }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  check('a ledger with no days key is not quarantined', svc.overview().usage.ledgerError === undefined, String(svc.overview().usage.ledgerError))
+  await svc.stop()
+}
+
+// ---- a corrupt ledger says so on the note line --------------------------
+// The quarantine set `ledgerError` and raised no note, so the panel line — the
+// one place a user reads what happened to the file — looked like a fresh install.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, `usage-ledger.${localDeviceId()}.json`), '{')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const note = String(svc.overview().usage.ledgerNote ?? '')
+  check('a quarantined ledger is described on the note line', note.includes('counting continues in a fresh file'), note)
+  await svc.stop()
+}
+
+// ---- a correction recorded for a day that has not happened is ignored ----
+// A forward-stepping clock wrote a future key, and the record then locked that
+// bucket out of the repair for good once the day arrived.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  await mkdir(dir, { recursive: true })
+  const future = new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10)
+  await writeFile(join(dir, `usage-ledger.${localDeviceId()}.json`), JSON.stringify({ version: 1, deviceId: localDeviceId(), days: {} }))
+  await writeFile(join(dir, 'usage-dedupe-marker.json'), JSON.stringify({ version: 3, appliedAt: Date.now(), corrected: [`${future}\u0000buddy\u0000m1`] }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  check('a correction for a future day is ignored', svc.repairCorrected.size === 0, [...svc.repairCorrected].join(','))
   await svc.stop()
 }
 

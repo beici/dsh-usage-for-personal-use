@@ -1237,7 +1237,7 @@ function isSafeBucketKey(key) {
 */
 function foldUsage(doc, atMs, provider, model, usage) {
 	if (!isSafeBucketKey(provider) || !isSafeBucketKey(model)) return;
-	if (usage.calls <= 0 && usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens <= 0) return;
+	if (usage.calls <= 0 && usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens + usage.reasoningTokens <= 0) return;
 	const dayKey = localDateKey(atMs);
 	const day = doc.days[dayKey] ?? {};
 	const models = day[provider] ?? {};
@@ -1368,7 +1368,7 @@ function mergeLedgerDelta(target, current, baseline) {
 					calls: grow(totals.calls, base?.calls ?? 0),
 					cost: grow(totals.cost, base?.cost ?? 0)
 				};
-				if (delta.calls === 0 && totalTokens(delta) === 0 && delta.cost === 0) continue;
+				if (delta.calls === 0 && totalTokens(delta) === 0 && delta.reasoningTokens === 0 && delta.cost === 0) continue;
 				const atMs = (/* @__PURE__ */ new Date(dayKey + "T12:00:00")).getTime();
 				if (!Number.isFinite(atMs)) continue;
 				foldUsage(target, atMs, provider, model, delta);
@@ -1460,7 +1460,12 @@ function pruneLedger(doc, todayKey, retainDays) {
 function reviveTotals(value) {
 	if (typeof value !== "object" || value === null) return void 0;
 	const source = value;
-	const num = (key) => typeof source[key] === "number" && Number.isFinite(source[key]) ? Math.max(0, source[key]) : 0;
+	const num = (key) => {
+		const raw = source[key];
+		if (typeof raw !== "number" || !Number.isFinite(raw)) return 0;
+		if (raw < 0 || raw > 0x9184e72a000) return 0;
+		return raw;
+	};
 	return {
 		inputTokens: num("inputTokens"),
 		outputTokens: num("outputTokens"),
@@ -2079,6 +2084,39 @@ function findLedgerBucket(day, provider, model) {
 	}
 }
 /**
+* Max-merge another document into `target`, matching buckets loosely.
+*
+* `mergeLedgerMax` keys on the exact spelling, and a copy written by an older
+* build spells the same route differently ("Buddy" where this build writes
+* "buddy"). The fold then added a second bucket for the same calls, so a
+* same-machine copy doubled the day: the repair, the clamp and the replay all
+* match loosely, and this merge has to as well.
+*/
+function mergeLedgerMaxFolded(target, source) {
+	for (const [dayKey, providers] of Object.entries(source.days)) {
+		const day = target.days[dayKey] ?? {};
+		target.days[dayKey] = day;
+		for (const [provider, models] of Object.entries(providers)) for (const [model, bucket] of Object.entries(models)) {
+			const existing = findLedgerBucket(day, provider, model);
+			if (existing === void 0) {
+				day[provider] = {
+					...day[provider] ?? {},
+					[model]: structuredClone(bucket)
+				};
+				continue;
+			}
+			const into = existing.totals;
+			into.calls = Math.max(into.calls, bucket.calls);
+			into.inputTokens = Math.max(into.inputTokens, bucket.inputTokens);
+			into.outputTokens = Math.max(into.outputTokens, bucket.outputTokens);
+			into.cacheReadTokens = Math.max(into.cacheReadTokens, bucket.cacheReadTokens);
+			into.cacheWriteTokens = Math.max(into.cacheWriteTokens, bucket.cacheWriteTokens);
+			into.reasoningTokens = Math.max(into.reasoningTokens, bucket.reasoningTokens);
+			into.cost = Math.max(into.cost, bucket.cost);
+		}
+	}
+}
+/**
 * How many whole copies of `copy` a bucket holds on top of `clean`.
 *
 * A single boot of the old build folded one transcript twice, but every later
@@ -2131,13 +2169,25 @@ function repairKey(dayKey, provider, model) {
 const REPAIR_CORRECTED_MAX = 5e3;
 /** How many notes the ledger line carries, and which ones never get dropped. */
 const LEDGER_NOTE_MAX = 5;
+/**
+* Notes that report history going missing or a write being refused. These are
+* never pushed off the line by routine ones: the line holds five, and with a
+* handful of peer files the oldest entry is exactly the sentence that says a
+* transcript was not replayed or that a correction was not written.
+*/
 const LEDGER_NOTE_ALWAYS = [
 	"ledger-dropped",
 	"ledger-unreadable",
 	"legacy-unreadable",
+	"legacy-restore",
+	"legacy-locked",
+	"replay-cap",
 	"repair-skipped",
 	"repair-short",
-	"retention-jump"
+	"repair-lock",
+	"retention-jump",
+	"ledger-foreign",
+	"stale-writer"
 ];
 /**
 * How many entries of a written ledger the reader had to leave out.
@@ -2184,7 +2234,7 @@ function countUnreadableEntries(rawDays, doc) {
 				if (!isPlainObject(modelValue)) continue;
 				for (const field of COUNTER_FIELDS) {
 					const value = modelValue[field];
-					if (value !== void 0 && (typeof value !== "number" || !Number.isFinite(value) || value < 0)) {
+					if (value !== void 0 && (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 0x9184e72a000)) {
 						dropped += 1;
 						break;
 					}
@@ -2508,6 +2558,17 @@ var UsageService = class {
 	* recovers — those are not expressible as growth since our last write.
 	*/
 	replayDoc;
+	/**
+	* What this machine's own renamed copies (and a peer that appears under two
+	* file names) contributed to `this.ledger`.
+	*
+	* A flush that adopts the disk file instead of merging our view — because
+	* another process wrote a newer repair stamp — starts from that file, which
+	* never held these buckets: the delta is measured against what we last wrote,
+	* so the fold falls out of the window and the device's days disappear until
+	* the next rescan.
+	*/
+	foldedDoc;
 	ledger = createLedgerDocument();
 	/**
 	* The document this process last wrote to disk. Another process on this
@@ -3067,7 +3128,7 @@ var UsageService = class {
 		const retentionDays = typeof record.retentionDays === "number" && Number.isFinite(record.retentionDays) ? record.retentionDays : void 0;
 		try {
 			const doc = deserializeLedger(inner);
-			const dropped = countUnreadableEntries(inner.days, doc);
+			const dropped = countUnreadableEntries(isPlainObject(rawDays) ? rawDays : {}, doc);
 			return {
 				kind: "ok",
 				doc,
@@ -3146,6 +3207,7 @@ var UsageService = class {
 					return;
 				}
 				lostHistory = true;
+				this.note("ledger-unreadable", `the ledger could not be read (${read.error}); it was kept as ${basename(kept)} and counting continues in a fresh file`);
 				await this.trimQuarantine(kept);
 			}
 		}
@@ -3166,7 +3228,7 @@ var UsageService = class {
 		const replay = await this.replaySessionLogs();
 		this.replayDoc = replay.doc;
 		if (replay.skipped > 0) this.note("replay-cap", `${replay.skipped} older transcripts beyond the replay cap of ${SESSION_LOG_MAX_FILES} were not replayed`);
-		if (read.kind === "ok" && read.dropped !== void 0) this.note("ledger-dropped", `${read.dropped} entr${read.dropped === 1 ? "y" : "ies"} in the ledger could not be read and were left out`);
+		if (read.kind === "ok" && read.dropped !== void 0) this.note("ledger-dropped", `${read.dropped} ledger entr${read.dropped === 1 ? "y" : "ies"} could not be read and were dropped or zeroed`);
 		const marker = read.kind === "ok" ? await this.readRepairCorrected() : {
 			corrected: /* @__PURE__ */ new Set(),
 			appliedAt: void 0,
@@ -3234,9 +3296,9 @@ var UsageService = class {
 		this.notes.delete(kind);
 		this.notes.set(kind, text);
 		while (this.notes.size > NOTE_MAX) {
-			const oldest = this.notes.keys().next();
-			if (oldest.done === true) break;
-			this.notes.delete(oldest.value);
+			const victim = [...this.notes.keys()].find((kind) => !LEDGER_NOTE_ALWAYS.includes(kind));
+			if (victim === void 0) break;
+			this.notes.delete(victim);
 		}
 	}
 	/** Drop a note whose condition no longer holds. */
@@ -3274,7 +3336,8 @@ var UsageService = class {
 		const entries = [...this.notes.entries()];
 		const always = entries.filter(([kind]) => LEDGER_NOTE_ALWAYS.includes(kind));
 		const rest = entries.filter(([kind]) => !LEDGER_NOTE_ALWAYS.includes(kind));
-		const kept = [...always, ...rest.slice(-Math.max(0, LEDGER_NOTE_MAX - always.length))];
+		const room = LEDGER_NOTE_MAX - always.length;
+		const kept = room > 0 ? [...always, ...rest.slice(-room)] : always.slice(0, LEDGER_NOTE_MAX);
 		return kept.length === 0 ? void 0 : kept.map(([, text]) => text).join("; ");
 	}
 	/** Retry a ledger read that failed for a transient reason (lock, sharing). */
@@ -3394,6 +3457,11 @@ var UsageService = class {
 		} catch {}
 		return pass;
 	}
+	/** Remember what a fold contributed, so a flush that adopts the disk file can put it back. */
+	rememberFold(doc) {
+		if (this.foldedDoc === void 0) this.foldedDoc = structuredClone(doc);
+		else mergeLedgerMaxFolded(this.foldedDoc, doc);
+	}
 	/**
 	* Holds a copy of this machine's own ledger to what the repair left behind.
 	*
@@ -3443,8 +3511,9 @@ var UsageService = class {
 		try {
 			const parsed = parseJsonText(raw);
 			const list = Array.isArray(parsed.corrected) ? parsed.corrected : [];
+			const today = localDateKey(Date.now());
 			return {
-				corrected: new Set(list.filter((key) => typeof key === "string")),
+				corrected: new Set(list.filter((key) => typeof key === "string" && key.slice(0, 10) <= today)),
 				appliedAt: typeof parsed.appliedAt === "number" ? parsed.appliedAt : void 0,
 				version: typeof parsed.version === "number" ? parsed.version : void 0
 			};
@@ -3575,7 +3644,7 @@ var UsageService = class {
 				const doc = deserializeLedger(parseJsonText(raw));
 				const days = Object.keys(doc.days).length;
 				if (days === 0) continue;
-				mergeLedgerMax(this.ledger, doc);
+				mergeLedgerMaxFolded(this.ledger, doc);
 				restored += days;
 			} catch {}
 		}
@@ -3720,6 +3789,7 @@ var UsageService = class {
 		const failures = [];
 		this.clearNotesWithPrefix("unverified:");
 		this.clearNotesWithPrefix("renamed:");
+		this.clearNotesWithPrefix("same-machine:");
 		for (const name of names) {
 			const deviceId = deviceIdOfFile(basename(name));
 			if (deviceId === void 0) continue;
@@ -3774,7 +3844,8 @@ var UsageService = class {
 				if (parsed.machine !== void 0 && this.sameMachine(parsed.machine)) {
 					const doc = this.windowedDocument(parsed.doc);
 					this.clampToOwnTotals(doc, true);
-					mergeLedgerMax(this.ledger, doc);
+					mergeLedgerMaxFolded(this.ledger, doc);
+					this.rememberFold(doc);
 					this.note(`renamed:${deviceId}`, `${name}: this machine under an older name, folded in rather than summed`);
 					continue;
 				}
@@ -3802,7 +3873,7 @@ var UsageService = class {
 				folded.push(peer);
 				continue;
 			}
-			mergeLedgerMax(first.doc, peer.doc);
+			mergeLedgerMaxFolded(first.doc, peer.doc);
 			first.updatedAt = Math.max(first.updatedAt ?? 0, peer.updatedAt ?? 0);
 			this.note(`same-machine:${peer.deviceId}`, `${peer.deviceId}: the same machine as ${first.deviceId}, folded in rather than counted twice`);
 		}
@@ -3900,6 +3971,7 @@ var UsageService = class {
 				this.seenRepairedAt = stamp;
 				if (this.ledgerWritten !== void 0) mergeLedgerDelta(target, this.ledger, this.ledgerWritten);
 				if (this.replayDoc !== void 0) mergeLedgerMax(target, this.replayDoc);
+				if (this.foldedDoc !== void 0) mergeLedgerMaxFolded(target, this.foldedDoc);
 			} else if (this.seenRepairedAt > 0 && stamp < this.seenRepairedAt) {
 				this.note("stale-writer", "the file on disk predates the ledger repair; its inflated buckets were not re-adopted");
 				const own = structuredClone(this.ledger);
@@ -4112,7 +4184,7 @@ var UsageService = class {
 				corrected.set(key, next);
 				removedTokens += totalTokens(bucket) - totalTokens(next);
 				const own = findLedgerBucket(this.ledger.days[entry.dayKey], found.provider, found.model);
-				if (own !== void 0) own.totals = structuredClone(next);
+				if (own !== void 0) this.ledger.days[entry.dayKey][own.provider][own.model] = structuredClone(next);
 			}
 			if (corrected.size === 0) return {
 				corrected,

@@ -37,6 +37,20 @@ export function describeError(error: string, fallback: UsageKey = 'usage.error.u
 }
 
 /**
+ * A settings save: a transport failure reads as one localized sentence, but a
+ * validation message from the host ("retainDays must be at least 1") is the one
+ * part a user can act on, so it is shown as written. The row used to append the
+ * generic "请求失败" to every failure, which turned a rejected number into a
+ * network error that never happened (round-21 audit L1).
+ */
+export function describeSettingError(error: string): string {
+  if (NETWORK_ERROR.test(error)) return t('usage.error.network')
+  const status = STATUS_ERROR.exec(error)
+  if (status !== null) return t('usage.error.status', { status: status[1] })
+  return error
+}
+
+/**
  * The voucher's own draw failure already *is* the sentence: wrapping it in
  * "failed to render the voucher: …" printed it twice. Anything else keeps the
  * wrapper, so a real cause still reads as a cause.

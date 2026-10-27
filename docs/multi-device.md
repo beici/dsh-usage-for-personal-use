@@ -194,7 +194,7 @@ peer, delete its `usage-ledger.<id>.json` and press 重新扫描.
 node --experimental-strip-types harness/host-test.mjs
 ```
 
-280 checks, covering device id hygiene, the export envelope shape, import of
+288 checks, covering device id hygiene, the export envelope shape, import of
 valid and invalid payloads, merging rather than replacing a peer file, summing,
 re-import idempotence, the local-ledger invariant, legacy migration (including
 that it persists before renaming the old file away), transcript backfill, the

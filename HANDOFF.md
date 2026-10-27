@@ -1,6 +1,6 @@
 # HANDOFF — DSH usage plugin (`@linxin666/dsh-usage`)
 
-Last updated: 2026-10-27 (round 20 delivered).
+Last updated: 2026-10-27 (round 21 delivered).
 
 ## What this is
 
@@ -36,9 +36,9 @@ Artifacts of the current tree (verified 2026-10-27):
 
 | file | bytes | md5 |
 | --- | --- | --- |
-| `lib/index.js` | 187,308 | `582945a65f7edbbde3b30f5d07a6b609` |
-| `lib/client.js` | 532,635 | `3bac500f327287e31c90279b93376f9b` |
-| `lib/client.js.map` | 718,499 | `f4ce15fd4f36c288c06e911d20ace6f2` |
+| `lib/index.js` | 190,628 | `3424ccbcf98bdca2d11253003653ba3c` |
+| `lib/client.js` | 536,663 | `eb35435016e27dd05d97a756e4b76df5` |
+| `lib/client.js.map` | 727,360 | `14bdabdc29059f4f6a6c63960c23d7d1` |
 
 ## Live data (as of 2026-10-27 ~12:40, old build still running)
 
@@ -90,16 +90,15 @@ Client: no changes this round (round-17 client fixes remain green at 225/225).
 
 Host: the repair is now judged *before* this machine's own renamed files are
 folded in, and the buckets it corrected are clamped to their clean value when such
-a file predates the repair — a peer written from the same session could otherwise
-carry the pre-repair value back in and be locked there by the record. The clamp
-only applies to the buckets the record names (a bucket that really grew keeps its
-growth). The same-machine check now compares *machine* first and device id second,
-so a copy written by this machine under another device id is recognised; a
-verified peer whose totals do not exceed ours is counted in full instead of
-skipping only `0 < ours`, so an all-zero peer is visible; the marker keys are
-sorted before they are written; a note that reports history going missing is never
-pushed off the five-note line by routine ones; and a peer file that contributes
-nothing is no longer listed as a device.
+a file is folded in — a peer written from the same session could otherwise carry
+the pre-repair value back in and be locked there by the record. The clamp only
+applies to the buckets the record names (a bucket that really grew keeps its
+growth). A machine id found in the ledger is only remembered as an alias when this
+profile already has a pin or the id is already this machine's — otherwise a
+machine's id would be adopted from a ledger that may not be its own. The marker
+keys are sorted before they are written; a note that reports history going missing
+is never pushed off the five-note line by routine ones; and a peer file that
+contributes nothing is no longer listed as a device.
 
 Client: the history stamp is position sensitive — a rolling hash over each past
 day's own numbers, so a bucket moved between two days invalidates the cached
@@ -109,10 +108,49 @@ disables both buttons instead of letting a save of a broken canvas through, a
 share failure is not stored as a save failure, and the voucher canvas is named
 with its value and window instead of the bare widget title.
 
+## Round 21 (this commit)
+
+Host: a same-machine copy is now merged with a case/spacing-insensitive key, so a
+peer file spelling `Buddy/M1` beside this machine's `buddy/m1` merges instead of
+billing the day twice; the note registry evicts only routine keys, so a
+`ledger-dropped` / `repair-short` line survives twenty-five peers; a foreign
+writer's newer `repairedAt` no longer drops what a peer fold contributed (the fold
+is remembered and merged in that branch); a repair that stood down on the lock is
+recorded so the next flush does not put its subtraction back; a correction for a
+future day is ignored; counters that are not finite numbers are read as zero and
+the affected entry is named once; a ledger whose `days` is not an object is
+quarantined rather than emptied; the quarantined file is described on the note
+line; and dead assignment in the repair writer was removed.
+
+Client: the history stamp now folds the whole-ledger total as well, so a backfill
+into a day older than the thirty-day trend window invalidates the cached 近 6 个月
+/ 全部 answers; a stalled encoder is called a draw failure instead of a request
+failure (it is no longer fed through `describeError`); the share watchdog is
+disarmed before the share sheet opens, so a user reading the sheet is not told at
+fifteen seconds that the share failed; the two voucher buttons keep their own busy
+labels; a null blob, a `canShare` refusal and a throw each say which step failed;
+every voucher error line is a `role="status"`; model mode gives tokens that have no
+model split their own slate segment (and a legend entry) instead of drawing a bar
+shorter than its own total; the device card gives an import 75 s instead of 20 s to
+cover the host's sixty-second merge budget; a rejected settings write shows the
+host's own sentence instead of "请求失败"; the voucher error is cleared when the
+data changes; the dead bar `onFocus`/`onBlur` handlers and their stale stylesheet
+comment are gone; and the button row and settings row wrap on a narrow panel.
+
+Tests: host-test 288/288 (nine new: an unreadable entry reported, a copy spelled
+differently not billed twice, the next flush not putting the copies back, a
+reasoning-only bucket surviving the delta, an absurd counter read as zero and
+reported, a ledger with no `days` key quarantined rather than emptied, a
+quarantined ledger described on the note line, a correction for a future day
+ignored). render-test 232/232 (seven new: a stalled encoder called a draw failure,
+a stalled encoder handing the button back, a share button offered only when the
+sheet is supported, two buttons keeping their own busy label during a share, an
+open share sheet not called a failure, a day without a model split still drawing
+its tokens, and a legend naming the unclassified remainder).
+
 ## Open work
 
-- Round 21 read-only audits (host / client / data) are running; fold their
-  findings into the next round. The loop is the user's standing request: audit →
-  fix → test → deploy → commit → audit again.
+- Round 21 is delivered; the next step in the user's standing loop (audit → fix →
+  test → deploy → commit → audit again) is round 22's three read-only audits.
 - The user must fully restart DSH for host changes to take effect (client half
   reloads with Ctrl+R / HMR).

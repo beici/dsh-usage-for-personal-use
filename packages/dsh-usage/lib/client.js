@@ -141,6 +141,8 @@ window.__ModuleLoader__.load({
 			"usage.bank.windowAll": "全部保留期",
 			"usage.bank.save": "保存图片",
 			"usage.bank.saving": "正在生成…",
+			"usage.bank.sharing": "正在分享…",
+			"usage.trend.unknownModel": "未分类",
 			"usage.bank.share": "分享",
 			"usage.bank.drawError": "票券生成失败：{error}",
 			"usage.bank.drawFailed": "票券生成失败（本机绘制出错）",
@@ -278,6 +280,8 @@ window.__ModuleLoader__.load({
 			"usage.bank.windowAll": "All retained days",
 			"usage.bank.save": "Save image",
 			"usage.bank.saving": "Rendering…",
+			"usage.bank.sharing": "Sharing…",
+			"usage.trend.unknownModel": "Unclassified",
 			"usage.bank.share": "Share",
 			"usage.bank.drawError": "Failed to render the voucher: {error}",
 			"usage.bank.drawFailed": "Failed to render the voucher on this device",
@@ -368,6 +372,19 @@ window.__ModuleLoader__.load({
 			return status === null ? t(fallback) : t("usage.error.status", { status: status[1] });
 		}
 		/**
+		* A settings save: a transport failure reads as one localized sentence, but a
+		* validation message from the host ("retainDays must be at least 1") is the one
+		* part a user can act on, so it is shown as written. The row used to append the
+		* generic "请求失败" to every failure, which turned a rejected number into a
+		* network error that never happened (round-21 audit L1).
+		*/
+		function describeSettingError(error) {
+			if (NETWORK_ERROR.test(error)) return t("usage.error.network");
+			const status = STATUS_ERROR.exec(error);
+			if (status !== null) return t("usage.error.status", { status: status[1] });
+			return error;
+		}
+		/**
 		* The voucher's own draw failure already *is* the sentence: wrapping it in
 		* "failed to render the voucher: …" printed it twice. Anything else keeps the
 		* wrapper, so a real cause still reads as a cause.
@@ -378,7 +395,7 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 		//#region \0dsh-css:packages/dsh-usage/src/client/usage.module.css.mjs
-		const css = ".cvtkAW_section{color:inherit;flex-direction:column;gap:16px;display:flex}.cvtkAW_header{flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;display:flex}.cvtkAW_currentProvider{opacity:.75;text-overflow:ellipsis;white-space:nowrap;min-width:0;font-size:13px;overflow:hidden}.cvtkAW_refreshBtn{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.85;background:0 0;border:1px solid;border-radius:8px;padding:4px 12px;font-size:12px;transition:opacity .12s,background-color .12s}.cvtkAW_refreshBtn:hover:not(:disabled){opacity:1;background:color-mix(in srgb, currentColor 8%, transparent)}.cvtkAW_refreshBtn:disabled{cursor:default;opacity:.5}.cvtkAW_refreshBtn:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabs{border-bottom:1px solid color-mix(in srgb, currentColor 14%, transparent);gap:4px;display:flex}.cvtkAW_tab{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.65;background:0 0;border:none;border-bottom:2px solid #0000;margin-bottom:-1px;padding:6px 14px;font-size:13px}.cvtkAW_tab:hover{opacity:.9}.cvtkAW_tab:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabActive{opacity:1;border-bottom-color:currentColor;font-weight:600}.cvtkAW_panel{flex-direction:column;gap:16px;display:flex}.cvtkAW_panel[hidden]{display:none}.cvtkAW_card{border:1px solid color-mix(in srgb, currentColor 14%, transparent);border-radius:12px;flex-direction:column;gap:10px;padding:14px 16px;display:flex}.cvtkAW_cardTitle{letter-spacing:.04em;text-transform:uppercase;opacity:.6;font-size:12px;font-weight:600}.cvtkAW_dayPicker{align-items:center;gap:8px;display:flex}.cvtkAW_dayPickerLabel{opacity:.6;font-size:11px}.cvtkAW_daySelect{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_daySelect:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_daySelect option,.cvtkAW_settingItem select option{background-color:var(--dsw-alias-bg-multi-select,Canvas);color:var(--dsw-alias-label-primary,CanvasText)}.cvtkAW_statRow{flex-wrap:wrap;gap:18px;display:flex}.cvtkAW_stat{text-align:center;flex-direction:column;align-items:center;gap:2px;display:flex}.cvtkAW_statValue{font-variant-numeric:tabular-nums;font-size:18px;font-weight:600}.cvtkAW_statLabel{opacity:.6;font-size:11px}.cvtkAW_providerRow{border-top:1px solid color-mix(in srgb, currentColor 8%, transparent);flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;font-size:13px;display:flex}.cvtkAW_providerRow:first-of-type{border-top:none}.cvtkAW_providerName{overflow-wrap:anywhere;align-items:center;gap:8px;min-width:0;display:flex}.cvtkAW_providerTokens{font-variant-numeric:tabular-nums;opacity:.75;white-space:nowrap}.cvtkAW_providerBalance{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}.cvtkAW_currentBadge{border:1px solid color-mix(in srgb, currentColor 35%, transparent);opacity:.8;border-radius:999px;flex:none;padding:1px 7px;font-size:10px;font-weight:600}.cvtkAW_chart{flex-direction:column;gap:12px;display:flex}.cvtkAW_chartProvider{flex-direction:column;gap:5px;display:flex}.cvtkAW_chartProvider+.cvtkAW_chartProvider{border-top:1px solid color-mix(in srgb, currentColor 7%, transparent);padding-top:10px}.cvtkAW_chartHead{justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;display:flex}.cvtkAW_chartHeadName{letter-spacing:.01em;font-weight:600}.cvtkAW_chartHeadTokens{font-variant-numeric:tabular-nums;opacity:.88;white-space:nowrap;font-size:11.5px;font-weight:600}.cvtkAW_chartTokens{font-variant-numeric:tabular-nums;opacity:.6;white-space:nowrap;font-size:11px}.cvtkAW_chartBar{background:color-mix(in srgb, currentColor 8%, transparent);border-radius:999px;height:8px;display:flex;overflow:hidden}.cvtkAW_chartSeg{flex:none;height:100%;display:block}.cvtkAW_chartModel{opacity:.8;grid-template-columns:minmax(0,180px) minmax(56px,1fr) minmax(0,176px);align-items:center;gap:8px;padding-left:14px;font-size:11px;display:grid}.cvtkAW_chartModelName{text-overflow:ellipsis;white-space:nowrap;opacity:.95;overflow:hidden}.cvtkAW_chartModelBar{background:color-mix(in srgb, currentColor 6%, transparent);border-radius:999px;height:4px;display:block;overflow:hidden}.cvtkAW_chartModelFill{background:color-mix(in srgb, currentColor 35%, transparent);border-radius:999px;height:100%;transition:width .3s;display:block}.cvtkAW_trendWrap{flex-direction:column;gap:6px;display:flex}.cvtkAW_trendPlot{gap:6px;height:96px;display:flex}.cvtkAW_trendYLabels{flex:none;width:34px;position:relative}.cvtkAW_trendYLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;right:0;transform:translateY(50%)}.cvtkAW_trendArea{border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);flex:1 1 0;min-width:0;position:relative}.cvtkAW_trendGridline{background:color-mix(in srgb, currentColor 8%, transparent);height:1px;position:absolute;left:0;right:0}.cvtkAW_trendBars{align-items:flex-end;gap:2px;display:flex;position:absolute;inset:0}.cvtkAW_trendFailed{text-align:center;justify-content:center;align-items:center;padding:0 12px;display:flex;position:absolute;inset:0}.cvtkAW_trendBar{border-radius:2px 2px 0 0;flex-direction:column-reverse;flex:1 1 0;min-width:2px;height:100%;display:flex;overflow:hidden}.cvtkAW_trendBar:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_trendBar:focus-visible{outline-offset:-2px;outline:2px solid}.cvtkAW_trendBar[data-failed=true]{outline:1px dashed color-mix(in srgb, currentColor 45%, transparent);outline-offset:-1px;background-image:repeating-linear-gradient(135deg, color-mix(in srgb, currentColor 12%, transparent) 0 2px, transparent 2px 5px)}.cvtkAW_trendSeg{width:100%;display:block}.cvtkAW_trendSegCache{background:color-mix(in srgb, currentColor 70%, transparent)}.cvtkAW_trendSegInput{background:color-mix(in srgb, currentColor 45%, transparent)}.cvtkAW_trendSegOutput{background:color-mix(in srgb, currentColor 22%, transparent)}.cvtkAW_trendBar:hover .cvtkAW_trendSeg{filter:saturate(1.15)brightness(1.06)}.cvtkAW_trendTooltip{z-index:2;border:1px solid color-mix(in srgb, currentColor 18%, transparent);background:var(--dsw-alias-bg-floating,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;box-shadow:0 4px 14px color-mix(in srgb, currentColor 18%, transparent);border-radius:8px;flex-direction:column;gap:2px;padding:6px 9px;font-size:11px;display:flex;position:absolute;transform:translate(-50%,-100%)}.cvtkAW_trendTooltipTitle{font-weight:600}.cvtkAW_trendTooltipLine{opacity:.8}.cvtkAW_trendXLabels{height:14px;margin-left:40px;position:relative}.cvtkAW_trendXLabel{opacity:.72;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:10px;position:absolute;transform:translate(-50%)}.cvtkAW_trendLegend{opacity:.65;flex-wrap:wrap;gap:12px;font-size:10px;display:flex}.cvtkAW_trendLegendItem{align-items:center;gap:4px;display:inline-flex}.cvtkAW_trendSwatch{border-radius:2px;width:8px;height:8px;display:inline-block}.cvtkAW_rangeCard{container-type:inline-size}.cvtkAW_rangeGrid{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;display:grid}@container (width<=420px){.cvtkAW_rangeGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}.cvtkAW_rangeTile{appearance:none;border:1px solid color-mix(in srgb, currentColor 14%, transparent);color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border-radius:10px;flex-direction:column;gap:2px;min-width:0;padding:8px 10px;transition:background-color .12s,border-color .12s;display:flex}.cvtkAW_rangeTile:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_rangeTile:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_rangeTileActive{border-color:color-mix(in srgb, currentColor 45%, transparent);background:color-mix(in srgb, currentColor 9%, transparent)}.cvtkAW_rangeTileLabel{opacity:.65;text-overflow:ellipsis;white-space:nowrap;font-size:11px;overflow:hidden}.cvtkAW_rangeTileValue{font-variant-numeric:tabular-nums;font-size:16px;font-weight:600}.cvtkAW_rangeTileMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_rangeControls{flex-wrap:wrap;align-items:center;gap:12px;display:flex}.cvtkAW_dateInput{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_dateInput:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_windowHead{flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_spanLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_modelRows{flex-direction:column;gap:4px;display:flex}.cvtkAW_muted{opacity:.6;font-size:12px}.cvtkAW_voucherPreview canvas{border-radius:8px;width:100%;height:auto;display:block}.cvtkAW_buttonRow{gap:8px;display:flex}.cvtkAW_errorLine{opacity:.75;font-size:12px}.cvtkAW_srOnly{clip:rect(0 0 0 0);white-space:nowrap;border:0;width:1px;height:1px;margin:-1px;padding:0;position:absolute;overflow:hidden}.cvtkAW_noteLine{opacity:.6;font-size:11.5px}.cvtkAW_planCard{flex-direction:column;gap:8px;display:flex}.cvtkAW_planHead{justify-content:space-between;align-items:baseline;gap:10px;display:flex}.cvtkAW_planName{font-size:14px;font-weight:600}.cvtkAW_windowRow{flex-direction:column;gap:4px;display:flex}.cvtkAW_windowLabel{opacity:.8;font-variant-numeric:tabular-nums;justify-content:space-between;font-size:12px;display:flex}.cvtkAW_bar{background:color-mix(in srgb, currentColor 10%, transparent);border-radius:999px;height:6px;overflow:hidden}.cvtkAW_barFill{background:color-mix(in srgb, currentColor 55%, transparent);border-radius:999px;height:100%;transition:width .3s}.cvtkAW_barWarn{background:#b86e00}.cvtkAW_barLow{background:#e5484d}.cvtkAW_resetLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_settingsGrid{flex-wrap:wrap;align-items:center;gap:16px;display:flex}.cvtkAW_settingItem{align-items:center;gap:8px;font-size:13px;display:flex}.cvtkAW_settingItem input[type=checkbox]{accent-color:currentColor}.cvtkAW_settingItem input[type=number]{border:1px solid color-mix(in srgb, currentColor 25%, transparent);width:90px;color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem select{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem input:focus-visible,.cvtkAW_settingItem select:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footCard{box-sizing:border-box;background:color-mix(in srgb, currentColor 4%, transparent);width:100%;color:inherit;border:none;border-radius:12px;margin:2px 0 4px;transition:background-color .12s;position:relative}.cvtkAW_footCard:hover{background:var(--dsw-alias-interactive-bg-hover)}.cvtkAW_footCardCollapsed{background:0 0}.cvtkAW_footMain{appearance:none;box-sizing:border-box;width:100%;color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border:none;border-radius:12px;flex-direction:column;gap:4px;padding:8px;display:flex}.cvtkAW_footMain:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle{appearance:none;width:24px;height:24px;color:inherit;cursor:pointer;opacity:.72;background:0 0;border:none;border-radius:6px;justify-content:center;align-items:center;padding:0;transition:opacity .12s,background-color .12s;display:inline-flex;position:absolute;top:6px;right:6px}.cvtkAW_footCard:hover .cvtkAW_footToggle{opacity:.8}.cvtkAW_footToggle:hover{opacity:1;background:color-mix(in srgb, currentColor 10%, transparent)}.cvtkAW_footToggle:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle svg{display:block}.cvtkAW_footHead{justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_footTitle{opacity:.65;white-space:nowrap;align-items:center;gap:6px;min-width:0;font-size:12px;display:inline-flex}.cvtkAW_footTitle svg{flex:none;display:block}.cvtkAW_footValue{font-variant-numeric:tabular-nums;white-space:nowrap;margin-right:18px;font-size:15px;font-weight:600}.cvtkAW_footLine{opacity:.7;font-variant-numeric:tabular-nums;text-overflow:ellipsis;white-space:nowrap;font-size:11px;overflow:hidden}.cvtkAW_footMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_footCardCollapsed .cvtkAW_footMain{min-height:36px;padding:7px 8px}.cvtkAW_footStrip{white-space:nowrap;align-items:center;gap:6px;padding-right:20px;font-size:12px;display:flex;overflow:hidden}.cvtkAW_footStrip svg{opacity:.65;flex:none;display:block}.cvtkAW_footStripProvider{text-overflow:ellipsis;flex:none;max-width:38%;font-weight:500;overflow:hidden}.cvtkAW_footStripLabel{opacity:.65;text-overflow:ellipsis;overflow:hidden}.cvtkAW_footStripValue{font-variant-numeric:tabular-nums;margin-left:auto;font-weight:600}[data-dsh-frame][data-sidebar-collapsed] .cvtkAW_footCard,[data-sidebar-collapsed] .cvtkAW_footCard{display:none}.cvtkAW_peakBadge,.cvtkAW_peakLine{font-variant-numeric:tabular-nums;white-space:nowrap;align-items:center;gap:4px;font-size:11px;display:inline-flex}.cvtkAW_peakBadge{flex:none}.cvtkAW_peakLine{gap:6px}.cvtkAW_peakBadge[data-peak=on],.cvtkAW_peakLine[data-peak=on]{color:var(--dsw-alias-state-error-primary,#b42318)}.cvtkAW_peakBadge[data-peak=off],.cvtkAW_peakLine[data-peak=off]{color:var(--dsw-alias-state-success-primary,#067647)}.cvtkAW_peakDot{background:currentColor;border-radius:50%;flex:none;width:6px;height:6px}.cvtkAW_footPeak{white-space:nowrap;align-items:center;gap:5px;font-size:10px;display:flex;overflow:hidden}.cvtkAW_footPeakClock{opacity:.7;font-variant-numeric:tabular-nums}";
+		const css = ".cvtkAW_section{color:inherit;flex-direction:column;gap:16px;display:flex}.cvtkAW_header{flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;display:flex}.cvtkAW_currentProvider{opacity:.75;text-overflow:ellipsis;white-space:nowrap;min-width:0;font-size:13px;overflow:hidden}.cvtkAW_refreshBtn{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.85;background:0 0;border:1px solid;border-radius:8px;padding:4px 12px;font-size:12px;transition:opacity .12s,background-color .12s}.cvtkAW_refreshBtn:hover:not(:disabled){opacity:1;background:color-mix(in srgb, currentColor 8%, transparent)}.cvtkAW_refreshBtn:disabled{cursor:default;opacity:.5}.cvtkAW_refreshBtn:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabs{border-bottom:1px solid color-mix(in srgb, currentColor 14%, transparent);gap:4px;display:flex}.cvtkAW_tab{appearance:none;color:inherit;font:inherit;cursor:pointer;opacity:.65;background:0 0;border:none;border-bottom:2px solid #0000;margin-bottom:-1px;padding:6px 14px;font-size:13px}.cvtkAW_tab:hover{opacity:.9}.cvtkAW_tab:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_tabActive{opacity:1;border-bottom-color:currentColor;font-weight:600}.cvtkAW_panel{flex-direction:column;gap:16px;display:flex}.cvtkAW_panel[hidden]{display:none}.cvtkAW_card{border:1px solid color-mix(in srgb, currentColor 14%, transparent);border-radius:12px;flex-direction:column;gap:10px;padding:14px 16px;display:flex}.cvtkAW_cardTitle{letter-spacing:.04em;text-transform:uppercase;opacity:.6;font-size:12px;font-weight:600}.cvtkAW_dayPicker{align-items:center;gap:8px;display:flex}.cvtkAW_dayPickerLabel{opacity:.6;font-size:11px}.cvtkAW_daySelect{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_daySelect:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_daySelect option,.cvtkAW_settingItem select option{background-color:var(--dsw-alias-bg-multi-select,Canvas);color:var(--dsw-alias-label-primary,CanvasText)}.cvtkAW_statRow{flex-wrap:wrap;gap:18px;display:flex}.cvtkAW_stat{text-align:center;flex-direction:column;align-items:center;gap:2px;display:flex}.cvtkAW_statValue{font-variant-numeric:tabular-nums;font-size:18px;font-weight:600}.cvtkAW_statLabel{opacity:.6;font-size:11px}.cvtkAW_providerRow{border-top:1px solid color-mix(in srgb, currentColor 8%, transparent);flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;font-size:13px;display:flex}.cvtkAW_providerRow:first-of-type{border-top:none}.cvtkAW_providerName{overflow-wrap:anywhere;align-items:center;gap:8px;min-width:0;display:flex}.cvtkAW_providerTokens{font-variant-numeric:tabular-nums;opacity:.75;white-space:nowrap}.cvtkAW_providerBalance{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}.cvtkAW_currentBadge{border:1px solid color-mix(in srgb, currentColor 35%, transparent);opacity:.8;border-radius:999px;flex:none;padding:1px 7px;font-size:10px;font-weight:600}.cvtkAW_chart{flex-direction:column;gap:12px;display:flex}.cvtkAW_chartProvider{flex-direction:column;gap:5px;display:flex}.cvtkAW_chartProvider+.cvtkAW_chartProvider{border-top:1px solid color-mix(in srgb, currentColor 7%, transparent);padding-top:10px}.cvtkAW_chartHead{justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;display:flex}.cvtkAW_chartHeadName{letter-spacing:.01em;font-weight:600}.cvtkAW_chartHeadTokens{font-variant-numeric:tabular-nums;opacity:.88;white-space:nowrap;font-size:11.5px;font-weight:600}.cvtkAW_chartTokens{font-variant-numeric:tabular-nums;opacity:.6;white-space:nowrap;font-size:11px}.cvtkAW_chartBar{background:color-mix(in srgb, currentColor 8%, transparent);border-radius:999px;height:8px;display:flex;overflow:hidden}.cvtkAW_chartSeg{flex:none;height:100%;display:block}.cvtkAW_chartModel{opacity:.8;grid-template-columns:minmax(0,180px) minmax(56px,1fr) minmax(0,176px);align-items:center;gap:8px;padding-left:14px;font-size:11px;display:grid}.cvtkAW_chartModelName{text-overflow:ellipsis;white-space:nowrap;opacity:.95;overflow:hidden}.cvtkAW_chartModelBar{background:color-mix(in srgb, currentColor 6%, transparent);border-radius:999px;height:4px;display:block;overflow:hidden}.cvtkAW_chartModelFill{background:color-mix(in srgb, currentColor 35%, transparent);border-radius:999px;height:100%;transition:width .3s;display:block}.cvtkAW_trendWrap{flex-direction:column;gap:6px;display:flex}.cvtkAW_trendPlot{gap:6px;height:96px;display:flex}.cvtkAW_trendYLabels{flex:none;width:34px;position:relative}.cvtkAW_trendYLabel{opacity:.5;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:9px;position:absolute;right:0;transform:translateY(50%)}.cvtkAW_trendArea{border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);flex:1 1 0;min-width:0;position:relative}.cvtkAW_trendGridline{background:color-mix(in srgb, currentColor 8%, transparent);height:1px;position:absolute;left:0;right:0}.cvtkAW_trendBars{align-items:flex-end;gap:2px;display:flex;position:absolute;inset:0}.cvtkAW_trendFailed{text-align:center;justify-content:center;align-items:center;padding:0 12px;display:flex;position:absolute;inset:0}.cvtkAW_trendBar{border-radius:2px 2px 0 0;flex-direction:column-reverse;flex:1 1 0;min-width:2px;height:100%;display:flex;overflow:hidden}.cvtkAW_trendBar:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_trendBar:focus-visible{outline-offset:-2px;outline:2px solid}.cvtkAW_trendBar[data-failed=true]{outline:1px dashed color-mix(in srgb, currentColor 45%, transparent);outline-offset:-1px;background-image:repeating-linear-gradient(135deg, color-mix(in srgb, currentColor 12%, transparent) 0 2px, transparent 2px 5px)}.cvtkAW_trendSeg{width:100%;display:block}.cvtkAW_trendSegCache{background:color-mix(in srgb, currentColor 70%, transparent)}.cvtkAW_trendSegInput{background:color-mix(in srgb, currentColor 45%, transparent)}.cvtkAW_trendSegOutput{background:color-mix(in srgb, currentColor 22%, transparent)}.cvtkAW_trendBar:hover .cvtkAW_trendSeg{filter:saturate(1.15)brightness(1.06)}.cvtkAW_trendTooltip{z-index:2;border:1px solid color-mix(in srgb, currentColor 18%, transparent);background:var(--dsw-alias-bg-floating,Canvas);color:var(--dsw-alias-label-primary,CanvasText);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;box-shadow:0 4px 14px color-mix(in srgb, currentColor 18%, transparent);border-radius:8px;flex-direction:column;gap:2px;padding:6px 9px;font-size:11px;display:flex;position:absolute;transform:translate(-50%,-100%)}.cvtkAW_trendTooltipTitle{font-weight:600}.cvtkAW_trendTooltipLine{opacity:.8}.cvtkAW_trendXLabels{height:14px;margin-left:40px;position:relative}.cvtkAW_trendXLabel{opacity:.72;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:10px;position:absolute;transform:translate(-50%)}.cvtkAW_trendLegend{opacity:.65;flex-wrap:wrap;gap:12px;font-size:10px;display:flex}.cvtkAW_trendLegendItem{align-items:center;gap:4px;display:inline-flex}.cvtkAW_trendSwatch{border-radius:2px;width:8px;height:8px;display:inline-block}.cvtkAW_rangeCard{container-type:inline-size}.cvtkAW_rangeGrid{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;display:grid}@container (width<=420px){.cvtkAW_rangeGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}.cvtkAW_rangeTile{appearance:none;border:1px solid color-mix(in srgb, currentColor 14%, transparent);color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border-radius:10px;flex-direction:column;gap:2px;min-width:0;padding:8px 10px;transition:background-color .12s,border-color .12s;display:flex}.cvtkAW_rangeTile:hover{background:color-mix(in srgb, currentColor 6%, transparent)}.cvtkAW_rangeTile:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_rangeTileActive{border-color:color-mix(in srgb, currentColor 45%, transparent);background:color-mix(in srgb, currentColor 9%, transparent)}.cvtkAW_rangeTileLabel{opacity:.65;text-overflow:ellipsis;white-space:nowrap;font-size:11px;overflow:hidden}.cvtkAW_rangeTileValue{font-variant-numeric:tabular-nums;font-size:16px;font-weight:600}.cvtkAW_rangeTileMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_rangeControls{flex-wrap:wrap;align-items:center;gap:12px;display:flex}.cvtkAW_dateInput{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;font-variant-numeric:tabular-nums;background:0 0;border-radius:6px;padding:3px 8px;font-size:12px}.cvtkAW_dateInput:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_windowHead{flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_spanLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_modelRows{flex-direction:column;gap:4px;display:flex}.cvtkAW_muted{opacity:.6;font-size:12px}.cvtkAW_voucherPreview{min-height:120px}.cvtkAW_voucherPreview canvas{border-radius:8px;width:100%;height:auto;display:block}.cvtkAW_buttonRow{flex-wrap:wrap;gap:8px;display:flex}.cvtkAW_errorLine{opacity:.75;font-size:12px}.cvtkAW_srOnly{clip:rect(0 0 0 0);white-space:nowrap;border:0;width:1px;height:1px;margin:-1px;padding:0;position:absolute;overflow:hidden}.cvtkAW_noteLine{opacity:.6;font-size:11.5px}.cvtkAW_planCard{flex-direction:column;gap:8px;display:flex}.cvtkAW_planHead{justify-content:space-between;align-items:baseline;gap:10px;display:flex}.cvtkAW_planName{font-size:14px;font-weight:600}.cvtkAW_windowRow{flex-direction:column;gap:4px;display:flex}.cvtkAW_windowLabel{opacity:.8;font-variant-numeric:tabular-nums;justify-content:space-between;font-size:12px;display:flex}.cvtkAW_bar{background:color-mix(in srgb, currentColor 10%, transparent);border-radius:999px;height:6px;overflow:hidden}.cvtkAW_barFill{background:color-mix(in srgb, currentColor 55%, transparent);border-radius:999px;height:100%;transition:width .3s}.cvtkAW_barWarn{background:#b86e00}.cvtkAW_barLow{background:#e5484d}.cvtkAW_resetLine{opacity:.55;font-variant-numeric:tabular-nums;font-size:11px}.cvtkAW_settingsGrid{flex-wrap:wrap;align-items:center;gap:16px;display:flex}.cvtkAW_settingItem{flex-wrap:wrap;align-items:center;gap:8px;min-width:0;font-size:13px;display:flex}.cvtkAW_settingItem input[type=checkbox]{accent-color:currentColor}.cvtkAW_settingItem input[type=number]{border:1px solid color-mix(in srgb, currentColor 25%, transparent);width:90px;color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem select{border:1px solid color-mix(in srgb, currentColor 25%, transparent);color:inherit;font:inherit;background:0 0;border-radius:6px;padding:3px 8px;font-size:13px}.cvtkAW_settingItem input:focus-visible,.cvtkAW_settingItem select:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footCard{box-sizing:border-box;background:color-mix(in srgb, currentColor 4%, transparent);width:100%;color:inherit;border:none;border-radius:12px;margin:2px 0 4px;transition:background-color .12s;position:relative}.cvtkAW_footCard:hover{background:var(--dsw-alias-interactive-bg-hover)}.cvtkAW_footCardCollapsed{background:0 0}.cvtkAW_footMain{appearance:none;box-sizing:border-box;width:100%;color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border:none;border-radius:12px;flex-direction:column;gap:4px;padding:8px;display:flex}.cvtkAW_footMain:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle{appearance:none;width:24px;height:24px;color:inherit;cursor:pointer;opacity:.72;background:0 0;border:none;border-radius:6px;justify-content:center;align-items:center;padding:0;transition:opacity .12s,background-color .12s;display:inline-flex;position:absolute;top:6px;right:6px}.cvtkAW_footCard:hover .cvtkAW_footToggle{opacity:.8}.cvtkAW_footToggle:hover{opacity:1;background:color-mix(in srgb, currentColor 10%, transparent)}.cvtkAW_footToggle:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb, currentColor 45%, transparent);outline:none}.cvtkAW_footToggle svg{display:block}.cvtkAW_footHead{justify-content:space-between;align-items:baseline;gap:8px;display:flex}.cvtkAW_footTitle{opacity:.65;white-space:nowrap;align-items:center;gap:6px;min-width:0;font-size:12px;display:inline-flex}.cvtkAW_footTitle svg{flex:none;display:block}.cvtkAW_footValue{font-variant-numeric:tabular-nums;white-space:nowrap;margin-right:18px;font-size:15px;font-weight:600}.cvtkAW_footLine{opacity:.7;font-variant-numeric:tabular-nums;text-overflow:ellipsis;white-space:nowrap;font-size:11px;overflow:hidden}.cvtkAW_footMeta{opacity:.5;font-variant-numeric:tabular-nums;font-size:10px}.cvtkAW_footCardCollapsed .cvtkAW_footMain{min-height:36px;padding:7px 8px}.cvtkAW_footStrip{white-space:nowrap;align-items:center;gap:6px;padding-right:20px;font-size:12px;display:flex;overflow:hidden}.cvtkAW_footStrip svg{opacity:.65;flex:none;display:block}.cvtkAW_footStripProvider{text-overflow:ellipsis;flex:none;max-width:38%;font-weight:500;overflow:hidden}.cvtkAW_footStripLabel{opacity:.65;text-overflow:ellipsis;overflow:hidden}.cvtkAW_footStripValue{font-variant-numeric:tabular-nums;margin-left:auto;font-weight:600}[data-dsh-frame][data-sidebar-collapsed] .cvtkAW_footCard,[data-sidebar-collapsed] .cvtkAW_footCard{display:none}.cvtkAW_peakBadge,.cvtkAW_peakLine{font-variant-numeric:tabular-nums;white-space:nowrap;align-items:center;gap:4px;font-size:11px;display:inline-flex}.cvtkAW_peakBadge{flex:none}.cvtkAW_peakLine{gap:6px}.cvtkAW_peakBadge[data-peak=on],.cvtkAW_peakLine[data-peak=on]{color:var(--dsw-alias-state-error-primary,#b42318)}.cvtkAW_peakBadge[data-peak=off],.cvtkAW_peakLine[data-peak=off]{color:var(--dsw-alias-state-success-primary,#067647)}.cvtkAW_peakDot{background:currentColor;border-radius:50%;flex:none;width:6px;height:6px}.cvtkAW_footPeak{white-space:nowrap;align-items:center;gap:5px;font-size:10px;display:flex;overflow:hidden}.cvtkAW_footPeakClock{opacity:.7;font-variant-numeric:tabular-nums}";
 		const tagId = "@linxin666/dsh-usage/packages/dsh-usage/src/client/usage.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -793,6 +810,12 @@ window.__ModuleLoader__.load({
 		const LEGEND_MAX_MODELS = 12;
 		/** Models listed in the tooltip before it cuts to the totals line. */
 		const TOOLTIP_MAX_MODELS = 3;
+		/**
+		* Segment key for tokens a bucket holds without a model split. It is not a model
+		* name — the leading NUL keeps it out of every real model key — and it only ever
+		* appears as the last stack segment.
+		*/
+		const MODEL_UNKNOWN_KEY = "\0unknown";
 		/** Billed-scale token count of a bucket (all four fields). */
 		function totalOf$1(totals) {
 			return totals.inputTokens + totals.cacheReadTokens + totals.cacheWriteTokens + totals.outputTokens;
@@ -978,9 +1001,21 @@ window.__ModuleLoader__.load({
 			const hoveredBucket = hovered !== void 0 ? buckets[hovered] : void 0;
 			const order = modelOrderOf(buckets);
 			const modelMode = order.length > 0 && colors !== void 0 && colors.size > 0;
+			const unknownOf = (bucket) => {
+				let known = 0;
+				for (const totals of bucket.models.values()) known += totalOf$1(totals);
+				return Math.max(0, totalOf$1(bucket.totals) - known);
+			};
+			const hasUnknown = buckets.some((bucket) => unknownOf(bucket) > 0);
+			const segmentKeys = hasUnknown ? [...order, MODEL_UNKNOWN_KEY] : order;
 			const colorOf = (model) => colors?.get(model) ?? "#6f6f78";
-			const labelOf = (model) => labels?.get(model) ?? model;
-			const legendEntries = modelMode ? order.slice(0, LEGEND_MAX_MODELS).map((model) => ({
+			const labelOf = (model) => model === MODEL_UNKNOWN_KEY ? t("usage.trend.unknownModel") : labels?.get(model) ?? model;
+			const legendKeys = (() => {
+				const keys = segmentKeys.slice(0, LEGEND_MAX_MODELS);
+				if (hasUnknown && !keys.includes(MODEL_UNKNOWN_KEY)) keys[keys.length - 1] = MODEL_UNKNOWN_KEY;
+				return keys;
+			})();
+			const legendEntries = modelMode ? legendKeys.map((model) => ({
 				key: model,
 				color: colorOf(model),
 				label: labelOf(model)
@@ -1051,9 +1086,9 @@ window.__ModuleLoader__.load({
 										setHovered(void 0);
 									},
 									children: buckets.map((bucket, index) => {
-										const segments = (modelMode ? stackHeights(order.map((model) => totalOf$1(bucket.models.get(model) ?? emptyTotals())), axisMax).map((height, at) => ({
+										const segments = (modelMode ? stackHeights(segmentKeys.map((key) => key === MODEL_UNKNOWN_KEY ? unknownOf(bucket) : totalOf$1(bucket.models.get(key) ?? emptyTotals())), axisMax).map((height, at) => ({
 											height,
-											color: colorOf(order[at])
+											color: colorOf(segmentKeys[at])
 										})) : (() => {
 											const tokens = tokenStack(bucket.totals);
 											return stackHeights(tokens.map((segment) => segment.value), axisMax).map((height, at) => ({
@@ -1072,12 +1107,6 @@ window.__ModuleLoader__.load({
 											"aria-label": bucket.recorded ? `${bucketLabel}: ${formatTokens(totalOf$1(bucket.totals))}, ${t("usage.calls", { n: bucket.totals.calls })}` : `${bucketLabel}: ${bucket.failed ? t("usage.range.loadFailed") : t("usage.range.noRecord")}`,
 											onMouseEnter: () => {
 												setHovered(index);
-											},
-											onFocus: () => {
-												setHovered(index);
-											},
-											onBlur: () => {
-												setHovered(void 0);
 											},
 											children: segments.map((segment, at) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 												className: segment.className === void 0 ? usage_module_css_default.trendSeg : `${usage_module_css_default.trendSeg} ${segment.className}`,
@@ -1139,7 +1168,20 @@ window.__ModuleLoader__.load({
 													" · ",
 													formatTokens(totalOf$1(entry.totals))
 												]
-											}, entry.model))
+											}, entry.model)),
+											modelMode && unknownOf(hoveredBucket) > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+												className: usage_module_css_default.trendTooltipLine,
+												children: [
+													/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+														className: usage_module_css_default.trendSwatch,
+														style: { background: "#6f6f78" }
+													}),
+													" ",
+													t("usage.trend.unknownModel"),
+													" · ",
+													formatTokens(unknownOf(hoveredBucket))
+												]
+											})
 										] });
 									})()]
 								})
@@ -2121,14 +2163,22 @@ window.__ModuleLoader__.load({
 		* than a failure sentence.
 		*/
 		const ACTION_TIMEOUT_MS = 2e4;
+		/**
+		* An import gets a longer leash than the other two. The host answers an import
+		* only after it has merged the file under the ledger lock, and that budget is
+		* sixty seconds — a twenty-second client timeout reported "timed out" for an
+		* import the host was still busy performing, and the caller could not tell the
+		* two apart (round-21 audit M7). The extra quarter-minute is slack, not a promise.
+		*/
+		const IMPORT_TIMEOUT_MS = 75e3;
 		/** Marks the race's timeout branch, so a hang is reported as a timeout rather
 		* than as a failure of whatever the action was doing. */
 		const ACTION_TIMEOUT = Symbol("device action timeout");
-		function withTimeout(action) {
+		function withTimeout(action, budgetMs = ACTION_TIMEOUT_MS) {
 			return new Promise((resolve, reject) => {
 				const timer = window.setTimeout(() => {
 					reject(ACTION_TIMEOUT);
-				}, ACTION_TIMEOUT_MS);
+				}, budgetMs);
 				action.then((value) => {
 					window.clearTimeout(timer);
 					resolve(value);
@@ -2166,7 +2216,7 @@ window.__ModuleLoader__.load({
 				setBusy(kind);
 				setNotice(void 0);
 				try {
-					setNotice(await withTimeout(action()));
+					setNotice(await withTimeout(action(), kind === "import" ? IMPORT_TIMEOUT_MS : ACTION_TIMEOUT_MS));
 				} catch (error) {
 					if (error === ACTION_TIMEOUT) setNotice({
 						text: t("usage.device.timeout"),
@@ -2607,7 +2657,11 @@ window.__ModuleLoader__.load({
 				for (let index = 0; index < seed.length; index += 1) split = split * 31 + seed.charCodeAt(index) | 0;
 			}
 			const today = usage.today.totals;
-			return `${recorded}:${tokens - totalOf(today)}:${calls - today.calls}:${Math.round((cost - today.cost) * 1e4)}:${split}`;
+			const all = usage.all?.totals;
+			const restTokens = all === void 0 ? 0 : Math.max(0, totalOf(all) - totalOf(today));
+			const restCalls = all === void 0 ? 0 : Math.max(0, all.calls - today.calls);
+			const restCost = all === void 0 ? 0 : Math.max(0, Math.round((all.cost - today.cost) * 1e4));
+			return `${recorded}:${tokens - totalOf(today)}:${calls - today.calls}:${Math.round((cost - today.cost) * 1e4)}:${split}:${restTokens}:${restCalls}:${restCost}`;
 		}
 		/**
 		* A picked day key, held inside the calendar's own bounds. The picker's `min`
@@ -4147,7 +4201,10 @@ window.__ModuleLoader__.load({
 			const [drawError, setDrawError] = (0, react.useState)(void 0);
 			const [saveError, setSaveError] = (0, react.useState)(void 0);
 			const [shareError, setShareError] = (0, react.useState)(void 0);
+			const [saveStalled, setSaveStalled] = (0, react.useState)(false);
+			const [shareStalled, setShareStalled] = (0, react.useState)(false);
 			const [saving, setSaving] = (0, react.useState)(false);
+			const [sharing, setSharing] = (0, react.useState)(false);
 			const revokeTimer = (0, react.useRef)(void 0);
 			const saveWatchdog = (0, react.useRef)(void 0);
 			const shareWatchdog = (0, react.useRef)(void 0);
@@ -4167,6 +4224,8 @@ window.__ModuleLoader__.load({
 				const voucher = data;
 				let cancelled = false;
 				setSaveError(void 0);
+				setSaveStalled(false);
+				setDrawError(void 0);
 				loadVoucherArt().then((art) => {
 					if (cancelled) return;
 					const canvas = canvasRef.current;
@@ -4185,15 +4244,17 @@ window.__ModuleLoader__.load({
 			}, [dataKey, hidden]);
 			const onSave = () => {
 				const canvas = canvasRef.current;
-				if (canvas === null || data === void 0 || saving) return;
+				if (canvas === null || data === void 0 || saving || sharing) return;
 				setSaving(true);
 				setSaveError(void 0);
+				setSaveStalled(false);
 				const armWatchdog = () => {
 					if (saveWatchdog.current !== void 0) window.clearTimeout(saveWatchdog.current);
 					saveWatchdog.current = window.setTimeout(() => {
 						saveWatchdog.current = void 0;
 						if (!mounted.current) return;
-						setSaveError(t("usage.bank.drawFailed"));
+						setSaveStalled(true);
+						setSaveError(void 0);
 						setSaving(false);
 					}, 15e3);
 				};
@@ -4208,7 +4269,10 @@ window.__ModuleLoader__.load({
 						disarmWatchdog();
 						try {
 							if (blob === null) {
-								if (mounted.current) setSaveError("canvas produced no image");
+								if (mounted.current) {
+									setSaveError("canvas produced no image");
+									setSaveStalled(true);
+								}
 								return;
 							}
 							const url = URL.createObjectURL(blob);
@@ -4236,16 +4300,18 @@ window.__ModuleLoader__.load({
 			const shareSupported = typeof navigator !== "undefined" && typeof navigator.canShare === "function";
 			const onShare = () => {
 				const canvas = canvasRef.current;
-				if (canvas === null || data === void 0 || !shareSupported || saving) return;
-				setSaving(true);
+				if (canvas === null || data === void 0 || !shareSupported || saving || sharing) return;
+				setSharing(true);
 				setShareError(void 0);
+				setShareStalled(false);
 				const armWatchdog = () => {
 					if (shareWatchdog.current !== void 0) window.clearTimeout(shareWatchdog.current);
 					shareWatchdog.current = window.setTimeout(() => {
 						shareWatchdog.current = void 0;
 						if (!mounted.current) return;
-						setShareError(t("usage.bank.shareError"));
-						setSaving(false);
+						setShareStalled(true);
+						setShareError(void 0);
+						setSharing(false);
 					}, 15e3);
 				};
 				const disarmWatchdog = () => {
@@ -4259,30 +4325,41 @@ window.__ModuleLoader__.load({
 						(async () => {
 							try {
 								if (blob === null) {
-									if (mounted.current) setShareError(t("usage.bank.shareError"));
+									if (mounted.current) {
+										setShareStalled(true);
+										setShareError(void 0);
+									}
 									return;
 								}
 								const file = new File([blob], `dsh-whale-voucher-${data.to}.png`, { type: "image/png" });
 								if (!navigator.canShare({ files: [file] })) {
-									if (mounted.current) setShareError(t("usage.bank.shareError"));
+									if (mounted.current) {
+										setShareStalled(true);
+										setShareError(void 0);
+									}
 									return;
 								}
+								disarmWatchdog();
 								await navigator.share({
 									files: [file],
 									title: t("usage.bank.title")
 								});
 							} catch (error) {
-								if (!(error instanceof DOMException && error.name === "AbortError") && mounted.current) setShareError(t("usage.bank.shareError"));
+								if (!(error instanceof DOMException && error.name === "AbortError") && mounted.current) {
+									setShareError(error instanceof Error ? error.message : String(error));
+									setShareStalled(false);
+								}
 							} finally {
 								disarmWatchdog();
-								if (mounted.current) setSaving(false);
+								if (mounted.current) setSharing(false);
 							}
 						})();
 					}, "image/png");
-				} catch {
+				} catch (error) {
 					disarmWatchdog();
-					setShareError(t("usage.bank.shareError"));
-					setSaving(false);
+					setShareError(error instanceof Error ? error.message : String(error));
+					setShareStalled(false);
+					setSharing(false);
 				}
 			};
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -4328,6 +4405,7 @@ window.__ModuleLoader__.load({
 					}),
 					drawError !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 						className: usage_module_css_default.errorLine,
+						role: "status",
 						title: drawError,
 						"aria-describedby": drawDetailId,
 						children: drawErrorText(drawError)
@@ -4336,25 +4414,27 @@ window.__ModuleLoader__.load({
 						className: usage_module_css_default.srOnly,
 						children: drawError
 					})] }),
-					saveError !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					(saveError !== void 0 || saveStalled) && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 						className: usage_module_css_default.errorLine,
-						title: saveError,
+						role: "status",
+						title: saveError ?? "",
 						"aria-describedby": saveDetailId,
-						children: t("usage.bank.saveError", { error: describeError(saveError) })
+						children: saveStalled ? t("usage.bank.drawFailed") : t("usage.bank.saveError", { error: describeError(saveError ?? "") })
 					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 						id: saveDetailId,
 						className: usage_module_css_default.srOnly,
-						children: saveError
+						children: saveError ?? ""
 					})] }),
-					shareError !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					(shareError !== void 0 || shareStalled) && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 						className: usage_module_css_default.errorLine,
-						title: shareError,
+						role: "status",
+						title: shareError ?? "",
 						"aria-describedby": shareDetailId,
-						children: t("usage.bank.shareError")
+						children: shareStalled ? t("usage.bank.drawFailed") : t("usage.bank.shareError")
 					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 						id: shareDetailId,
 						className: usage_module_css_default.srOnly,
-						children: shareError
+						children: shareError ?? ""
 					})] }),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: usage_module_css_default.providerRow,
@@ -4389,14 +4469,14 @@ window.__ModuleLoader__.load({
 							type: "button",
 							className: usage_module_css_default.refreshBtn,
 							onClick: onSave,
-							disabled: saving || drawError !== void 0,
+							disabled: saving || sharing || drawError !== void 0,
 							children: saving ? t("usage.bank.saving") : t("usage.bank.save")
 						}), shareSupported && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 							type: "button",
 							className: usage_module_css_default.refreshBtn,
 							onClick: onShare,
-							disabled: saving || drawError !== void 0,
-							children: t("usage.bank.share")
+							disabled: saving || sharing || drawError !== void 0,
+							children: sharing ? t("usage.bank.sharing") : t("usage.bank.share")
 						})]
 					})
 				] })]
@@ -4579,7 +4659,7 @@ window.__ModuleLoader__.load({
 						role: "status",
 						title: failure,
 						"aria-describedby": failureDetailId,
-						children: [t("usage.config.saveFailed"), failure === "" ? "" : " - " + t("usage.error.unknown")]
+						children: [t("usage.config.saveFailed"), failure === "" ? "" : " - " + describeSettingError(failure)]
 					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 						id: failureDetailId,
 						className: usage_module_css_default.srOnly,
