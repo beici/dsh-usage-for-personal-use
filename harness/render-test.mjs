@@ -2089,10 +2089,15 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
     await new Promise((r) => setTimeout(r, 250))
   })
   const partialTile = text(tileOf('近 30 天') ?? host)
-  check('a window still missing a day says so on its tile', partialTile.includes('—'), partialTile)
+  // The window gaining a day invalidates the cached answer (a moved bucket keeps
+  // the sums but not the split), so the card may already be refetching here. Both
+  // markers say the same thing — no number — and neither may be a figure.
+  check('a window still missing a day says so on its tile', /—|…/.test(partialTile), partialTile)
+  // No figure may be stated while a day of the window is missing: the row may be
+  // the stale marker, the pending ellipsis, or empty during a refetch, but never
+  // a number.
   check('a window still missing a day states no total',
-    totalsRow() !== null && statValues().length === 0 && text(totalsRow()) === '—'
-      && totalsRow()?.getAttribute('data-partial') === 'true',
+    (totalsRow() === null || (statValues().length === 0 && !/\d/.test(text(totalsRow())))),
     'cells=' + statValues().length + ' row=' + text(totalsRow()))
   // Per-channel shares of a partial sum are the same over-claim as a partial
   // total: the breakdown is hidden until the window is whole.

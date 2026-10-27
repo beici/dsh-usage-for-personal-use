@@ -210,9 +210,9 @@ Then **restart DSH**: the host bundle joins the ESM graph once at boot, so new h
 
 | 文件 | 大小 | MD5 |
 | --- | --- | --- |
-| `lib/client.js` | 530,518 B | `732f41a7dbd54d37c4b2d1e6d3426059` |
-| `lib/client.js.map` | 713,954 B | `aa04957f16d2a973848560cea7e6baf7` |
-| `lib/index.js` | 185,348 B | `543d13ac3ea63e7a17df2b1f9e8ad7c3` |
+| `lib/client.js` | 532,635 B | `3bac500f327287e31c90279b93376f9b` |
+| `lib/client.js.map` | 718,499 B | `f4ce15fd4f36c288c06e911d20ace6f2` |
+| `lib/index.js` | 187,308 B | `582945a65f7edbbde3b30f5d07a6b609` |
 
 `lib/client.js.map` 会把源码原样嵌进去,只有源码用 LF 换行时才能逐字节复现(`.gitattributes` 在 checkout 时强制 `eol=lf`);工作区留 CRLF 源码时 map 会变大、哈希对不上,而 `client.js` 本身不变。两边都从 `src/` 构建,`lib/index.js` 和已安装副本是同一个产物。部署就是一次普通拷贝,但有两个坑:在 profile 里跑 `pnpm install` 会把包重置回 registry tarball;`cp` 到 pnpm 硬链接上会穿透写入 content-addressed store。详见 [`docs/build-and-redeploy.md`](docs/build-and-redeploy.md)。
 
@@ -222,9 +222,9 @@ Artifacts built from this repository (verified 2026-10-27):
 
 | File | Size | MD5 |
 | --- | --- | --- |
-| `lib/client.js` | 530,518 B | `732f41a7dbd54d37c4b2d1e6d3426059` |
-| `lib/client.js.map` | 713,954 B | `aa04957f16d2a973848560cea7e6baf7` |
-| `lib/index.js` | 185,348 B | `543d13ac3ea63e7a17df2b1f9e8ad7c3` |
+| `lib/client.js` | 532,635 B | `3bac500f327287e31c90279b93376f9b` |
+| `lib/client.js.map` | 718,499 B | `f4ce15fd4f36c288c06e911d20ace6f2` |
+| `lib/index.js` | 187,308 B | `582945a65f7edbbde3b30f5d07a6b609` |
 
 `lib/client.js.map` embeds the sources verbatim and is only reproducible when the sources use LF endings (`.gitattributes` enforces `eol=lf` in the checkout); a worktree left with CRLF sources produces a larger, differently hashed map while `client.js` itself stays identical. Both halves build from `src/`, so `lib/index.js` and the installed copy are the same artifact. Deploying is a plain copy, with two hazards: a `pnpm install` in the profile resets the package to the registry tarball, and `cp` onto a pnpm hardlink writes through to the content-addressed store. See [`docs/build-and-redeploy.md`](docs/build-and-redeploy.md).
 

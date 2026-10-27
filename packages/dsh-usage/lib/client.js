@@ -146,6 +146,7 @@ window.__ModuleLoader__.load({
 			"usage.bank.drawFailed": "票券生成失败（本机绘制出错）",
 			"usage.bank.saveError": "票券保存失败：{error}",
 			"usage.bank.shareError": "票券分享失败，请稍后再试",
+			"usage.bank.canvasLabel": "鲸元券：{minted}，{window}",
 			"usage.foot.cost": "今日消费",
 			"usage.foot.noData": "今日暂无用量",
 			"usage.foot.open": "打开使用统计设置",
@@ -282,6 +283,7 @@ window.__ModuleLoader__.load({
 			"usage.bank.drawFailed": "Failed to render the voucher on this device",
 			"usage.bank.saveError": "Failed to save the voucher: {error}",
 			"usage.bank.shareError": "Failed to share the voucher. Try again in a moment.",
+			"usage.bank.canvasLabel": "Whale-yuan voucher: {minted}, {window}",
 			"usage.foot.cost": "Today spend",
 			"usage.foot.noData": "No usage yet today",
 			"usage.foot.open": "Open usage statistics settings",
@@ -2594,13 +2596,18 @@ window.__ModuleLoader__.load({
 			let tokens = 0;
 			let calls = 0;
 			let cost = 0;
+			let split = 0;
+			const todayKey = usage.today.date;
 			for (const row of usage.days) {
 				tokens += totalOf(row.totals);
 				calls += row.totals.calls;
 				cost += row.totals.cost;
+				if (row.date === todayKey) continue;
+				const seed = `${row.date}:${totalOf(row.totals)}:${row.totals.calls}:${Math.round(row.totals.cost * 1e4)}`;
+				for (let index = 0; index < seed.length; index += 1) split = split * 31 + seed.charCodeAt(index) | 0;
 			}
 			const today = usage.today.totals;
-			return `${recorded}:${tokens - totalOf(today)}:${calls - today.calls}:${Math.round((cost - today.cost) * 1e4)}`;
+			return `${recorded}:${tokens - totalOf(today)}:${calls - today.calls}:${Math.round((cost - today.cost) * 1e4)}:${split}`;
 		}
 		/**
 		* A picked day key, held inside the calendar's own bounds. The picker's `min`
@@ -3454,8 +3461,7 @@ window.__ModuleLoader__.load({
 													" · ",
 													t("usage.calls", { n: model.totals.calls }),
 													" · ",
-													modelPcts[modelIndex] ?? 0,
-													"%"
+													modelPcts[modelIndex] === 0 && sharePct > 0 ? "<1%" : `${modelPcts[modelIndex] ?? 0}%`
 												]
 											})
 										]
@@ -4135,13 +4141,16 @@ window.__ModuleLoader__.load({
 			const data = voucherData(ledger);
 			const drawDetailId = (0, react.useId)();
 			const saveDetailId = (0, react.useId)();
+			const shareDetailId = (0, react.useId)();
 			const dayDetailId = (0, react.useId)();
 			const canvasRef = (0, react.useRef)(null);
 			const [drawError, setDrawError] = (0, react.useState)(void 0);
 			const [saveError, setSaveError] = (0, react.useState)(void 0);
+			const [shareError, setShareError] = (0, react.useState)(void 0);
 			const [saving, setSaving] = (0, react.useState)(false);
 			const revokeTimer = (0, react.useRef)(void 0);
 			const saveWatchdog = (0, react.useRef)(void 0);
+			const shareWatchdog = (0, react.useRef)(void 0);
 			const mounted = (0, react.useRef)(true);
 			(0, react.useEffect)(() => {
 				mounted.current = true;
@@ -4149,6 +4158,7 @@ window.__ModuleLoader__.load({
 					mounted.current = false;
 					if (revokeTimer.current !== void 0) window.clearTimeout(revokeTimer.current);
 					if (saveWatchdog.current !== void 0) window.clearTimeout(saveWatchdog.current);
+					if (shareWatchdog.current !== void 0) window.clearTimeout(shareWatchdog.current);
 				};
 			}, []);
 			const dataKey = data === void 0 ? "" : `${data.from}|${data.to}|${data.tokens}|${data.calls}|${data.cost}`;
@@ -4228,18 +4238,33 @@ window.__ModuleLoader__.load({
 				const canvas = canvasRef.current;
 				if (canvas === null || data === void 0 || !shareSupported || saving) return;
 				setSaving(true);
-				setSaveError(void 0);
+				setShareError(void 0);
+				const armWatchdog = () => {
+					if (shareWatchdog.current !== void 0) window.clearTimeout(shareWatchdog.current);
+					shareWatchdog.current = window.setTimeout(() => {
+						shareWatchdog.current = void 0;
+						if (!mounted.current) return;
+						setShareError(t("usage.bank.shareError"));
+						setSaving(false);
+					}, 15e3);
+				};
+				const disarmWatchdog = () => {
+					if (shareWatchdog.current === void 0) return;
+					window.clearTimeout(shareWatchdog.current);
+					shareWatchdog.current = void 0;
+				};
 				try {
+					armWatchdog();
 					canvas.toBlob((blob) => {
 						(async () => {
 							try {
 								if (blob === null) {
-									if (mounted.current) setSaveError(t("usage.bank.drawFailed"));
+									if (mounted.current) setShareError(t("usage.bank.shareError"));
 									return;
 								}
 								const file = new File([blob], `dsh-whale-voucher-${data.to}.png`, { type: "image/png" });
 								if (!navigator.canShare({ files: [file] })) {
-									if (mounted.current) setSaveError(t("usage.bank.shareError"));
+									if (mounted.current) setShareError(t("usage.bank.shareError"));
 									return;
 								}
 								await navigator.share({
@@ -4247,14 +4272,16 @@ window.__ModuleLoader__.load({
 									title: t("usage.bank.title")
 								});
 							} catch (error) {
-								if (!(error instanceof DOMException && error.name === "AbortError") && mounted.current) setSaveError(t("usage.bank.shareError"));
+								if (!(error instanceof DOMException && error.name === "AbortError") && mounted.current) setShareError(t("usage.bank.shareError"));
 							} finally {
+								disarmWatchdog();
 								if (mounted.current) setSaving(false);
 							}
 						})();
 					}, "image/png");
 				} catch {
-					setSaveError(t("usage.bank.shareError"));
+					disarmWatchdog();
+					setShareError(t("usage.bank.shareError"));
 					setSaving(false);
 				}
 			};
@@ -4290,7 +4317,13 @@ window.__ModuleLoader__.load({
 						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("canvas", {
 							ref: canvasRef,
 							role: "img",
-							"aria-label": t("usage.bank.title")
+							"aria-label": t("usage.bank.canvasLabel", {
+								minted: formatDenomination(faceValue(data.tokens)),
+								window: data.from === data.to ? data.from : t("usage.bank.window", {
+									from: data.from,
+									to: data.to
+								})
+							})
 						})
 					}),
 					drawError !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
@@ -4312,6 +4345,16 @@ window.__ModuleLoader__.load({
 						id: saveDetailId,
 						className: usage_module_css_default.srOnly,
 						children: saveError
+					})] }),
+					shareError !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+						className: usage_module_css_default.errorLine,
+						title: shareError,
+						"aria-describedby": shareDetailId,
+						children: t("usage.bank.shareError")
+					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+						id: shareDetailId,
+						className: usage_module_css_default.srOnly,
+						children: shareError
 					})] }),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: usage_module_css_default.providerRow,
@@ -4346,13 +4389,13 @@ window.__ModuleLoader__.load({
 							type: "button",
 							className: usage_module_css_default.refreshBtn,
 							onClick: onSave,
-							disabled: saving,
+							disabled: saving || drawError !== void 0,
 							children: saving ? t("usage.bank.saving") : t("usage.bank.save")
 						}), shareSupported && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 							type: "button",
 							className: usage_module_css_default.refreshBtn,
 							onClick: onShare,
-							disabled: saving,
+							disabled: saving || drawError !== void 0,
 							children: t("usage.bank.share")
 						})]
 					})

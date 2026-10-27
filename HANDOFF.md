@@ -1,6 +1,6 @@
 # HANDOFF — DSH usage plugin (`@linxin666/dsh-usage`)
 
-Last updated: 2026-10-27 (round 19 delivered).
+Last updated: 2026-10-27 (round 20 delivered).
 
 ## What this is
 
@@ -36,9 +36,9 @@ Artifacts of the current tree (verified 2026-10-27):
 
 | file | bytes | md5 |
 | --- | --- | --- |
-| `lib/index.js` | 185,348 | `543d13ac3ea63e7a17df2b1f9e8ad7c3` |
-| `lib/client.js` | 530,518 | `732f41a7dbd54d37c4b2d1e6d3426059` |
-| `lib/client.js.map` | 713,954 | `aa04957f16d2a973848560cea7e6baf7` |
+| `lib/index.js` | 187,308 | `582945a65f7edbbde3b30f5d07a6b609` |
+| `lib/client.js` | 532,635 | `3bac500f327287e31c90279b93376f9b` |
+| `lib/client.js.map` | 718,499 | `f4ce15fd4f36c288c06e911d20ace6f2` |
 
 ## Live data (as of 2026-10-27 ~12:40, old build still running)
 
@@ -86,9 +86,32 @@ object) is named once in the panel instead of the history shrinking in silence.
 
 Client: no changes this round (round-17 client fixes remain green at 225/225).
 
+## Round 20 (this commit)
+
+Host: the repair is now judged *before* this machine's own renamed files are
+folded in, and the buckets it corrected are clamped to their clean value when such
+a file predates the repair — a peer written from the same session could otherwise
+carry the pre-repair value back in and be locked there by the record. The clamp
+only applies to the buckets the record names (a bucket that really grew keeps its
+growth). The same-machine check now compares *machine* first and device id second,
+so a copy written by this machine under another device id is recognised; a
+verified peer whose totals do not exceed ours is counted in full instead of
+skipping only `0 < ours`, so an all-zero peer is visible; the marker keys are
+sorted before they are written; a note that reports history going missing is never
+pushed off the five-note line by routine ones; and a peer file that contributes
+nothing is no longer listed as a device.
+
+Client: the history stamp is position sensitive — a rolling hash over each past
+day's own numbers, so a bucket moved between two days invalidates the cached
+windows instead of serving the old split. A failed share now has its own sentence
+(not "保存失败"), a stalled encoder is released by a watchdog, a draw failure
+disables both buttons instead of letting a save of a broken canvas through, a
+share failure is not stored as a save failure, and the voucher canvas is named
+with its value and window instead of the bare widget title.
+
 ## Open work
 
-- Round 20 read-only audits (host / client / data) are running; fold their
+- Round 21 read-only audits (host / client / data) are running; fold their
   findings into the next round. The loop is the user's standing request: audit →
   fix → test → deploy → commit → audit again.
 - The user must fully restart DSH for host changes to take effect (client half

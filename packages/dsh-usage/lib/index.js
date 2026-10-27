@@ -2129,6 +2129,16 @@ function repairKey(dayKey, provider, model) {
 * are about to leave the window anyway.
 */
 const REPAIR_CORRECTED_MAX = 5e3;
+/** How many notes the ledger line carries, and which ones never get dropped. */
+const LEDGER_NOTE_MAX = 5;
+const LEDGER_NOTE_ALWAYS = [
+	"ledger-dropped",
+	"ledger-unreadable",
+	"legacy-unreadable",
+	"repair-skipped",
+	"repair-short",
+	"retention-jump"
+];
 /**
 * How many entries of a written ledger the reader had to leave out.
 *
@@ -2139,6 +2149,16 @@ const REPAIR_CORRECTED_MAX = 5e3;
 * entries and is then written back by the next flush loses them for good, so the
 * count is what lets the panel say it happened.
 */
+/** The counters a bucket is made of, in the order the reader revives them. */
+const COUNTER_FIELDS = [
+	"calls",
+	"inputTokens",
+	"outputTokens",
+	"cacheReadTokens",
+	"cacheWriteTokens",
+	"reasoningTokens",
+	"cost"
+];
 function countUnreadableEntries(rawDays, doc) {
 	let dropped = 0;
 	for (const [dayKey, dayValue] of Object.entries(rawDays)) {
@@ -2156,7 +2176,20 @@ function countUnreadableEntries(rawDays, doc) {
 				dropped += 1;
 				continue;
 			}
-			for (const model of Object.keys(models)) if (parsedDay[provider]?.[model] === void 0) dropped += 1;
+			for (const [model, modelValue] of Object.entries(models)) {
+				if (parsedDay[provider]?.[model] === void 0) {
+					dropped += 1;
+					continue;
+				}
+				if (!isPlainObject(modelValue)) continue;
+				for (const field of COUNTER_FIELDS) {
+					const value = modelValue[field];
+					if (value !== void 0 && (typeof value !== "number" || !Number.isFinite(value) || value < 0)) {
+						dropped += 1;
+						break;
+					}
+				}
+			}
 		}
 	}
 	return dropped;
@@ -3024,7 +3057,8 @@ var UsageService = class {
 			error: `names device ${deviceId}`
 		};
 		const inner = typeof record.ledger === "object" && record.ledger !== null ? record.ledger : record;
-		if (!isPlainObject(inner.days)) return {
+		const rawDays = inner.days;
+		if (rawDays !== void 0 && !isPlainObject(rawDays)) return {
 			kind: "corrupt",
 			error: "no days in document"
 		};
@@ -3067,11 +3101,14 @@ var UsageService = class {
 		}
 	}
 	async loadPersistedOnce() {
+		const pinned = await stat(join(this.persistDir, MACHINE_ID_FILE)).then(() => true, () => false);
 		this.machine = await ensureMachineId(this.persistDir);
 		for (const alias of await readMachineAliases(this.persistDir)) this.machineAliases.add(alias);
 		let read = await this.readLedgerFile();
 		/** True when this boot starts without the history the ledger used to hold. */
 		let lostHistory = false;
+		/** True when an unreadable file was moved aside and a fresh one started. */
+		let quarantinedUnreadable = false;
 		if (read.kind === "unreadable") {
 			this.ledgerError = `ledger unreadable (${read.error})`;
 			if (this.loadRetries < LOAD_RETRY_MAX) {
@@ -3088,6 +3125,7 @@ var UsageService = class {
 			lostHistory = true;
 			await this.trimQuarantine(kept);
 			read = { kind: "missing" };
+			quarantinedUnreadable = true;
 		}
 		if (read.kind === "corrupt") {
 			const foreign = foreignDeviceOf(read.error);
@@ -3117,7 +3155,7 @@ var UsageService = class {
 				this.loadAbsorbed = true;
 			}
 			this.seenRepairedAt = read.repairedAt ?? 0;
-			await this.rememberMachine(read.machine);
+			if (read.machine !== void 0 && (!pinned || this.sameMachine(read.machine))) await this.rememberMachine(read.machine);
 			if (read.retentionDays !== void 0) {
 				this.retentionSeen = read.retentionDays;
 				this.fileRetention = read.retentionDays;
@@ -3142,7 +3180,7 @@ var UsageService = class {
 			appliedAt: marker.appliedAt ?? Date.now(),
 			buckets: marker.corrected.size,
 			removedTokens: 0,
-			corrected: [...marker.corrected].filter((key) => this.ledger.days[key.slice(0, 10)] !== void 0).slice(0, REPAIR_CORRECTED_MAX)
+			corrected: [...marker.corrected].filter((key) => this.ledger.days[key.slice(0, 10)] !== void 0).sort((a, b) => a < b ? 1 : a > b ? -1 : 0).slice(0, REPAIR_CORRECTED_MAX)
 		}).catch(() => void 0);
 		const fileWrittenAt = await stat(this.ledgerPath).then((info) => info.mtimeMs).catch(() => void 0);
 		if (fileWrittenAt !== void 0) this.ledgerWrittenAt = fileWrittenAt;
@@ -3158,7 +3196,7 @@ var UsageService = class {
 			const written = await this.persistRepair(repaired.repaired);
 			if (written !== void 0 && written.corrected.size > 0) {
 				const oldest = localDateKey(Date.now() - (Math.max(1, this.options.retainDays) - 1) * 864e5);
-				const kept = [...this.repairCorrected].filter((key) => key.slice(0, 10) >= oldest && this.ledger.days[key.slice(0, 10)] !== void 0).slice(0, REPAIR_CORRECTED_MAX);
+				const kept = [...this.repairCorrected].filter((key) => key.slice(0, 10) >= oldest && this.ledger.days[key.slice(0, 10)] !== void 0).sort((a, b) => a < b ? 1 : a > b ? -1 : 0).slice(0, REPAIR_CORRECTED_MAX);
 				await writeJsonAtomic(join(this.persistDir, DEDUPE_MARKER_FILE), {
 					version: 3,
 					appliedAt: Date.now(),
@@ -3178,8 +3216,11 @@ var UsageService = class {
 		}
 		this.loadRetries = 0;
 		this.ledgerWritten = structuredClone(this.ledger);
-		if (read.kind !== "corrupt") this.ledgerError = void 0;
-		if (repaired.short > 0) this.note("repair-short", `${repaired.short} bucket(s) hold fewer calls than the duplicate-free replay — the ledger may be missing calls`);
+		if (read.kind !== "corrupt" && !quarantinedUnreadable) this.ledgerError = void 0;
+		if (repaired.short > 0) {
+			const which = repaired.short === 1 ? "bucket holds" : "buckets hold";
+			this.note("repair-short", `${repaired.short} ${which} fewer calls than the duplicate-free replay — the ledger may be missing calls`);
+		}
 		this.scheduleFlush();
 	}
 	/**
@@ -3230,8 +3271,11 @@ var UsageService = class {
 	}
 	/** The notes as one line, oldest first, capped so the panel stays readable. */
 	ledgerNoteText() {
-		const texts = [...this.notes.values()].slice(-3);
-		return texts.length === 0 ? void 0 : texts.join("; ");
+		const entries = [...this.notes.entries()];
+		const always = entries.filter(([kind]) => LEDGER_NOTE_ALWAYS.includes(kind));
+		const rest = entries.filter(([kind]) => !LEDGER_NOTE_ALWAYS.includes(kind));
+		const kept = [...always, ...rest.slice(-Math.max(0, LEDGER_NOTE_MAX - always.length))];
+		return kept.length === 0 ? void 0 : kept.map(([, text]) => text).join("; ");
 	}
 	/** Retry a ledger read that failed for a transient reason (lock, sharing). */
 	scheduleLoadRetry() {
@@ -3360,14 +3404,15 @@ var UsageService = class {
 	* which is how a correction became permanent inflation. Days the copy alone
 	* knows about are kept — those are history this file no longer has.
 	*/
-	clampToOwnTotals(doc) {
+	clampToOwnTotals(doc, onlyCorrected = false) {
 		for (const [dayKey, providers] of Object.entries(doc.days)) {
 			const own = this.ledger.days[dayKey];
 			if (own === void 0) continue;
 			for (const [provider, models] of Object.entries(providers)) for (const [model, bucket] of Object.entries(models)) {
+				if (onlyCorrected && !this.repairCorrected.has(repairKey(dayKey, provider, model))) continue;
 				const mine = findLedgerBucket(own, provider, model)?.totals;
 				if (mine === void 0) continue;
-				if (!(bucket.calls > mine.calls || bucket.inputTokens > mine.inputTokens || bucket.outputTokens > mine.outputTokens || bucket.cacheReadTokens > mine.cacheReadTokens || bucket.cacheWriteTokens > mine.cacheWriteTokens || bucket.cost > mine.cost)) continue;
+				if (!(bucket.calls > mine.calls || bucket.inputTokens > mine.inputTokens || bucket.outputTokens > mine.outputTokens || bucket.cacheReadTokens > mine.cacheReadTokens || bucket.cacheWriteTokens > mine.cacheWriteTokens || bucket.reasoningTokens > mine.reasoningTokens || bucket.cost > mine.cost)) continue;
 				models[model] = {
 					calls: Math.min(bucket.calls, mine.calls),
 					inputTokens: Math.min(bucket.inputTokens, mine.inputTokens),
@@ -3448,7 +3493,11 @@ var UsageService = class {
 				continue;
 			}
 			if (repairCopies(target.totals, clean, duplicate.totals) === void 0) continue;
-			const next = this.priceBucket(duplicate.dayKey, target.provider, target.model, clean);
+			const priced = this.priceBucket(duplicate.dayKey, target.provider, target.model, clean);
+			const next = {
+				...priced,
+				cost: Math.min(target.totals.cost, priced.cost)
+			};
 			this.ledger.days[duplicate.dayKey][target.provider][target.model] = next;
 			repaired.set(key, {
 				...duplicate,
@@ -3698,6 +3747,7 @@ var UsageService = class {
 						const local = this.ledger.days[day];
 						const kept = {};
 						for (const [provider, models] of Object.entries(buckets)) for (const [model, totals] of Object.entries(models)) {
+							if (this.repairCorrected.has(repairKey(day, provider, model))) continue;
 							const mine = findLedgerBucket(local, provider, model)?.totals;
 							const extra = mine === void 0 ? totals : subtractTotals(totals, mine);
 							if (extra.calls <= 0) continue;
@@ -3709,7 +3759,7 @@ var UsageService = class {
 						}
 						if (Object.keys(kept).length > 0) unrecorded[day] = kept;
 					}
-					peers.push({
+					if (taken > 0) peers.push({
 						deviceId,
 						machine: void 0,
 						doc: {
@@ -3718,12 +3768,12 @@ var UsageService = class {
 						},
 						updatedAt: info.mtimeMs
 					});
-					this.note(`unverified:${deviceId}`, taken === 0 ? `${name}: unverified (no machine id in the document), and every bucket in it is already recorded here, so it was not counted` : `${name}: unverified (no machine id in the document), so only what the ${taken} bucket(s) hold beyond this machine's own record were counted`);
+					this.note(`unverified:${deviceId}`, taken === 0 ? `${name}: unverified (no machine id in the document), and every bucket in it is already recorded here, so it was not counted` : `${name}: unverified (no machine id in the document), so only what the ${taken} ${taken === 1 ? "bucket holds" : "buckets hold"} beyond this machine's own record were counted`);
 					continue;
 				}
 				if (parsed.machine !== void 0 && this.sameMachine(parsed.machine)) {
 					const doc = this.windowedDocument(parsed.doc);
-					if (this.seenRepairedAt > 0 && info.mtimeMs < this.seenRepairedAt) this.clampToOwnTotals(doc);
+					this.clampToOwnTotals(doc, true);
 					mergeLedgerMax(this.ledger, doc);
 					this.note(`renamed:${deviceId}`, `${name}: this machine under an older name, folded in rather than summed`);
 					continue;
