@@ -23,11 +23,11 @@ export interface PeakBadgeProps {
 
 /** HH:MM of one instant; an unparsable instant drops the time. */
 export function formatClock(ms: number): string {
-  try {
-    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  } catch {
-    return ''
-  }
+  const date = new Date(ms)
+  if (Number.isNaN(date.getTime())) return ''
+  // Local parts, padded: `toLocaleTimeString` renders "上午9:00" or "9:00 AM"
+  // depending on the host locale, and this string sits inside a sentence.
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
 /** The peak/off-peak marker itself; nothing renders outside the DeepSeek family. */

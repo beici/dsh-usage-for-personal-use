@@ -419,7 +419,15 @@ function useWindowDays(
 ): WindowDays {
   const signature = dateKeys.join(',')
   const [load, setLoad] = useState<WindowDays>(() => ({ status: dateKeys.length === 0 ? 'ready' : 'loading', days: {}, failedDates: [] }))
+  // The stamp the days on screen were read from. A moved stamp is not a retry:
+  // those days describe a ledger that no longer exists, and keeping them (with
+  // the settled status that hides the pending marker) printed a total the ledger
+  // does not support until the refetch landed. A retry of the same stamp still
+  // keeps them, which is what stops a flaky request from wiping the card.
+  const lastStamp = useRef<string | undefined>(undefined)
   useEffect(() => {
+    const moved = lastStamp.current !== undefined && lastStamp.current !== stamp
+    lastStamp.current = stamp
     const wanted = signature === '' ? [] : signature.split(',')
     const days: Record<string, UsageDayView> = {}
     const failedDates: string[] = []
@@ -438,8 +446,10 @@ function useWindowDays(
     let cancelled = false
     // The first load starts from "…"; a retry keeps whatever the last attempt
     // settled on. Flipping back to the loading state on every attempt made a
-    // flaky request look like the panel had lost its data.
-    setLoad((previous) => (previous.status === 'ready' ? previous : { status: 'loading', days, failedDates }))
+    // flaky request look like the panel had lost its data. A moved stamp drops
+    // what is on screen instead: `days` already holds only the dates read from
+    // the current history, so the window shows "…" where it has no answer.
+    setLoad((previous) => (moved || previous.status !== 'ready' ? { status: 'loading', days, failedDates } : previous))
     let failed = 0
     let firstError: string | undefined
     void mapPool(missing, DAY_FETCH_CONCURRENCY, async (date) => {
@@ -580,6 +590,8 @@ function useRangeData(
   const empty = window !== undefined && span === undefined
   const key = span === undefined ? '' : `${span.from}:${span.to}`
   const [load, setLoad] = useState<RangeLoad>({ status: 'idle' })
+  // The history the aggregate on screen was read from; see the day path.
+  const lastStamp = useRef<string | undefined>(undefined)
   useEffect(() => {
     if (empty) {
       setLoad((previous) => (previous.status === 'ready' && previous.series?.length === 0 ? previous : { status: 'ready', series: [] }))
@@ -600,8 +612,13 @@ function useRangeData(
     let cancelled = false
     // A retry keeps the previous answer — and its failure line — on screen: the
     // tile shows "—" while a window is failed, and flipping to "…" on every
-    // attempt made a flaky request look like the panel had lost its data.
-    setLoad((previous) => (previous.status === 'ready' || previous.status === 'error' ? previous : { status: 'loading' }))
+    // attempt made a flaky request look like the panel had lost its data. A
+    // moved stamp is not a retry: the aggregate describes a ledger that no longer
+    // exists, so the tile goes back to "…" rather than stating the old total
+    // until the refetch lands.
+    const moved = lastStamp.current !== undefined && lastStamp.current !== stamp
+    lastStamp.current = stamp
+    setLoad((previous) => (moved ? { status: 'loading' } : previous.status === 'ready' || previous.status === 'error' ? previous : { status: 'loading' }))
     requestRange(loadRange, key.slice(0, 10), key.slice(11), stamp).then(
       (response) => {
         if (cancelled) return
@@ -1675,7 +1692,11 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
           rangeKey={rangeKey}
           onSelect={setRangeKey}
           tiles={tiles}
-          custom={customPicked ? customWindow : { from: '', to: '' }}
+          // Each box shows the value typed into it: passing the normalized window
+          // here moved a start the user had just typed into the end box when the
+          // pair came out inverted. The window itself is still normalized (see
+          // customWindow) — only the fields keep their own values.
+          custom={customPicked ? { from: pickedFrom, to: pickedTo } : { from: '', to: '' }}
           // The `min`/`max` attributes stop the picker's own calendar, not a
           // typed or pasted date, so the future end is clamped here as well.
           // A start before the ledger is left as typed — see clampDay.
@@ -2001,7 +2022,7 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
             {drawError !== undefined && (
             <>
               <span className={styles.errorLine} title={drawError} aria-describedby={drawDetailId}>
-                {t('usage.bank.drawError', { error: describeError(drawError) })}
+                {t('usage.bank.drawError', { error: describeError(drawError, 'usage.bank.drawFailed') })}
               </span>
               <span id={drawDetailId} className={styles.srOnly}>{drawError}</span>
             </>
@@ -2023,7 +2044,9 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
                 ? t('usage.bank.spend.observed', { cost: observedSpend.cny.toFixed(2), since: formatDay(observedSpend.since) })
                 : t('usage.bank.spend.estimated', { cost: data.cost.toFixed(2) })}
             </span>
-            <span className={styles.muted}>{t('usage.bank.window', { from: data.from, to: data.to })}</span>
+            <span className={styles.muted}>
+              {data.from === data.to ? data.from : t('usage.bank.window', { from: data.from, to: data.to })}
+            </span>
             <div className={styles.buttonRow}>
               <button type="button" className={styles.refreshBtn} onClick={onSave} disabled={saving}>
                 {saving ? t('usage.bank.saving') : t('usage.bank.save')}

@@ -142,6 +142,7 @@ window.__ModuleLoader__.load({
 			"usage.bank.saving": "正在生成…",
 			"usage.bank.share": "分享",
 			"usage.bank.drawError": "票券生成失败：{error}",
+			"usage.bank.drawFailed": "票券生成失败（本机绘制出错）",
 			"usage.bank.saveError": "票券保存失败：{error}",
 			"usage.foot.cost": "今日消费",
 			"usage.foot.noData": "今日暂无用量",
@@ -275,6 +276,7 @@ window.__ModuleLoader__.load({
 			"usage.bank.saving": "Rendering…",
 			"usage.bank.share": "Share",
 			"usage.bank.drawError": "Failed to render the voucher: {error}",
+			"usage.bank.drawFailed": "Failed to render the voucher on this device",
 			"usage.bank.saveError": "Failed to save the voucher: {error}",
 			"usage.foot.cost": "Today spend",
 			"usage.foot.noData": "No usage yet today",
@@ -479,14 +481,9 @@ window.__ModuleLoader__.load({
 		//#region src/client/PeakBadge.tsx
 		/** HH:MM of one instant; an unparsable instant drops the time. */
 		function formatClock(ms) {
-			try {
-				return new Date(ms).toLocaleTimeString([], {
-					hour: "2-digit",
-					minute: "2-digit"
-				});
-			} catch {
-				return "";
-			}
+			const date = new Date(ms);
+			if (Number.isNaN(date.getTime())) return "";
+			return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 		}
 		/** The peak/off-peak marker itself; nothing renders outside the DeepSeek family. */
 		function PeakBadge(props) {
@@ -2086,7 +2083,8 @@ window.__ModuleLoader__.load({
 			ctx.fillText("whale yuan", centerX, Math.round(art.height * .8));
 			ctx.fillStyle = SEAL_RED;
 			ctx.font = `500 ${Math.round(art.height * .026)}px ${DENOMINATION_FONT}`;
-			ctx.fillText(`NO.${voucherSerial(face)} ${data.from} - ${data.to}`, centerX, Math.round(art.height * .845));
+			const span = data.from === data.to ? data.from : `${data.from} - ${data.to}`;
+			ctx.fillText(`NO.${voucherSerial(face)} ${span}`, centerX, Math.round(art.height * .845));
 		}
 		//#endregion
 		//#region src/client/DeviceSyncCard.tsx
@@ -2227,7 +2225,7 @@ window.__ModuleLoader__.load({
 				}
 				setCopying(true);
 				setNotice(void 0);
-				withTimeout(clipboard.writeText(deviceId)).then(() => {
+				withTimeout(Promise.resolve().then(() => clipboard.writeText(deviceId))).then(() => {
 					setCopied(true);
 					if (copiedTimer.current !== void 0) window.clearTimeout(copiedTimer.current);
 					copiedTimer.current = window.setTimeout(() => {
@@ -2655,7 +2653,10 @@ window.__ModuleLoader__.load({
 				days: {},
 				failedDates: []
 			}));
+			const lastStamp = (0, react.useRef)(void 0);
 			(0, react.useEffect)(() => {
+				const moved = lastStamp.current !== void 0 && lastStamp.current !== stamp;
+				lastStamp.current = stamp;
 				const wanted = signature === "" ? [] : signature.split(",");
 				const days = {};
 				const failedDates = [];
@@ -2674,11 +2675,11 @@ window.__ModuleLoader__.load({
 					return;
 				}
 				let cancelled = false;
-				setLoad((previous) => previous.status === "ready" ? previous : {
+				setLoad((previous) => moved || previous.status !== "ready" ? {
 					status: "loading",
 					days,
 					failedDates
-				});
+				} : previous);
 				let failed = 0;
 				let firstError;
 				mapPool(missing, DAY_FETCH_CONCURRENCY, async (date) => {
@@ -2797,6 +2798,7 @@ window.__ModuleLoader__.load({
 			const empty = window !== void 0 && span === void 0;
 			const key = span === void 0 ? "" : `${span.from}:${span.to}`;
 			const [load, setLoad] = (0, react.useState)({ status: "idle" });
+			const lastStamp = (0, react.useRef)(void 0);
 			(0, react.useEffect)(() => {
 				if (empty) {
 					setLoad((previous) => previous.status === "ready" && previous.series?.length === 0 ? previous : {
@@ -2819,7 +2821,9 @@ window.__ModuleLoader__.load({
 					return;
 				}
 				let cancelled = false;
-				setLoad((previous) => previous.status === "ready" || previous.status === "error" ? previous : { status: "loading" });
+				const moved = lastStamp.current !== void 0 && lastStamp.current !== stamp;
+				lastStamp.current = stamp;
+				setLoad((previous) => moved ? { status: "loading" } : previous.status === "ready" || previous.status === "error" ? previous : { status: "loading" });
 				requestRange(loadRange, key.slice(0, 10), key.slice(11), stamp).then((response) => {
 					if (cancelled) return;
 					const stored = rangeResults.get(key);
@@ -3886,7 +3890,10 @@ window.__ModuleLoader__.load({
 								rangeKey,
 								onSelect: setRangeKey,
 								tiles,
-								custom: customPicked ? customWindow : {
+								custom: customPicked ? {
+									from: pickedFrom,
+									to: pickedTo
+								} : {
 									from: "",
 									to: ""
 								},
@@ -4212,7 +4219,7 @@ window.__ModuleLoader__.load({
 						className: usage_module_css_default.errorLine,
 						title: drawError,
 						"aria-describedby": drawDetailId,
-						children: t("usage.bank.drawError", { error: describeError(drawError) })
+						children: t("usage.bank.drawError", { error: describeError(drawError, "usage.bank.drawFailed") })
 					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 						id: drawDetailId,
 						className: usage_module_css_default.srOnly,
@@ -4250,7 +4257,7 @@ window.__ModuleLoader__.load({
 					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 						className: usage_module_css_default.muted,
-						children: t("usage.bank.window", {
+						children: data.from === data.to ? data.from : t("usage.bank.window", {
 							from: data.from,
 							to: data.to
 						})

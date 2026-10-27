@@ -102,6 +102,7 @@ export declare const zh: {
     'usage.bank.saving': string;
     'usage.bank.share': string;
     'usage.bank.drawError': string;
+    'usage.bank.drawFailed': string;
     'usage.bank.saveError': string;
     'usage.foot.cost': string;
     'usage.foot.noData': string;

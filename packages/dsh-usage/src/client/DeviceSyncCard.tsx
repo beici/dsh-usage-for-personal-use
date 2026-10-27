@@ -183,7 +183,11 @@ export function DeviceSyncCard(props: {
     }
     setCopying(true)
     setNotice(undefined)
-    void withTimeout(clipboard.writeText(deviceId)).then(
+    // The call is wrapped in a resolved promise so a *synchronous* throw (a
+    // policy-blocked webview, a patched clipboard) lands in the same rejection
+    // path: evaluating it as the argument skipped both handlers and left the
+    // button disabled and the card busy for the life of the mount.
+    void withTimeout(Promise.resolve().then(() => clipboard.writeText(deviceId))).then(
       () => {
         setCopied(true)
         // One pending revert at a time: a second copy must not be undone by the

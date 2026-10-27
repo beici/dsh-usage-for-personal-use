@@ -409,8 +409,9 @@ async function writeTranscript(home, lines, session = 'sess1') {
   const { localDeviceId } = await load('host/device-ledger.ts')
   const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
   const bucket = (input, output, calls) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
-  // clean 400/20 over 2 calls + copy 100/10 + two real calls 200/20.
-  await writeFile(ledgerPath, JSON.stringify({ version: 1, days: { '2026-10-16': { buddy: { m1: bucket(700, 50, 5) } } } }))
+  // clean 400/20 over 2 calls + copy 100/10 + two real calls 200/15: the growth
+  // is three calls but only 325 tokens, where three copies would be 330.
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, days: { '2026-10-16': { buddy: { m1: bucket(700, 45, 5) } } } }))
 
   const { UsageService } = await load('host/usage-service.ts')
   const first = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
@@ -673,14 +674,14 @@ async function writeTranscript(home, lines, session = 'sess1') {
   const { localDeviceId } = await load('host/device-ledger.ts')
   const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
   const bucket = (input, output, calls) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
-  await writeFile(ledgerPath, JSON.stringify({ version: 1, days: { '2026-10-16': { buddy: { m1: bucket(700, 50, 5) } } } }))
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, days: { '2026-10-16': { buddy: { m1: bucket(700, 45, 5) } } } }))
   const { UsageService } = await load('host/usage-service.ts')
   const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
   await svc.loadPersisted()
   await svc.stop()
   // Another process folded two more real calls into the same bucket afterwards.
   const grown = JSON.parse(await readFile(ledgerPath, 'utf8'))
-  grown.days['2026-10-16'].buddy.m1 = bucket(900, 70, 7)
+  grown.days['2026-10-16'].buddy.m1 = bucket(900, 65, 7)
   await writeFile(ledgerPath, JSON.stringify(grown))
   const next = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
   await next.loadPersisted()
@@ -2154,6 +2155,199 @@ async function writeTranscript(home, lines, session = 'sess1') {
   })
   const answer = await svc.importPeer(text).then(() => 'ok', (error) => String(error))
   check('a BOM-prefixed export imports', answer === 'ok', answer)
+  await svc.stop()
+}
+
+// ---- a repair record without floors does not subtract again --------------
+// The record is what says which buckets were already corrected. A record that
+// exists but yields no floors (the shape builds before c8d5b7e wrote, or a
+// hand-damaged one) made every bucket look untouched, so the copies were taken
+// out a second time — and a wrong subtraction cannot be merged back.
+{
+  const home = await freshHome()
+  const at = new Date('2026-10-16T09:00:00').getTime()
+  const call = (id, input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { id, source: { provider: 'buddy', model: 'm1' } },
+    },
+  })
+  await writeTranscript(home, [call('msg-1', 100)], 'parent')
+  await writeTranscript(home, [call('msg-1', 100), call('msg-2', 300)], 'child')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const inflated = {
+    version: 1,
+    days: { '2026-10-16': { buddy: { m1: { inputTokens: 500, outputTokens: 30, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 3, cost: 0 } } } },
+  }
+  await writeFile(join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`), JSON.stringify(inflated))
+  // The v1 record: an instant and a count, no per-bucket floors.
+  await writeFile(join(home, 'dsh-usage', 'usage-dedupe-marker.json'), JSON.stringify({
+    version: 1,
+    appliedAt: Date.now() - 86_400_000,
+    buckets: 1,
+    removedTokens: 100,
+  }))
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const day = svc.overview().usage.days.find((row) => row.date === '2026-10-16')
+  check('a record without floors does not subtract again', day?.totals.calls === 3 && day?.totals.inputTokens === 500, `${day?.totals.calls}/${day?.totals.inputTokens}`)
+  const note = String(svc.overview().usage.ledgerNote ?? '')
+  check('an unusable record is reported', note.includes('repair record could not be read'), note)
+  await svc.stop()
+
+  // The same record with a BOM is read, so its floors apply and the gate keeps
+  // the bucket: a record this plugin wrote is never "unreadable" because of an
+  // editor's BOM.
+  const bommed = await freshHome()
+  await writeTranscript(bommed, [call('msg-1', 100)], 'parent')
+  await writeTranscript(bommed, [call('msg-1', 100), call('msg-2', 300)], 'child')
+  await writeFile(join(bommed, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`), JSON.stringify(inflated))
+  await writeFile(join(bommed, 'dsh-usage', 'usage-dedupe-marker.json'), '\uFEFF' + JSON.stringify({
+    version: 2,
+    appliedAt: Date.now() - 86_400_000,
+    after: { '2026-10-16\u0000buddy\u0000m1': { inputTokens: 400, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 2, cost: 0 } },
+  }))
+  const second = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await second.loadPersisted()
+  const kept = second.overview().usage.days.find((row) => row.date === '2026-10-16')
+  check('a BOM-prefixed repair record still guards its buckets', kept?.totals.calls === 3 && kept?.totals.inputTokens === 500, `${kept?.totals.calls}/${kept?.totals.inputTokens}`)
+  await second.stop()
+}
+
+// ---- two files naming one machine are folded, not summed ----------------
+// A peer host that is renamed mints a new device id while `machine-id.json`
+// keeps the pin, and the old export can still sit beside the new one: summing
+// both counted that peer's calls twice.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const day = localDateKey(Date.now() - 2 * 86_400_000)
+  await mkdir(dir, { recursive: true })
+  for (const name of ['peer-old', 'peer-new']) {
+    await writeFile(join(dir, `usage-ledger.${name}.json`), JSON.stringify({
+      schema: 'dsh-usage-ledger',
+      version: 1,
+      deviceId: name,
+      machine: 'peer-machine-1',
+      days: { [day]: { buddy: { m1: bucket(100, 4) } } },
+    }))
+  }
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const totals = svc.overview().usage.all.totals
+  check('one machine under two file names counts once', totals.calls === 4 && totals.inputTokens === 100, `${totals.calls}/${totals.inputTokens}`)
+  const devices = svc.overview().usage.devices
+  check('the folded file is not listed as a second device', devices.length === 2, String(devices.length))
+  await svc.stop()
+}
+
+// ---- a BOM-prefixed pre-migration ledger is adopted ---------------------
+// The migration read the old file with a raw JSON.parse, so a BOM left the
+// pre-migration history in place and the migration silently did nothing.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  const { localDateKey } = await load('core/ledger.ts')
+  const bucket = (input, calls) => ({ inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls, cost: 0 })
+  const older = localDateKey(Date.now() - 4 * 86_400_000)
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, 'usage-ledger.json'), '\uFEFF' + JSON.stringify({ version: 1, days: { [older]: { buddy: { m1: bucket(100, 7) } } } }))
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const device = JSON.parse(await readFile(join(dir, 'usage-ledger.' + localDeviceId() + '.json'), 'utf8'))
+  check('a BOM-prefixed pre-migration ledger is adopted', device.days[older]?.buddy?.m1?.calls === 7, JSON.stringify(device.days).slice(0, 120))
+  await svc.stop()
+}
+
+// ---- quarantine keeps the newest instant, whatever the kind ------------
+// The tiebreak compared whole names, and `corrupt-` sorts before `unreadable-`,
+// so at one mtime the kind decided which copy counted as newer.
+{
+  const home = await freshHome()
+  const dir = join(home, 'dsh-usage')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const { UsageService } = await load('host/usage-service.ts')
+  await mkdir(dir, { recursive: true })
+  const ledgerPath = join(dir, 'usage-ledger.' + localDeviceId() + '.json')
+  const ledgerName = 'usage-ledger.' + localDeviceId() + '.json'
+  const at = new Date('2026-10-20T10:00:00')
+  for (const name of [`${ledgerName}.corrupt-9999.json`, `${ledgerName}.corrupt-8888.json`, `${ledgerName}.unreadable-1111.json`, `${ledgerName}.unreadable-1000.json`]) {
+    await writeFile(join(dir, name), '{}')
+    await utimes(join(dir, name), at, at)
+  }
+  // A corrupt ledger: the load quarantines it and trims the copies.
+  await writeFile(ledgerPath, '{')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const left = (await readdir(dir)).filter((name) => name.includes('.corrupt-') || name.includes('.unreadable-')).sort()
+  check('quarantine keeps three copies', left.length === 3, left.join(','))
+  check('quarantine keeps the newest instants', left.includes(`${ledgerName}.corrupt-9999.json`) && left.includes(`${ledgerName}.corrupt-8888.json`), left.join(','))
+  await svc.stop()
+}
+
+// ---- an export carries the window its days were pruned to ---------------
+// The envelope omitted `retentionDays`, so the receiving side could never learn
+// a real sender's window and fell back to its own.
+{
+  const senderHome = await freshHome()
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 90 })
+  await svc.loadPersisted()
+  const exported = svc.exportLedger()
+  check('an export carries the window it pruned to', exported.retentionDays === 90, String(exported.retentionDays))
+  await svc.stop()
+
+  const receiverHome = await freshHome()
+  const target = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 365 })
+  await target.loadPersisted()
+  // A real export comes from another machine, so the sender id is not this one.
+  const payload = { ...exported, deviceId: 'sender-device' }
+  await target.importPeer(JSON.stringify(payload))
+  const peer = JSON.parse(await readFile(join(receiverHome, 'dsh-usage', 'usage-ledger.sender-device.json'), 'utf8'))
+  check('an imported export keeps the sender window', peer.retentionDays === 90, String(peer.retentionDays))
+  await target.stop()
+}
+
+// ---- a bucket holding two copies is corrected in the file too ------------
+// Builds before the dedupe folded one copy per restart, so a bucket can sit two
+// or three copies above the truth. The in-memory pass accepted whole multiples
+// while the write-time re-check still demanded exactly one — the repair then
+// looked right in memory and the file kept the inflated total forever.
+{
+  const home = await freshHome()
+  const at = new Date('2026-10-16T09:00:00').getTime()
+  const call = (id, input) => JSON.stringify({
+    type: 'assistant/message',
+    time: at,
+    data: {
+      usage: { inputTokens: input, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      message: { id, source: { provider: 'buddy', model: 'm1' } },
+    },
+  })
+  await writeTranscript(home, [call('msg-1', 100)], 'parent')
+  await writeTranscript(home, [call('msg-1', 100), call('msg-2', 300)], 'child')
+  const { localDeviceId } = await load('host/device-ledger.ts')
+  const ledgerPath = join(home, 'dsh-usage', `usage-ledger.${localDeviceId()}.json`)
+  // clean 400/20 over 2 calls, and two copies of the 100/10 call on top.
+  const bucket = { inputTokens: 600, outputTokens: 40, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 4, cost: 0 }
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, days: { '2026-10-16': { buddy: { m1: bucket } } } }))
+  const { UsageService } = await load('host/usage-service.ts')
+  const svc = new UsageService(ctxStub, { pollIntervalSec: 60, retainDays: 180 })
+  await svc.loadPersisted()
+  const inMemory = svc.ledger.days['2026-10-16']?.buddy?.m1
+  check('two copies are taken out in memory', inMemory?.calls === 2 && inMemory?.inputTokens === 400, `${inMemory?.calls}/${inMemory?.inputTokens}`)
+  const onDisk = JSON.parse(await readFile(ledgerPath, 'utf8')).days['2026-10-16'].buddy.m1
+  check('two copies are taken out in the file too', onDisk.calls === 2 && onDisk.inputTokens === 400, `${onDisk.calls}/${onDisk.inputTokens}`)
+  const marker = JSON.parse(await readFile(join(home, 'dsh-usage', 'usage-dedupe-marker.json'), 'utf8'))
+  check('the correction is recorded', marker.buckets === 1 && marker.removedTokens === 220, `${marker.buckets}/${marker.removedTokens}`)
   await svc.stop()
 }
 

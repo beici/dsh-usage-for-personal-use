@@ -3005,6 +3005,307 @@ const palette = await import(new URL('../packages/dsh-usage/src/client/model-col
     'provider wording')
 }
 
+// ---- a superseded ledger history does not keep the old total on screen ----
+// The day cache was keyed by date alone, so a snapshot whose ledger had moved on
+// (a peer import, a late backfill) kept serving the days read before the move:
+// the 近 30 天 tile went on stating the old total as if it were current. A window
+// now remembers the stamp its visible days were read from and drops them when the
+// stamp moves, so the tile says "…" until the refetch lands.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  let state = { snapshot: JSON.parse(JSON.stringify(overview)), status: 'ready', error: null }
+  const storeListeners = new Set()
+  const localStore = {
+    getSnapshot: () => state,
+    subscribe: (fn) => { storeListeners.add(fn); return () => storeListeners.delete(fn) },
+  }
+  // The re-read sees the tokens the moved stamp announced, so the total the tile
+  // ends on is not the one it started from.
+  const grownDay = (date) => {
+    const view = JSON.parse(JSON.stringify(days[date]))
+    view.totals.inputTokens += 1_000_000
+    return view
+  }
+  let hang = false
+  const parked = []
+  const gatedDay = (date) => {
+    if (!hang) return loadDay(date)
+    // Parked: the refetch never settles while the test holds it, which is the
+    // in-flight state under test.
+    return new Promise((resolve) => { parked.push(() => resolve(grownDay(date))) })
+  }
+  const localRoot = ReactDOMClient.createRoot(host)
+  const tileOf = (label) => [...host.querySelectorAll('[data-dsh-part="range-tiles"] button')]
+    .find((button) => text(button).includes(label))
+  const tileValue = () => text(tileOf('近 30 天')?.querySelector('[class*="rangeTileValue"]'))
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay: gatedDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 200)) })
+  await act(async () => {
+    tileOf('近 30 天')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 200))
+  })
+  check('the 近 30 天 tile states the settled total before the ledger moves',
+    tileValue() === '135M', tileValue())
+  // The ledger grows behind the card while every day the tile is showing was read
+  // before the move: the stamp moves, the days do not match it any more. Today is
+  // counted from the overview rather than from a fetch, so its share of the growth
+  // lands in the snapshot as well — the total the tile ends on then holds whichever
+  // half of the window it reads.
+  hang = true
+  await act(async () => {
+    const next = JSON.parse(JSON.stringify(overview))
+    next.updatedAt = overview.updatedAt + 60000
+    next.usage.all.totals.inputTokens += 4_000_000
+    next.usage.today.totals.inputTokens += 1_000_000
+    state = { snapshot: next, status: 'ready', error: null }
+    for (const listener of storeListeners) listener()
+    await new Promise((r) => setTimeout(r, 150))
+  })
+  check('a moved ledger stamp drops the 近 30 天 figure while the refetch is in flight',
+    tileValue() === '…', tileValue() + ' parked=' + parked.length)
+  await act(async () => {
+    for (const release of parked.splice(0)) release()
+    await new Promise((r) => setTimeout(r, 250))
+  })
+  check('the re-read days put the grown total on the tile',
+    tileValue() === '139M', tileValue())
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
+// ---- a single-day voucher states its date once ---------------------------
+// The bank line printed the span form for a one-day window too
+// ("2026-10-20 ~ 2026-10-20"), so a reader who picked one day saw the date twice
+// around a tilde that meant nothing.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const single = JSON.parse(JSON.stringify(overview))
+  // The fixture's routes mint no whale yuan, and a note without a face value
+  // renders no window line at all: one mint-family row puts the line on screen.
+  const mintTotals = { inputTokens: 900000, outputTokens: 300000, cacheReadTokens: 600000, cacheWriteTokens: 0, reasoningTokens: 0, calls: 9, cost: 1.2 }
+  single.usage.today.providers = [...single.usage.today.providers, { provider: 'deepseek', totals: mintTotals, models: [] }]
+  const state = { snapshot: single, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  const realGetContext = window.HTMLCanvasElement.prototype.getContext
+  try {
+    // jsdom ships no 2D context, so the artwork draw fails and says so; that is a
+    // different sentence from the one under test here.
+    window.HTMLCanvasElement.prototype.getContext = () => null
+    await act(async () => {
+      localRoot.render(React.createElement(UsageSectionCard, {
+        store: localStore,
+        poll: () => {},
+        refresh: () => {},
+        loadDay,
+        loadRange,
+        settings,
+        deviceSync,
+        close: () => {},
+      }))
+    })
+    await act(async () => { await new Promise((r) => setTimeout(r, 200)) })
+    const bankTab = [...host.querySelectorAll('[role="tab"]')].find((tab) => text(tab).includes('Token 银行'))
+    await act(async () => {
+      bankTab?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+      await new Promise((r) => setTimeout(r, 150))
+    })
+    // Today is answered from the snapshot, so the single-day window needs no host
+    // call and cannot race a fetch.
+    const select = host.querySelector('[data-dsh-part="day-bank"] select')
+    const option = select === null ? null : [...select.querySelectorAll('option')].find((entry) => entry.value === '2026-10-20')
+    if (select !== null && option !== null) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set
+      await act(async () => {
+        setter.call(select, '2026-10-20')
+        select.dispatchEvent(new window.Event('change', { bubbles: true }))
+      })
+      await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+    }
+    const cardText = text(host.querySelector('[data-dsh-part="bank-card"]'))
+    const occurrences = cardText.split('2026-10-20').length - 1
+    check('a single-day voucher states its date once',
+      occurrences === 1 && !cardText.includes('~'), 'occurrences=' + occurrences + ' ' + cardText)
+  } finally {
+    window.HTMLCanvasElement.prototype.getContext = realGetContext
+    await act(async () => { localRoot.unmount() })
+    host.remove()
+  }
+}
+
+// ---- a synchronous clipboard throw releases the copy button ---------------
+// The write was evaluated as the argument of `Promise.resolve().then(...)`, so a
+// clipboard that throws synchronously (a policy-blocked webview, a patched
+// clipboard) skipped both handlers: the button stayed disabled, the card stayed
+// busy, and no sentence said the copy had failed.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const state = { snapshot, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  const realClipboard = Object.getOwnPropertyDescriptor(window.navigator, 'clipboard')
+  try {
+    await act(async () => {
+      localRoot.render(React.createElement(UsageSectionCard, {
+        store: localStore,
+        poll: () => {},
+        refresh: () => {},
+        loadDay,
+        loadRange,
+        settings,
+        deviceSync,
+        close: () => {},
+      }))
+    })
+    await act(async () => { await new Promise((r) => setTimeout(r, 200)) })
+    const card = host.querySelector('[data-dsh-part="device-card"]')
+    const copyButton = card === null
+      ? undefined
+      : [...card.querySelectorAll('button')].find((button) => text(button).includes('复制标识'))
+    Object.defineProperty(window.navigator, 'clipboard', {
+      value: { writeText: () => { throw new Error('clipboard blocked by policy') } },
+      configurable: true,
+    })
+    let thrown = null
+    try {
+      await act(async () => {
+        copyButton?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+        await new Promise((r) => setTimeout(r, 120))
+      })
+    } catch (error) {
+      // A pre-fix build lets the throw escape the click handler; keeping it from
+      // taking the run down lets the checks below report what is on screen.
+      thrown = error
+    }
+    check('a synchronous clipboard throw releases the copy button',
+      copyButton !== undefined && copyButton.disabled === false && card?.getAttribute('aria-busy') === 'false',
+      'disabled=' + copyButton?.disabled + ' busy=' + card?.getAttribute('aria-busy') + (thrown === null ? '' : ' threw=' + thrown.message))
+    const notice = host.querySelector('[data-dsh-part="device-notice"]')
+    check('a synchronous clipboard throw says the copy failed',
+      text(notice).includes('复制失败'), text(notice))
+  } finally {
+    if (realClipboard === undefined) delete window.navigator.clipboard
+    else Object.defineProperty(window.navigator, 'clipboard', realClipboard)
+    await act(async () => { localRoot.unmount() })
+    host.remove()
+  }
+}
+
+// ---- a local draw failure is not reported as a request failure ------------
+// `describeError` was called without a fallback here, so a canvas that could not
+// draw (jsdom has no 2D context, and no `Image` to decode the art) printed
+// "请求失败，请稍后再试" — a transport failure, for a machine-side problem. The
+// draw-specific sentence names it now, and the raw text stays in the title.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const mint = JSON.parse(JSON.stringify(overview))
+  const mintTotals = { inputTokens: 900000, outputTokens: 300000, cacheReadTokens: 600000, cacheWriteTokens: 0, reasoningTokens: 0, calls: 9, cost: 1.2 }
+  mint.usage.all.providers = [...mint.usage.all.providers, { provider: 'deepseek', totals: mintTotals, models: [] }]
+  const state = { snapshot: mint, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  const realGetContext = window.HTMLCanvasElement.prototype.getContext
+  try {
+    window.HTMLCanvasElement.prototype.getContext = () => null
+    await act(async () => {
+      localRoot.render(React.createElement(UsageSectionCard, {
+        store: localStore,
+        poll: () => {},
+        refresh: () => {},
+        loadDay,
+        loadRange,
+        settings,
+        deviceSync,
+        close: () => {},
+      }))
+    })
+    await act(async () => { await new Promise((r) => setTimeout(r, 200)) })
+    const bankTab = [...host.querySelectorAll('[role="tab"]')].find((tab) => text(tab).includes('Token 银行'))
+    await act(async () => {
+      bankTab?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+      await new Promise((r) => setTimeout(r, 250))
+    })
+    const errLine = host.querySelector('[data-dsh-part="bank-card"] [class*="errorLine"]')
+    const sentence = text(errLine)
+    check('a local draw failure is stated as a draw failure, not a request failure',
+      errLine !== null && sentence.includes('票券生成失败（本机绘制出错）') && !sentence.includes('请求失败'),
+      sentence === '' ? 'no error line' : sentence)
+  } finally {
+    window.HTMLCanvasElement.prototype.getContext = realGetContext
+    await act(async () => { localRoot.unmount() })
+    host.remove()
+  }
+}
+
+// ---- an inverted custom pair keeps each typed value in its own box -------
+// Typing a "from" later than the current "to" normalised the window by rewriting
+// the fields, so the date typed into one box came back in the other. The window
+// is still swapped (a range is a range), but the two inputs hold what was typed.
+{
+  const host = window.document.createElement('div')
+  window.document.body.appendChild(host)
+  const state = { snapshot, status: 'ready', error: null }
+  const localStore = { getSnapshot: () => state, subscribe: () => () => {} }
+  const localRoot = ReactDOMClient.createRoot(host)
+  await act(async () => {
+    localRoot.render(React.createElement(UsageSectionCard, {
+      store: localStore,
+      poll: () => {},
+      refresh: () => {},
+      loadDay,
+      loadRange,
+      settings,
+      deviceSync,
+      close: () => {},
+    }))
+  })
+  await act(async () => { await new Promise((r) => setTimeout(r, 200)) })
+  const tileOf = (label) => [...host.querySelectorAll('[data-dsh-part="range-tiles"] button')]
+    .find((button) => text(button).includes(label))
+  await act(async () => {
+    tileOf('近 30 天')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 150))
+  })
+  await act(async () => {
+    tileOf('自定义')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 150))
+  })
+  const dateInputs = () => [...host.querySelectorAll('[data-dsh-part="custom-range"] input[type="date"]')]
+  const typeDate = async (input, value) => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    await act(async () => {
+      setter.call(input, value)
+      input.dispatchEvent(new window.Event('input', { bubbles: true }))
+      input.dispatchEvent(new window.Event('change', { bubbles: true }))
+    })
+    await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+  }
+  if (dateInputs().length === 2) {
+    await typeDate(dateInputs()[0], '2026-10-05')
+    await typeDate(dateInputs()[1], '2026-09-01')
+  }
+  const values = dateInputs().map((input) => input.value)
+  check('an inverted custom pair keeps each typed value in its own box',
+    JSON.stringify(values) === JSON.stringify(['2026-10-05', '2026-09-01']), JSON.stringify(values))
+  await act(async () => { localRoot.unmount() })
+  host.remove()
+}
+
 const failed = report.filter((row) => !row.ok)
 console.log('\n=== ' + (report.length - failed.length) + '/' + report.length + ' checks passed ===')
 // The jsdom window keeps timers and the React scheduler alive, so the process

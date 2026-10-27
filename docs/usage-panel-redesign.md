@@ -208,6 +208,33 @@ older build records no window at all, so its days are never read as a jump. So:
   shrink is actually on disk. Keeping `retainDays` days also means dropping
   anything older than `today-(retainDays-1)`, so the widest window and "all" agree
   instead of the history keeping one extra day.
+- the replay never rebuilds a day the window already dropped. The transcripts hold
+  those days (and the very copies the repair just took out), so a start that
+  re-folded them would undo the prune, make the next prune look like a jump, and
+  leave the file with numbers worse than before the prune — a pruned 10-20 came
+  back as 3,678 calls where the correction had made it 2,958.
+- the copies come out in whole multiples, not "exactly one". Builds before the
+  dedupe folded one copy per restart, so a bucket can sit two or three copies
+  above the truth; a repair that only accepted exactly one refused that ledger
+  forever, because two copies never again look like one. Anything that is not a
+  whole number of copies is real calls the replay cannot see, and those stay. The
+  write-time re-check uses the same rule: it drifted from the in-memory pass once,
+  and the repair then corrected the ledger in memory while the file kept the
+  inflated total and the marker was never written.
+- a repair record that exists but yields no floors (written by an older build, or
+  hand-damaged) leaves every bucket alone and says so: without floors there is no
+  proof of what was already corrected, and a wrong subtraction cannot be merged
+  back.
+- peers are scanned *after* the repair. An unverified peer contributes only the
+  part of a day this machine never recorded, judged bucket by bucket — and before
+  the repair the bucket still holds the duplicate copies, so the peer's own copy
+  of those calls reads as "not recorded yet" and is added on top.
+- there is no extra "nearly everything" net for a file that records no window. Such
+  a net cannot tell a clock jump from a user who really wants a one-day window: it
+  refused that setting forever while a two-day window went straight through. A
+  prune that drops days nobody asked for is still reported out loud.
+- a `/export` envelope carries `retentionDays` too, so the receiving side learns a
+  real sender's window instead of falling back to its own.
 
 Two more things the ledger file must survive, because both end in a silent wipe:
 
@@ -503,7 +530,7 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
 ## Verification
 
 - `node harness/render-test.mjs` — jsdom, real bundle, saved live fixtures,
-  **217/217 checks**: eight tiles with correct labels/values/`aria-pressed`
+  **225/225 checks**: eight tiles with correct labels/values/`aria-pressed`
   (近 3 天 sums 今日 + 10-19; 近 6 个月 / 全部 read the range aggregate, which the
   stub answers only up to yesterday — 49.2 M / 584 calls — so their 135 M / 1251
   tiles prove the panel folded the live today in itself, and no range fetch may
@@ -572,8 +599,12 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   wedging on a hung promise, a copy-id failure stated in the card, the copy
   button naming the id it copies, and the last two error surfaces (range card,
   bank day) exposing their wire text through `aria-describedby` rather than a
-  mouse-only `title`.
-- `node --experimental-strip-types harness/host-test.mjs` — 241 checks: range
+  mouse-only `title`. Round 15 adds: a range total that steps aside (`…`) while
+  its history moves and comes back grown, a single-day voucher stating its date
+  once, a clipboard that throws synchronously still releasing the button and
+  saying the copy failed, a local draw failure told apart from a request failure,
+  and an inverted custom pair keeping each typed value in its own box.
+- `node --experimental-strip-types harness/host-test.mjs` — 254 checks: range
   aggregate + per-model series, route guards, device ledger, loopback fence,
   peak clock, the record-carried route of the live fold, transcript dedupe and
   the judged repair, ledger quarantine and unreadable-file protection, the
@@ -614,7 +645,14 @@ selection together, and each panel is a `role="tabpanel"` labelled by its tab.
   dropping whole buckets when this machine records the same day/provider/model,
   an import standing down when the ledger lock is held elsewhere, a retained
   window surviving a refused prune, and the day picker offering days only a peer
-  recorded.
+  recorded. Round 15 adds: a repair record without a floor subtracting nothing
+  (no more double subtraction from an older repair), a BOM-prefixed repair
+  record still guarding its buckets and a BOM-prefixed pre-migration ledger
+  adopted, one machine under two file names counting once, quarantine copies
+  kept by write instant (ties broken by size, then name), an export carrying the
+  window it was pruned to, two or more identical copies taken out in memory and
+  in the file (the marker recording how many), and a transcript replayed only
+  inside the retained window.
 - Live bundle serving was proven against the running host:
   `GET /plugins/events` (loopback-exempt) lists the plugin row's `rev`, and
   `GET /plugins/??@linxin666/dsh-usage/client.js&rev=<rev>` returns the new

@@ -2481,6 +2481,7 @@ var UsageService = class {
 			version: 1,
 			deviceId: this.deviceId,
 			machine: this.machine,
+			retentionDays: this.declaredWindow(),
 			exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
 			ledger: this.ledger
 		};
@@ -3010,11 +3011,11 @@ var UsageService = class {
 		await this.loadSnapshots();
 		const replay = await this.replaySessionLogs();
 		this.replayDoc = replay.doc;
-		await this.refreshPeers(true);
 		if (replay.skipped > 0) this.note("replay-cap", `${replay.skipped} older transcripts beyond the replay cap of ${SESSION_LOG_MAX_FILES} were not replayed`);
 		const prior = await this.readRepairRecord();
 		const fileWrittenAt = await stat(this.ledgerPath).then((info) => info.mtimeMs).catch(() => void 0);
-		const repaired = await this.repairDuplicatedReplay(replay, prior.floors, prior.appliedAt, fileWrittenAt);
+		const repaired = await this.repairDuplicatedReplay(replay, prior.floors, prior.appliedAt, fileWrittenAt, prior.present && prior.floors.size === 0);
+		await this.refreshPeers(true);
 		this.lastPrune = void 0;
 		this.pruneIfNeeded();
 		this.loaded = true;
@@ -3113,7 +3114,7 @@ var UsageService = class {
 			return;
 		}
 		try {
-			const parsed = JSON.parse(raw);
+			const parsed = parseJsonText(raw);
 			if (typeof parsed === "object" && parsed !== null && typeof parsed.providers === "object" && parsed.providers !== null) {
 				for (const [provider, snapshot] of Object.entries(parsed.providers)) if (typeof snapshot === "object" && snapshot !== null && typeof snapshot.provider === "string") this.snapshots.set(provider, snapshot);
 			}
@@ -3144,10 +3145,12 @@ var UsageService = class {
 			replayed: 0,
 			skipped: 0
 		};
+		const oldest = localDateKey(Date.now() - (Math.max(1, this.options.retainDays) - 1) * 864e5);
 		try {
 			const counts = await collectSessionLogUsage(join(dshHome(), "sessions"), (replay) => {
 				pass.doc = replay;
 				for (const [dayKey, providers] of Object.entries(replay.days)) {
+					if (dayKey < oldest) continue;
 					const atMs = (/* @__PURE__ */ new Date(dayKey + "T12:00:00")).getTime();
 					if (!Number.isFinite(atMs)) continue;
 					const day = this.ledger.days[dayKey] ?? (this.ledger.days[dayKey] = {});
@@ -3166,6 +3169,7 @@ var UsageService = class {
 					}
 				}
 			}, (dayKey, provider, model, totals) => {
+				if (dayKey < oldest) return;
 				const key = repairKey(dayKey, provider, model);
 				const entry = pass.duplicates.get(key);
 				if (entry === void 0) pass.duplicates.set(key, {
@@ -3181,6 +3185,35 @@ var UsageService = class {
 			pass.skipped = counts.skipped;
 		} catch {}
 		return pass;
+	}
+	/**
+	* Take the duplicate copies out of one bucket, or return `undefined` to leave
+	* it alone.
+	*
+	* `after` is where the bucket stood before the copies landed (the deduped
+	* replay, or the corrected total when re-checking a document about to be
+	* written), and `copy` is one copy's share. Copies sit on that floor in whole
+	* multiples: builds before the dedupe folded one copy per restart, so a bucket
+	* can hold two or three of them — and a repair that only accepted exactly one
+	* would refuse that ledger forever, because a bucket with two copies never
+	* again looks like a single copy. Anything that is not a whole number of
+	* copies is real calls the replay cannot see mixed in, and taking them away is
+	* the one mistake no later merge can bring back.
+	*
+	* Shared by the in-memory pass and the write-time re-check on purpose: the two
+	* drifted apart once, and the repair then corrected the ledger in memory while
+	* the file kept the inflated total.
+	*/
+	repairCopies(bucket, after, copy) {
+		const copyCalls = copy.calls;
+		const extraCalls = bucket.calls - after.calls;
+		const extraTokens = totalTokens(bucket) - totalTokens(after);
+		if (copyCalls <= 0 || extraCalls <= 0 || extraCalls % copyCalls !== 0) return void 0;
+		const copies = extraCalls / copyCalls;
+		if (extraTokens !== totalTokens(copy) * copies) return void 0;
+		let next = bucket;
+		for (let taken = 0; taken < copies; taken += 1) next = subtractTotals(next, copy);
+		return maxTotals(next, after);
 	}
 	/**
 	* Correction for the seeded-subagent duplicate.
@@ -3203,11 +3236,20 @@ var UsageService = class {
 	*   exactly what a plain "big enough to subtract" guard allows once the day
 	*   holds calls the replay cannot see.
 	*/
-	async repairDuplicatedReplay(replay, prior, repairedAt, fileWrittenAt) {
+	async repairDuplicatedReplay(replay, prior, repairedAt, fileWrittenAt, recordUnusable = false) {
 		const repaired = /* @__PURE__ */ new Map();
 		let buckets = 0;
 		let removedTokens = 0;
 		let skipped = 0;
+		if (recordUnusable) {
+			this.note("repair-record", "the repair record could not be read, so no bucket was corrected again — delete it to let the repair re-judge from the replay");
+			return {
+				buckets: 0,
+				removedTokens: 0,
+				skipped: 0,
+				repaired
+			};
+		}
 		for (const [key, duplicate] of replay.duplicates) {
 			const target = findLedgerBucket(this.ledger.days[duplicate.dayKey], duplicate.provider, duplicate.model);
 			if (target === void 0) {
@@ -3221,18 +3263,16 @@ var UsageService = class {
 				if (bucket.calls - floor.calls === duplicate.totals.calls && totalTokens(bucket) - totalTokens(floor) === totalTokens(duplicate.totals)) skipped += 1;
 				continue;
 			}
-			const base = clean;
-			if (bucket.calls - base.calls !== duplicate.totals.calls) {
+			const next = this.repairCopies(bucket, clean, duplicate.totals);
+			if (next === void 0) {
 				skipped += 1;
 				continue;
 			}
-			if (totalTokens(bucket) - totalTokens(base) !== totalTokens(duplicate.totals)) {
-				skipped += 1;
-				continue;
-			}
-			const next = maxTotals(subtractTotals(bucket, duplicate.totals), base);
 			const dropped = totalTokens(bucket) - totalTokens(next);
-			if (dropped <= 0) continue;
+			if (dropped <= 0) {
+				skipped += 1;
+				continue;
+			}
 			const repriced = this.priceBucket(duplicate.dayKey, target.provider, target.model, next);
 			this.ledger.days[duplicate.dayKey][target.provider][target.model] = repriced;
 			repaired.set(key, {
@@ -3282,15 +3322,17 @@ var UsageService = class {
 		} catch {
 			return {
 				floors,
-				appliedAt: void 0
+				appliedAt: void 0,
+				present: false
 			};
 		}
 		try {
-			const parsed = JSON.parse(raw);
+			const parsed = parseJsonText(raw);
 			const appliedAt = typeof parsed.appliedAt === "number" ? parsed.appliedAt : void 0;
 			if (typeof parsed.after !== "object" || parsed.after === null) return {
 				floors,
-				appliedAt
+				appliedAt,
+				present: true
 			};
 			for (const [key, value] of Object.entries(parsed.after)) {
 				const totals = readTotals(value);
@@ -3298,12 +3340,14 @@ var UsageService = class {
 			}
 			return {
 				floors,
-				appliedAt
+				appliedAt,
+				present: true
 			};
 		} catch {
 			return {
 				floors,
-				appliedAt: void 0
+				appliedAt: void 0,
+				present: true
 			};
 		}
 	}
@@ -3371,7 +3415,7 @@ var UsageService = class {
 		}), () => void 0));
 		if (source === void 0) return;
 		try {
-			let doc = deserializeLedger(JSON.parse(source.raw));
+			let doc = deserializeLedger(parseJsonText(source.raw));
 			if (source.path === legacyPath) {
 				const previous = await this.readLedgerDocument(migratedPath);
 				if (previous !== void 0) {
@@ -3387,9 +3431,12 @@ var UsageService = class {
 				retainDays: this.options.retainDays
 			};
 		} catch {
+			this.note("legacy-unreadable", "the pre-migration ledger could not be read, so its history was not imported — inspect it beside this device's file");
 			return;
 		}
-		if (await this.withLedgerLock(async () => {
+		let wrote = false;
+		const written = await this.withLedgerLock(async (held) => {
+			if (!held) return;
 			await mkdir(dirname(this.ledgerPath), { recursive: true });
 			const disk = await this.readDiskLedger();
 			if (disk.kind === "ok") mergeLedgerMax(this.ledger, disk.doc);
@@ -3397,7 +3444,10 @@ var UsageService = class {
 				machine: this.machine,
 				retentionDays: this.declaredWindow()
 			}));
-		}).then(() => true, () => false) && source.path === legacyPath) await this.retireLegacyFile(legacyPath, migratedPath);
+			wrote = true;
+		}).then(() => true, () => false);
+		if (written && !wrote) this.note("legacy-locked", "the ledger lock stayed taken, so the pre-migration history was not imported — restart to try again");
+		if (written && wrote && source.path === legacyPath) await this.retireLegacyFile(legacyPath, migratedPath);
 	}
 	/**
 	* Retire the legacy ledger once its days are in this device's file.
@@ -3443,7 +3493,11 @@ var UsageService = class {
 			name,
 			at: await stat(join(this.persistDir, name)).then((info) => info.mtimeMs, () => 0)
 		})));
-		dated.sort((a, b) => b.at - a.at || b.name.localeCompare(a.name));
+		const instantOf = (name) => {
+			const match = /(\d+)\.json$/.exec(name);
+			return match === null ? 0 : Number(match[1]);
+		};
+		dated.sort((a, b) => b.at - a.at || instantOf(b.name) - instantOf(a.name) || a.name.localeCompare(b.name));
 		for (const { name } of dated.slice(Math.max(0, limit - keepCount))) await rm(join(this.persistDir, name), { force: true }).catch(() => void 0);
 	}
 	/**
@@ -3542,8 +3596,26 @@ var UsageService = class {
 				failures.push(`${name}: unreadable`);
 			}
 		}
-		peers.sort((a, b) => a.deviceId.localeCompare(b.deviceId));
-		this.peers = peers;
+		const byMachine = /* @__PURE__ */ new Map();
+		const folded = [];
+		for (const peer of peers) {
+			const machine = peer.machine;
+			if (machine === void 0) {
+				folded.push(peer);
+				continue;
+			}
+			const first = byMachine.get(machine);
+			if (first === void 0) {
+				byMachine.set(machine, peer);
+				folded.push(peer);
+				continue;
+			}
+			mergeLedgerMax(first.doc, peer.doc);
+			first.updatedAt = Math.max(first.updatedAt ?? 0, peer.updatedAt ?? 0);
+			this.note(`same-machine:${peer.deviceId}`, `${peer.deviceId}: the same machine as ${first.deviceId}, folded in rather than counted twice`);
+		}
+		folded.sort((a, b) => a.deviceId.localeCompare(b.deviceId));
+		this.peers = folded;
 		this.peersError = failures.length === 0 ? void 0 : failures.join("; ");
 	}
 	scheduleFlush() {
@@ -3751,8 +3823,7 @@ var UsageService = class {
 		const stale = this.fileRetention === void 0 ? 0 : countPrunable(doc, todayKey, fileWindow);
 		const seenBefore = this.retentionSeen;
 		const shrank = this.options.retainDays < seenBefore || this.shrankTo === this.options.retainDays;
-		const unstampedWipe = this.fileRetention === void 0 && days >= 4 && prunable > days * .9;
-		const jump = stale > 0 && prunable > days * .5 || prunable === days || unstampedWipe;
+		const jump = stale > 0 && prunable > days * .5 || prunable === days;
 		if (days > 0 && jump) {
 			this.windowRefused = true;
 			this.note("retention-jump", shrank ? `retention skipped: the ${this.options.retainDays}-day window would drop ${prunable} of ${days} recorded days — raise the window to keep them, or delete the ledger file (and any .migrated copy beside it) to accept it` : `retention skipped: the clock would drop ${prunable} of ${days} recorded days — if the clock is right, delete the ledger file (and any .migrated copy beside it) to accept it`);
@@ -3835,13 +3906,12 @@ var UsageService = class {
 				const found = findLedgerBucket(target.days[entry.dayKey], entry.provider, entry.model);
 				if (found === void 0) continue;
 				const bucket = found.totals;
-				if (bucket.calls - entry.after.calls !== entry.totals.calls) continue;
-				if (totalTokens(bucket) - totalTokens(entry.after) !== totalTokens(entry.totals)) continue;
-				const next = maxTotals(subtractTotals(bucket, entry.totals), entry.after);
+				const next = this.repairCopies(bucket, entry.after, entry.totals);
+				if (next === void 0) continue;
 				target.days[entry.dayKey][found.provider][found.model] = this.priceBucket(entry.dayKey, found.provider, found.model, next);
 				const key = repairKey(entry.dayKey, found.provider, found.model);
 				corrected.set(key, next);
-				removedTokens += totalTokens(entry.totals);
+				removedTokens += totalTokens(bucket) - totalTokens(next);
 			}
 			if (corrected.size === 0) return {
 				corrected,
@@ -4400,10 +4470,12 @@ function readBody(req, limit) {
 /**
 * Ledger import: install another device's export as that device's file.
 *
-* Replaces the peer's file (keyed by the device id inside the document) rather
-* than merging numbers, so importing the same file twice is a no-op. Never
-* touches this device's own ledger, which is what makes "restore without
-* overwriting my data" true by construction rather than by policy.
+* Merges into the peer's file (keyed by the device id inside the document)
+* rather than replacing it: importing the same file twice still changes
+* nothing, while an older export of a device that kept counting no longer drops
+* the days that file already holds. Never touches this device's own ledger,
+* which is what makes "restore without overwriting my data" true by
+* construction rather than by policy.
 * @param ctx - host context; may expose remoteWebUiPairing.
 * @param service - the usage service.
 * @returns the route.

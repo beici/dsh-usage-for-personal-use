@@ -45,7 +45,11 @@ next to a permanently doubled one. This machine resolves to `p15-22893b`.
 
 Peer files must be named `usage-ledger.<id>.json`. The file name wins over any
 `deviceId` inside the document, so renaming a file is enough to correct a
-mis-imported ledger.
+mis-imported ledger. Two files that name the same `machine` are folded into one
+peer instead of being added: a renamed host mints a new device id while the pin
+keeps the old one, and the previous export can still sit beside the new file —
+summing both counted that peer's calls twice. The folded file is not listed as a
+second device.
 
 A file written before this build stamped a machine id carries no proof of which
 machine wrote it, and a copy of *this* machine's own export has exactly the same
@@ -55,7 +59,9 @@ bucket by bucket, and only the part beyond what this machine already recorded: a
 day both files hold is not a day to add twice, and a bucket the peer has larger
 than ours contributes the difference. The panel says so by name (`unverified:…`,
 with the number of days and calls it did add). A peer that this build wrote
-carries the `machine` digest and is summed in full.
+carries the `machine` digest and is summed in full. Peer files are read after the
+duplicate repair has run, so that difference is measured against the corrected
+totals rather than against a bucket that still holds the copies.
 
 Two DSH processes on one machine (two windows, or the CLI beside the desktop app)
 share that one file. Each flush reads the file, adds only the calls it folded
@@ -188,7 +194,7 @@ peer, delete its `usage-ledger.<id>.json` and press 重新扫描.
 node --experimental-strip-types harness/host-test.mjs
 ```
 
-241 checks, covering device id hygiene, the export envelope shape, import of
+254 checks, covering device id hygiene, the export envelope shape, import of
 valid and invalid payloads, merging rather than replacing a peer file, summing,
 re-import idempotence, the local-ledger invariant, legacy migration (including
 that it persists before renaming the old file away), transcript backfill, the

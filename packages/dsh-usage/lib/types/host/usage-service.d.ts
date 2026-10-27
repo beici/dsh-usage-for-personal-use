@@ -353,6 +353,25 @@ export declare class UsageService {
      */
     private replaySessionLogs;
     /**
+     * Take the duplicate copies out of one bucket, or return `undefined` to leave
+     * it alone.
+     *
+     * `after` is where the bucket stood before the copies landed (the deduped
+     * replay, or the corrected total when re-checking a document about to be
+     * written), and `copy` is one copy's share. Copies sit on that floor in whole
+     * multiples: builds before the dedupe folded one copy per restart, so a bucket
+     * can hold two or three of them — and a repair that only accepted exactly one
+     * would refuse that ledger forever, because a bucket with two copies never
+     * again looks like a single copy. Anything that is not a whole number of
+     * copies is real calls the replay cannot see mixed in, and taking them away is
+     * the one mistake no later merge can bring back.
+     *
+     * Shared by the in-memory pass and the write-time re-check on purpose: the two
+     * drifted apart once, and the repair then corrected the ledger in memory while
+     * the file kept the inflated total.
+     */
+    private repairCopies;
+    /**
      * Correction for the seeded-subagent duplicate.
      *
      * A seeded subagent's transcript opens with a verbatim copy of its parent's

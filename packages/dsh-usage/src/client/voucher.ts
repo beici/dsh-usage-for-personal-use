@@ -167,5 +167,8 @@ export function drawVoucher(canvas: HTMLCanvasElement, art: VoucherArt, data: Vo
 
   ctx.fillStyle = SEAL_RED
   ctx.font = `500 ${Math.round(art.height * 0.026)}px ${DENOMINATION_FONT}`
-  ctx.fillText(`NO.${voucherSerial(face)} ${data.from} - ${data.to}`, centerX, Math.round(art.height * 0.845))
+  // One date for a single-day voucher: `2026-10-19 - 2026-10-19` reads as a
+  // mistake, and the same rule is applied to the line under the card.
+  const span = data.from === data.to ? data.from : `${data.from} - ${data.to}`
+  ctx.fillText(`NO.${voucherSerial(face)} ${span}`, centerX, Math.round(art.height * 0.845))
 }

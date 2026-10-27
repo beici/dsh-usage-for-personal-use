@@ -272,6 +272,14 @@ export interface UsageLedgerExport {
    * as a second device.
    */
   machine?: string
+  /**
+   * The retention window the exporter had applied, when it applied one.
+   *
+   * The receiving side keeps it beside the imported days: a peer file with no
+   * window of its own makes the panel fall back to this machine's setting, and
+   * the imported days then look older than the window they were pruned to.
+   */
+  retentionDays?: number
   exportedAt: string
   ledger: UsageLedgerDocument
 }

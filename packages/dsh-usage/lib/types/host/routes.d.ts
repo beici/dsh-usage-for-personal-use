@@ -60,10 +60,12 @@ export declare function makeUsageExportRoute(ctx: Context, service: UsageService
 /**
  * Ledger import: install another device's export as that device's file.
  *
- * Replaces the peer's file (keyed by the device id inside the document) rather
- * than merging numbers, so importing the same file twice is a no-op. Never
- * touches this device's own ledger, which is what makes "restore without
- * overwriting my data" true by construction rather than by policy.
+ * Merges into the peer's file (keyed by the device id inside the document)
+ * rather than replacing it: importing the same file twice still changes
+ * nothing, while an older export of a device that kept counting no longer drops
+ * the days that file already holds. Never touches this device's own ledger,
+ * which is what makes "restore without overwriting my data" true by
+ * construction rather than by policy.
  * @param ctx - host context; may expose remoteWebUiPairing.
  * @param service - the usage service.
  * @returns the route.
